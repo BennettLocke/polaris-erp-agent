@@ -976,9 +976,10 @@ def chat_stream():
             # 分 token 发送（按自然段落分割，避免单字碎片）
             for line in response.split("\n"):
                 if line.strip():
-                    yield f"data: {json.dumps({'type': 'token', 'text': line + '\n'}, ensure_ascii=False)}\n\n"
+                    token_text = line + "\n"
                 else:
-                    yield f"data: {json.dumps({'type': 'token', 'text': '\n'}, ensure_ascii=False)}\n\n"
+                    token_text = "\n"
+                yield f"data: {json.dumps({'type': 'token', 'text': token_text}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error(f"Agent 流式调用异常: {e}")
