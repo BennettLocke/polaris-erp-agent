@@ -1,0 +1,608 @@
+"""
+图片订单工作流节点（A流程 - 完整实现）
+严格按 order-flow SKILL.md A 流程实现
+
+流程：
+A1. 检测黑框 → 裁切(1个外框=1张,N个=N张)
+A2. RapidOCR 识别 → 提取备注区域文字
+A3. 上传 OSS → 返回图片 URL
+A4. 解析 OCR 文本 → 提取客户、商品、颜色、数量、工艺、是否含"开单"
+A5. 查 MySQL → 获取 product_id、价格、件→套换算率(自动标准化商品名)
+A6. 创建工作流订单 → WorkflowOrderSave
+A7. 开单判断（先不执行，由 inventory_decision 处理）
+"""
+import re
+import os
+import json
+import tempfile
+import subprocess
+from pathlib import Path
+from typing import Optional
+from src.core.state import AgentState
+from src.core.config import get_config
+from src.core.tools.caller import get_tool_caller
+from src.utils import get_logger
+from scripts.image_processor import ImageProcessor
+from scripts.common.color_filter import STANDARD_COLORS, filter_uv, extract_color_from_text
+from scripts.common.unit_converter import calculate_order_quantity
+
+logger = get_logger("sjagent.nodes.image_workflow")
+REMARK_OCR_TOP_RATIO = 0.22
+
+
+def image_workflow_node(state: AgentState) -> AgentState:
+    """
+    图片订单工作流节点（完整实现）
+    """
+    user_input = state.get("input", "")
+    state["node_name"] = "image_workflow"
+
+    # 1. 提取图片路径/URL
+    image_paths = extract_image_paths(user_input)
+    state["image_paths"] = image_paths
+
+    if not image_paths:
+        state["output"] = "未检测到图片，请发送设计稿图片"
+        return state
+
+    caller = get_tool_caller()
+    all_parsed = []
+    all_workflow_orders = []
+    has_any_kaipiao = False
+
+    # 2. 逐图处理
+    for img_path in image_paths:
+        try:
+            result = process_single_image(img_path, caller)
+            if result.get("error"):
+                logger.error(f"图片处理失败: {img_path}, error={result['error']}")
+                continue
+
+            parsed = result.get("parsed", {})
+            all_parsed.append(parsed)
+
+            if parsed.get("has_kaipiao"):
+                has_any_kaipiao = True
+
+            if result.get("workflow_order"):
+                all_workflow_orders.append(result["workflow_order"])
+
+        except Exception as e:
+            logger.error(f"单图处理异常: {img_path}, error={e}")
+
+    state["image_parsed"] = all_parsed
+    state["workflow_orders"] = all_workflow_orders
+    state["has_kaipiao"] = has_any_kaipiao
+
+    logger.info(f"图片订单处理完成：{len(all_parsed)} 个订单")
+    return state
+
+
+def process_single_image(image_path: str, caller) -> dict:
+    """
+    处理单张图片的全流程
+
+    Returns:
+        {
+            "parsed": {...},  # 解析结果
+            "product_warning": [...],  # 商品未找到警告
+            "workflow_order": {...},  # 创建的工作流订单
+            "error": "..."  # 错误信息
+        }
+    """
+    result = {
+        "parsed": {},
+        "product_warning": [],
+        "workflow_order": None,
+    }
+
+    # 1. 下载图片（如果是URL）
+    local_path = download_image_if_needed(image_path)
+    if local_path is None:
+        result["error"] = f"无法获取图片: {image_path}"
+        return result
+
+    cropped_images = []
+    try:
+        processor = ImageProcessor()
+
+        # 2. 检测黑框
+        frames = processor.detect_black_frames(local_path)
+        logger.info(f"检测到 {len(frames)} 个外框")
+
+        if frames:
+            child_results = []
+            for i, frame in enumerate(frames):
+                cropped = processor.crop_frame(local_path, frame)
+                if cropped is None:
+                    continue
+                temp_path = save_temp_image(cropped, i)
+                cropped_images.append(temp_path)
+                _, ocr_text = processor.ocr_recognize(cropped, top_ratio=REMARK_OCR_TOP_RATIO)
+                child_results.append(_process_ocr_order([ocr_text], temp_path, caller))
+
+            result["items"] = child_results
+            result["workflow_orders"] = [item["workflow_order"] for item in child_results if item.get("workflow_order")]
+            result["parsed"] = {
+                "full_text": "\n\n".join((item.get("parsed") or {}).get("full_text", "") for item in child_results).strip()
+            }
+            result["product_warning"] = [
+                warning
+                for item in child_results
+                for warning in (item.get("product_warning") or [])
+            ]
+            errors = [item.get("error") for item in child_results if item.get("error")]
+            if errors and not result["workflow_orders"]:
+                result["error"] = "；".join(errors)
+        else:
+            _, ocr_text = processor.ocr_recognize(local_path, top_ratio=REMARK_OCR_TOP_RATIO)
+            result.update(_process_ocr_order([ocr_text], local_path, caller))
+
+    finally:
+        # 清理临时裁切图
+        for tmp in cropped_images:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        # 清理下载的临时文件（如果是URL下载的）
+        if local_path != image_path and os.path.exists(local_path):
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
+
+    return result
+
+
+def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
+    item = {
+        "parsed": {},
+        "product_warning": [],
+        "workflow_order": None,
+    }
+    oss_url = upload_to_oss(image_path, caller)
+    item["image_url"] = oss_url
+    item["image_source_path"] = image_path
+
+    parsed = parse_ocr_text_list(ocr_texts)
+    item["parsed"] = parsed
+
+    goods_name = parsed.get("goods_name", "")
+    product_info = find_product_by_goods_name(goods_name, caller, parsed.get("color", ""))
+    if product_info is None:
+        if goods_name:
+            item["product_warning"].append(goods_name)
+        logger.info(f"商品库未匹配，按识别礼盒名创建工作流: {goods_name}")
+    else:
+        parsed["product_id"] = product_info.get("id")
+        parsed["product_info"] = product_info
+        order_qty = parsed.get("quantity", 1)
+        reported_unit = parsed.get("unit") or "套"
+        simple_desc = product_info.get("simple_desc", "")
+        per_piece = parse_per_piece(simple_desc)
+        if per_piece > 1 and reported_unit == "件":
+            order_qty = calculate_order_quantity(
+                user_reported=f"{order_qty}{reported_unit}",
+                quantity=order_qty,
+                simple_desc=simple_desc,
+            )
+            parsed["quantity"] = order_qty
+            parsed["unit"] = "套"
+            parsed["per_piece"] = per_piece
+
+    if not goods_name:
+        item["error"] = "未识别到礼盒名称，未创建工作流订单"
+    else:
+        item["workflow_order"] = create_workflow_order(parsed, oss_url, caller)
+    return item
+
+
+def extract_image_paths(text: str) -> list[str]:
+    """从文本中提取图片路径或URL"""
+    paths = []
+
+    # URL
+    url_pattern = r"https?://[^\s<>\"']+\.(?:jpg|jpeg|png|gif|webp)"
+    paths.extend(re.findall(url_pattern, text, re.IGNORECASE))
+
+    # 本地路径
+    local_pattern = r"[a-zA-Z]:\\[^\s<>\"']+\.(?:jpg|jpeg|png|gif|webp)"
+    paths.extend(re.findall(local_pattern, text))
+
+    # 去除重复
+    return list(dict.fromkeys(paths))
+
+
+def download_image_if_needed(image_path: str) -> Optional[str]:
+    """如果是URL则下载到本地，否则直接返回路径"""
+    if image_path.startswith("http://") or image_path.startswith("https://"):
+        try:
+            import requests
+            response = requests.get(image_path, timeout=30)
+            if response.status_code == 200:
+                suffix = Path(image_path).suffix or ".jpg"
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                    f.write(response.content)
+                    return f.name
+        except Exception as e:
+            logger.error(f"图片下载失败: {e}")
+            return None
+    return image_path
+
+
+def save_temp_image(img_array, index: int) -> str:
+    """保存裁切图到临时文件"""
+    import cv2
+    import uuid
+    temp_dir = tempfile.gettempdir()
+    unique_id = uuid.uuid4().hex[:8]
+    path = os.path.join(temp_dir, f"sjagent_crop_{index}_{unique_id}.jpg")
+    cv2.imwrite(path, img_array)
+    return path
+
+
+def upload_to_oss(local_path: str, caller) -> str:
+    """上传图片到 OSS"""
+    try:
+        upload_result = caller.call(
+            "script_call",
+            script_name="oss_uploader.py",
+            args=[local_path],
+        )
+        if isinstance(upload_result, dict):
+            if upload_result.get("url"):
+                return upload_result["url"]
+            data = upload_result.get("data")
+            if isinstance(data, dict) and data.get("url"):
+                return data["url"]
+            raw = upload_result.get("raw")
+            if raw:
+                for line in reversed(str(raw).splitlines()):
+                    line = line.strip()
+                    if not (line.startswith("{") and line.endswith("}")):
+                        continue
+                    try:
+                        raw_data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(raw_data, dict) and raw_data.get("url"):
+                        return raw_data["url"]
+            if upload_result.get("error"):
+                logger.warning(f"OSS上传失败: {upload_result['error']}")
+    except Exception as e:
+        logger.warning(f"OSS上传失败: {e}")
+    return ""
+
+
+def _normalize_ocr_line(line: str) -> str:
+    return (
+        line.replace("：", ":")
+        .replace("（", "(")
+        .replace("）", ")")
+        .replace("，", ",")
+        .strip()
+    )
+
+
+def _clean_field_value(value: str) -> str:
+    return value.strip(" \t:-：,，。;；")
+
+
+def _extract_after_label(line: str, labels: tuple[str, ...]) -> str:
+    text = _normalize_ocr_line(line)
+    for label in labels:
+        match = re.search(rf"{re.escape(label)}\s*:?\s*(.+)", text)
+        if match:
+            return _clean_field_value(match.group(1))
+    return ""
+
+
+def _parse_quantity(line: str) -> tuple[int, str] | None:
+    text = _normalize_ocr_line(line).replace(" ", "")
+    unit_pattern = r"(套|件|个|张|只|盒)"
+
+    label_match = re.search(
+        rf"(?:数量|订单数量|下单数量|做|要|订)\D{{0,6}}?(\d+)\s*{unit_pattern}?",
+        text,
+    )
+    if label_match:
+        return int(label_match.group(1)), label_match.group(2) or "套"
+
+    unit_match = re.search(rf"(\d+)\s*{unit_pattern}", text)
+    if unit_match and not re.search(r"(电话|手机|编号|单号|日期|20\d{{2}})", text):
+        return int(unit_match.group(1)), unit_match.group(2)
+
+    compact_match = re.search(rf"(?:UV|uv|丝印|印刷)?(\d+){unit_pattern}", text)
+    if compact_match:
+        return int(compact_match.group(1)), compact_match.group(2)
+
+    return None
+
+
+def _extract_goods_from_remark(line: str) -> str:
+    text = _normalize_ocr_line(line)
+    without_date = re.sub(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", "", text)
+    without_prefix = re.sub(r"^(客户|下单)\s*:?\s*", "", without_date).strip()
+    without_qty = re.sub(r"(?:UV|uv)?\d+\s*(套|件|个|张|只|盒)", "", without_prefix)
+    without_craft = re.sub(r"\([^)]*(丝印|印刷|提袋)[^)]*\)", "", without_qty)
+    goods = without_craft
+    for color in sorted(STANDARD_COLORS, key=len, reverse=True):
+        goods = goods.replace(color, "")
+    return _clean_field_value(goods)
+
+
+def _looks_like_goods_line(line: str) -> bool:
+    text = _normalize_ocr_line(line)
+    if re.fullmatch(r"(客户|客人|客户名称|下单)\s*:?", text):
+        return False
+    if re.fullmatch(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text):
+        return False
+    gift_words = r"(长半斤|半斤|[一二三四五六七八九十\d]+两|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
+    return bool(_parse_quantity(text) and re.search(gift_words, text))
+
+
+def _clean_goods_value(value: str) -> str:
+    return _extract_goods_from_remark(value) or _clean_field_value(value)
+
+
+def _extract_craft_terms(line: str) -> list[str]:
+    terms = []
+    for term in re.findall(r"丝印|印刷|UV|uv|烫金|烫银|击凸|击凹", line):
+        normalized = "UV" if term.lower() == "uv" else term
+        if normalized not in terms:
+            terms.append(normalized)
+    return terms
+
+
+def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
+    """
+    解析 OCR 识别结果
+    提取：客户名、商品名、颜色、数量、工艺、是否含"开单"
+
+    按 order-flow 规则：
+    - 客户：从"客户："后提取
+    - 商品：从"商品："后提取（含【品牌】前缀）
+    - 颜色：从"颜色："后提取
+    - 数量：从"数量："后提取，支持"X件"格式
+    - 工艺：从"工艺："后提取
+    - has_kaipiao：文本中含"开单"则为 true
+    """
+    # 合并所有 OCR 文本
+    full_text = "\n".join(ocr_texts)
+
+    result = {
+        "customer_name": "",
+        "goods_name": "",
+        "color": "",
+        "quantity": 1,
+        "unit": "件",
+        "craft": "",
+        "has_kaipiao": False,
+        "full_text": full_text,
+    }
+
+    lines = full_text.split("\n")
+
+    pending_label = ""
+
+    for line in lines:
+        line = _normalize_ocr_line(line)
+        if not line:
+            continue
+
+        if pending_label == "customer":
+            result["customer_name"] = _clean_field_value(line)
+            pending_label = ""
+            continue
+
+        # 客户
+        if re.fullmatch(r"(客户|客人|客户名称)\s*:?", line):
+            pending_label = "customer"
+            continue
+        customer_name = _extract_after_label(line, ("客户", "客人", "客户名称"))
+        if customer_name:
+            result["customer_name"] = customer_name
+            continue
+
+        # 商品（通用提取，不再门控在特定关键词上）
+        goods_name = _extract_after_label(line, ("商品", "产品", "货品", "品名", "名称", "礼盒"))
+        if goods_name:
+            result["goods_name"] = _clean_goods_value(goods_name)
+        elif "【" in line:
+            # 直接是商品名称（含【品牌】前缀）
+            match = re.search(r"【[^】]+】[^\s，,。]+", line)
+            if match:
+                result["goods_name"] = match.group()
+        elif not result["goods_name"] and re.search(r"(长半斤|半斤|小盒|中盒|大盒|礼盒|茶派|茶派长)", line):
+            remark_goods = _extract_goods_from_remark(line)
+            if remark_goods and not re.fullmatch(r"下单|客户", remark_goods):
+                result["goods_name"] = remark_goods
+        elif not result["goods_name"] and _looks_like_goods_line(line):
+            remark_goods = _extract_goods_from_remark(line)
+            if remark_goods and not re.fullmatch(r"下单|客户", remark_goods):
+                result["goods_name"] = remark_goods
+
+        # 颜色
+        color = _extract_after_label(line, ("颜色", "色号"))
+        if color:
+            result["color"] = filter_uv(color)
+
+        # 数量
+        quantity = _parse_quantity(line)
+        if quantity:
+            result["quantity"], result["unit"] = quantity
+
+        # 工艺
+        craft = _extract_after_label(line, ("工艺", "做法"))
+        if craft:
+            result["craft"] = craft
+
+        craft_terms = _extract_craft_terms(line)
+        if craft_terms:
+            existing = [item for item in re.split(r"[、,，/ ]+", result["craft"]) if item]
+            for term in craft_terms:
+                if term not in existing:
+                    existing.append(term)
+            result["craft"] = "、".join(existing)
+
+    # 检测是否要求继续开销售单
+    result["has_kaipiao"] = any(word in full_text for word in ("开单", "下单"))
+
+    # 提取颜色（如果没有明确标注，尝试从商品描述中提取）
+    if not result["color"]:
+        result["color"] = extract_color_from_text(full_text) or ""
+
+    return result
+
+
+def find_product_by_goods_name(goods_name: str, caller, color: str = "") -> dict | None:
+    """
+    在 MySQL 中查找匹配的商品
+    按商品名模糊匹配，返回第一个匹配结果
+    """
+    if not goods_name:
+        return None
+
+    keywords = _product_search_keywords(goods_name)
+    for keyword in keywords:
+        try:
+            results = caller.call("product_search", keyword=keyword)
+            matched = _select_image_product(results, keyword, color)
+            if matched:
+                return matched
+        except Exception as e:
+            logger.error(f"商品查找失败: {e}")
+
+        if color:
+            try:
+                rows = caller.call("inventory_search", keyword=keyword, color=color, only_in_stock=False, limit=50)
+                matched = _select_image_inventory_product(rows, keyword, color)
+                if matched:
+                    detail = caller.call("product_info", product_id=int(matched["id"]))
+                    return detail or matched
+            except Exception as e:
+                logger.error(f"库存反查商品失败: {e}")
+
+    return None
+
+
+def _normalize_goods_keyword(goods_name: str) -> str:
+    keyword = re.sub(r'【[^】]+】', '', goods_name or '').strip()
+    for color in sorted(STANDARD_COLORS, key=len, reverse=True):
+        keyword = keyword.replace(color, "")
+    keyword = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", keyword)
+    keyword = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", keyword)
+    keyword = re.sub(r"(?:1\s*两|一\s*两)", "一两", keyword)
+    replacements = [
+        ("2小盒", "二小盒"),
+        ("3小盒", "三小盒"),
+        ("6小盒", "六小盒"),
+        ("10小盒", "十小盒"),
+    ]
+    for raw, normalized in replacements:
+        keyword = keyword.replace(raw, normalized)
+    specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+    for spec in specs:
+        keyword = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", keyword)
+    return re.sub(r"\s+", " ", keyword).strip()
+
+
+def _product_search_keywords(goods_name: str) -> list[str]:
+    normalized = _normalize_goods_keyword(goods_name)
+    specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+    keywords = [normalized]
+    for spec in specs:
+        if spec in normalized:
+            brand = normalized.replace(spec, "").strip()
+            if brand:
+                keywords.append(f"{brand} {spec}")
+                keywords.append(brand)
+            keywords.append(spec)
+            break
+    compact = normalized.replace(" ", "")
+    if compact != normalized:
+        keywords.append(compact)
+    return list(dict.fromkeys(k for k in keywords if k))
+
+
+def _keyword_terms(keyword: str) -> list[str]:
+    normalized = _normalize_goods_keyword(keyword)
+    specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+    for spec in specs:
+        if spec in normalized:
+            brand = normalized.replace(spec, "").strip()
+            return [term for term in (brand, spec) if term]
+    return [normalized] if normalized else []
+
+
+def _select_image_product(results: list[dict], keyword: str, color: str = "") -> dict | None:
+    candidates = results or []
+    if color:
+        candidates = [row for row in candidates if color in str(row.get("spec", ""))]
+    terms = _keyword_terms(keyword)
+    if terms:
+        candidates = [
+            row for row in candidates
+            if all(term in re.sub(r"[【】]", "", str(row.get("title", ""))) for term in terms)
+        ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _select_image_inventory_product(rows: list[dict], keyword: str, color: str = "") -> dict | None:
+    candidates = rows or []
+    if color:
+        candidates = [row for row in candidates if color in str(row.get("【颜色】", ""))]
+    terms = _keyword_terms(keyword)
+    if terms:
+        candidates = [
+            row for row in candidates
+            if all(term in re.sub(r"[【】]", "", str(row.get("产品名称", ""))) for term in terms)
+        ]
+    seen = set()
+    unique = []
+    for row in candidates:
+        key = (row.get("product_id"), row.get("【颜色】"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    if len(unique) != 1:
+        return None
+    row = unique[0]
+    return {
+        "id": row.get("product_id"),
+        "title": row.get("产品名称"),
+        "spec": row.get("【颜色】"),
+        "simple_desc": row.get("simple_desc", ""),
+        "price": 0,
+    }
+
+
+def create_workflow_order(parsed: dict, image_url: str, caller) -> dict | None:
+    """
+    创建工作流订单
+    调用 WorkflowOrderSave
+    """
+    try:
+        result = caller.call(
+            "workflow_order_save",
+            customer_name=parsed.get("customer_name", "散客"),
+            goods_name=parsed.get("goods_name", ""),
+            order_quantity=parsed.get("quantity", 1),
+            color=parsed.get("color", ""),
+            order_images=[image_url] if image_url else [],
+            is_screen_print=1 if any(kw in parsed.get("craft", "") for kw in ["丝印", "印刷"]) else 0,
+            remark=parsed.get("craft", ""),
+        )
+        logger.info(f"工作流订单创建: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"工作流订单创建失败: {e}")
+        return None
+
+
+def parse_per_piece(simple_desc: str) -> int:
+    """从 simple_desc 提取每件套数"""
+    match = re.search(r"(\d+)\s*套\s*/\s*件", simple_desc)
+    if match:
+        return int(match.group(1))
+    return 1

@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  sjagent:
+    build: .
+    container_name: sjagent
+    restart: unless-stopped
+    environment:
+      # LLM
+      - MIMO_API_KEY=${MIMO_API_KEY}
+      # 飞书
+      - FEISHU_APP_ID=${FEISHU_APP_ID}
+      - FEISHU_APP_SECRET=${FEISHU_APP_SECRET}
+      # ERP API
+      - ERP_API_KEY=${ERP_API_KEY}
+      # MySQL
+      - DB_HOST=${DB_HOST:-mysql}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_NAME=${DB_NAME:-sjerp}
+      - DB_USER=${DB_USER:-root}
+      - DB_PASSWORD=${DB_PASSWORD}
+      # OSS
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - ./src/knowledge/sjbzwiki:/app/src/knowledge/sjbzwiki:ro
+    ports:
+      - "5000:5000"   # 飞书渠道
+      - "8080:8080"   # HTTP API
+    networks:
+      - sjagent-net
+
+networks:
+  sjagent-net:
+    driver: bridge

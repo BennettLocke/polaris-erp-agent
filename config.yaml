@@ -1,0 +1,340 @@
+# ============================================================
+# sjagent 全局配置 - 最大化灵活性
+# 所有配置集中管理，禁止硬编码
+# ============================================================
+
+# ============================================================
+# ERP 进销存系统配置
+# ============================================================
+erp:
+  # API 配置
+  api_base: "https://shop.513sjbz.com/api.php"
+  api_key: "${ERP_API_KEY}"
+
+  # 仓库配置
+  warehouse:
+    self: 1       # 自己店里（门店）
+    baixin: 2      # 百鑫仓库（主仓库）
+
+  # 客户配置
+  customer:
+    # 齐唯茶叶 customer_id，开单后自动打印
+    qiwu_tea_id: 1
+    # 默认客户ID（散客）
+    default_id: 1
+
+# ============================================================
+# 数据库配置（MySQL 直连查询库存）
+# ============================================================
+database:
+  host: "${DB_HOST}"
+  port: "${DB_PORT}"
+  name: "${DB_NAME}"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  charset: "utf8mb4"
+
+# ============================================================
+# 阿里云 OSS 配置
+# ============================================================
+oss:
+  access_key_id: "${OSS_ACCESS_KEY_ID}"
+  access_key_secret: "${OSS_ACCESS_KEY_SECRET}"
+  bucket: "sjscw"
+  endpoint: "oss-cn-hangzhou.aliyuncs.com"
+  domain: "https://img.513sjbz.com"
+  upload_path: "order/{date}/{uniqid}.jpg"
+
+# ============================================================
+# 阿里云智能语音交互 ASR 配置
+# ============================================================
+aliyun_asr:
+  access_key_id: "${ALIYUN_AK_ID}"
+  access_key_secret: "${ALIYUN_AK_SECRET}"
+  # 智能语音交互控制台项目 AppKey
+  appkey: "${ALIYUN_NLS_APPKEY}"
+  # 可选：已有业务热词表 ID；为空时首次同步自动创建并写入 data/aliyun_asr_hotwords.json
+  vocab_id: "${ALIYUN_NLS_VOCAB_ID}"
+  region: "cn-shanghai"
+  token_domain: "nls-meta.cn-shanghai.aliyuncs.com"
+  slp_domain: "nls-slp.cn-shanghai.aliyuncs.com"
+  # 阿里云热词表上限以官方控制台/地域限制为准，服务会自动截断。
+  max_words: 500
+
+# ============================================================
+# 知识库配置
+# ============================================================
+knowledge_base:
+  path: "../sjbzwiki/sjbzwiki"
+  preload: true
+  embedding_dim: 384
+
+# ============================================================
+# 脚本目录
+# ============================================================
+scripts:
+  path: "./scripts"
+
+# ============================================================
+# 大模型配置（底座解耦，可切换）
+# ============================================================
+llm:
+  provider: "anthropic"
+  base_url: "https://token-plan-cn.xiaomimimo.com/anthropic"
+  model: "mimo-v2.5-pro"
+  api_key: "${MIMO_API_KEY}"
+  max_tokens: 4096
+
+# ============================================================
+# LangGraph 配置
+# ============================================================
+langgraph:
+  intent_timeout: 30
+  tool_timeout: 60
+  max_retries: 3
+
+# ============================================================
+# 日志配置
+# ============================================================
+logging:
+  level: "INFO"
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name} | {message}"
+  file: "./logs/sjagent.log"
+  max_bytes: 10485760
+  backup_count: 5
+
+# ============================================================
+# 飞书机器人配置
+# ============================================================
+feishu:
+  app_id: "${FEISHU_APP_ID}"
+  app_secret: "${FEISHU_APP_SECRET}"
+  bot_name: "北极星"
+
+# ============================================================
+# 对话历史配置（上下文优化）
+# ============================================================
+history:
+  max_turns: 10
+  max_chars_per_turn: 2000
+
+# ============================================================
+# 业务规则配置（核心 - 可随时修改）
+# ============================================================
+business_rules:
+
+  # ---- 件套换算 ----
+  unit_conversion:
+    # 1件起订系列（鑫创意旗下）
+    # 厂家要求1件起订，不拆零
+    one_piece_series:
+      - 见喜
+      - 岩味
+      - 出彩
+      - 岩彩
+      - 喜悦
+      - 茶派
+      - 圆满
+      - 喜物
+      - 开物
+
+    # 非1件起订系列
+    non_one_piece_series:
+      - 星禾
+      - 生财
+      - 墨香
+      - 大吉
+      - 山川
+      - 远航
+      - 顶呱呱
+      - 云岭
+      - 视界
+      - 锦程
+      - 旷野
+      - 小盒子
+      - 余味
+
+  # ---- 库存决策 ----
+  inventory_decision:
+    # 不查库存的类别（直接标记待开单，发货仓库=百鑫）
+    non_check_categories:
+      - 泡袋
+      - 包茶
+      - 内衬
+      - PVC
+      - 标签
+      - 纸箱
+      - 烫金泡袋
+      - 提袋UV
+      - 提袋丝印
+      - 烫膜
+
+    # 礼盒类关键词（用于判断是否需要查库存）
+    gift_box_keywords:
+      - 礼盒
+      - 盒子
+
+  # ---- 颜色处理 ----
+  color_filter:
+    # 颜色别名映射（用于标准化）
+    aliases:
+      桔色: 橙色
+      黄: 黄色
+      红: 红色
+      兰: 蓝色
+      绿: 绿色
+      黑: 黑色
+      白: 白色
+      灰: 灰色
+      啡色: 咖色
+      棕色: 咖色
+      深棕: 深咖色
+      铜色: 古铜色
+
+    # 标准颜色列表
+    standard_colors:
+      - 橙色
+      - 红色
+      - 绿色
+      - 蓝色
+      - 黄色
+      - 黑色
+      - 白色
+      - 灰色
+      - 咖色
+      - 金色
+      - 银色
+      - 香槟金
+      - 深咖色
+      - 古铜色
+      - 古铜红
+      - 橄榄绿
+      - 卡其色
+      - 深绿
+
+  # ---- 烫金泡袋档位 ----
+  hot_stamp:
+    # 小机器烫金泡袋关键词
+    keywords:
+      - 烫金泡袋
+      - 烫金
+      - 泡袋烫金
+
+    # 小机器烫金泡袋档位规则（数量+单双面 → 规格）
+    small_machine_rules:
+      - {min: 500, side: 单面, result: 大量单面}
+      - {min: 0, side: 单面, result: 单面}
+      - {min: 500, side: 双面, result: 大量双面}
+      - {min: 0, side: 双面, result: 双面}
+
+  # ---- 打印规则 ----
+  print_rules:
+    # 开启自动打印的客户ID列表（多个用逗号分隔）
+    auto_print_customers: "1"
+    # 是否默认不打印（除非指定）
+    default_no_print: true
+
+  # ---- 价格规则 ----
+  price_rules:
+    # 价格优先顺序
+    priority:
+      - customer_history   # 客户历史成交价
+      - retail_price       # 商品零售价
+    # 是否允许空价格
+    allow_empty_price: false
+
+  # ---- 仓库默认配置 ----
+  warehouse_defaults:
+    # 默认发货仓库
+    default_warehouse: 2
+    # 调拨方向：调出仓库
+    transfer_from: 1
+    # 调拨方向：调入仓库
+    transfer_to: 2
+
+  # ---- 开单规则 ----
+  order_rules:
+    # 是否允许分批开单（建议 false，统一开单）
+    allow_split_order: false
+    # 开单时默认付款方式（1=账期结算）
+    default_pay_type: 1
+
+  # ---- 进货规则 ----
+  purchase_rules:
+    # 进货入库仓库（默认百鑫）
+    default_warehouse: 2
+    # 进货备注
+    note: "送至百鑫"
+
+  # ---- 工作流订单 ----
+  workflow:
+    # 丝印关键词（出现在备注中则 is_screen_print=1）
+    screen_print_keywords:
+      - 丝印
+      - 印刷
+
+  # ---- 图片处理 ----
+  image:
+    # 支持的图片扩展名
+    supported_extensions:
+      - jpg
+      - jpeg
+      - png
+      - gif
+      - webp
+    # 黑框检测参数
+    black_frame:
+      # 最小框占图片比例
+      min_area_ratio: 0.05
+      # 最大框占图片比例
+      max_area_ratio: 0.95
+      # 边框扩大像素
+      margin: 5
+
+  # ---- 意图识别 ----
+  intent:
+    image_patterns:
+      - "图片"
+      - "发图"
+      - '\.jpg'
+      - '\.png'
+      - "设计稿"
+      - "这个.*礼盒"
+
+    order_patterns:
+      - "要.*个?礼盒"
+      - "客户.*礼盒"
+      - "下单"
+      - "开单"
+      - "进货"
+      - "调货"
+
+    inventory_patterns:
+      - "库存"
+      - "还有.*货"
+      - "查.*库存"
+      - "有没有.*礼盒"
+
+    knowledge_patterns:
+      - "是什么"
+      - "怎么"
+      - "如何"
+      - "规则"
+      - "流程"
+
+  # ---- 知识库问答 ----
+  knowledge_qa:
+    # 返回相关片段数量
+    top_k: 5
+    # 单条片段最大字符数（省Token）
+    max_chunk_chars: 500
+
+  # ---- HTTP API ----
+  http_api:
+    host: "0.0.0.0"
+    port: 8080
+
+  # ---- 飞书渠道 ----
+  feishu_channel:
+    host: "0.0.0.0"
+    port: 5000

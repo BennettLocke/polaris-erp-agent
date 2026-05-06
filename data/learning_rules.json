@@ -1,0 +1,749 @@
+{
+  "examples": [
+    {
+      "key": "看看宴袍最近的做了什么",
+      "text": "看看宴袍最近的做了什么",
+      "extracted": {
+        "intent": "sales_query",
+        "customer": "宴袍"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T11:31:25",
+      "updated_at": "2026-04-30T11:31:25"
+    },
+    {
+      "key": "看看越客人家最近做了什么",
+      "text": "看看越客人家最近做了什么",
+      "extracted": {
+        "intent": "sales_query",
+        "customer": "越客人家"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T11:31:38",
+      "updated_at": "2026-04-30T11:31:38"
+    },
+    {
+      "key": "看看散客最近3单做了什么",
+      "text": "看看散客最近3单做了什么",
+      "extracted": {
+        "intent": "sales_query",
+        "customer": "散客",
+        "count": 3
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T11:31:57",
+      "updated_at": "2026-04-30T11:31:57"
+    },
+    {
+      "key": "见喜3两黄色调货到自己店里7套",
+      "text": "见喜3两黄色调货到自己店里 7套",
+      "extracted": {
+        "intent": "transfer",
+        "from": "百鑫",
+        "to": "自己店里",
+        "products": [
+          {
+            "name": "见喜三两",
+            "quantity": 7,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T11:32:52",
+      "updated_at": "2026-04-30T11:32:52"
+    },
+    {
+      "key": "见喜3两橙色调货到百鑫仓库7套",
+      "text": "见喜3两橙色调货到百鑫仓库 7套",
+      "extracted": {
+        "intent": "transfer",
+        "from": "自己店里",
+        "to": "百鑫",
+        "products": [
+          {
+            "name": "见喜三两",
+            "quantity": 7,
+            "unit": "套",
+            "color": "橙色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T11:39:43",
+      "updated_at": "2026-04-30T11:39:43"
+    },
+    {
+      "key": "见喜黄色调货7套到自己店里",
+      "text": "见喜黄色调货7套到自己店里",
+      "extracted": {
+        "intent": "transfer",
+        "from": "百鑫",
+        "to": "自己店里",
+        "products": [
+          {
+            "name": "见喜二三两",
+            "quantity": 7,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T11:40:42",
+      "updated_at": "2026-04-30T11:40:42"
+    },
+    {
+      "key": "见喜什么获得",
+      "text": "见喜什么获得",
+      "extracted": {
+        "intent": "inventory",
+        "product_name": "见喜"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:15:34",
+      "updated_at": "2026-04-30T12:15:34"
+    },
+    {
+      "key": "见喜3两黄色调货到自己店里",
+      "text": "见喜3两黄色调货到自己店里",
+      "extracted": {
+        "intent": "transfer",
+        "from": "百鑫",
+        "to": "自己店里",
+        "products": [
+          {
+            "name": "见喜三两",
+            "quantity": null,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:19:47",
+      "updated_at": "2026-04-30T12:19:47"
+    },
+    {
+      "key": "见喜3两黄色调货到百鑫7套",
+      "text": "见喜3两黄色调货到百鑫 7套",
+      "extracted": {
+        "intent": "transfer",
+        "from": "自己店里",
+        "to": "百鑫",
+        "products": [
+          {
+            "name": "见喜三两",
+            "quantity": 7,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:20:51",
+      "updated_at": "2026-04-30T12:20:51"
+    },
+    {
+      "key": "见喜3两黄色调货到自己店里6套",
+      "text": "见喜3两黄色调货到自己店里 6套",
+      "extracted": {
+        "intent": "transfer",
+        "from": "百鑫",
+        "to": "自己店里",
+        "products": [
+          {
+            "name": "见喜三两",
+            "quantity": 6,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:23:51",
+      "updated_at": "2026-04-30T12:23:51"
+    },
+    {
+      "key": "查销售单148详情",
+      "text": "查销售单148详情",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "148"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:43:10",
+      "updated_at": "2026-04-30T12:43:10"
+    },
+    {
+      "key": "查销售单146详情",
+      "text": "查销售单146详情",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "146"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:43:22",
+      "updated_at": "2026-04-30T12:43:22"
+    },
+    {
+      "key": "查询工作流订单114",
+      "text": "查询工作流订单 114",
+      "extracted": {
+        "intent": "workflow",
+        "action": "query"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:46:28",
+      "updated_at": "2026-04-30T12:46:28"
+    },
+    {
+      "key": "查销售单140详情",
+      "text": "查销售单140详情",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "140"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T12:50:16",
+      "updated_at": "2026-04-30T12:50:16"
+    },
+    {
+      "key": "查销售单139详情",
+      "text": "查销售单139详情",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "139"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T13:04:39",
+      "updated_at": "2026-04-30T13:04:39"
+    },
+    {
+      "key": "查询工作流订单112",
+      "text": "查询工作流订单 112",
+      "extracted": {
+        "intent": "workflow",
+        "action": "query"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T13:14:35",
+      "updated_at": "2026-04-30T13:14:35"
+    },
+    {
+      "key": "查询工作流订单109",
+      "text": "查询工作流订单 109",
+      "extracted": {
+        "intent": "workflow",
+        "action": "query"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-04-30T13:15:03",
+      "updated_at": "2026-04-30T13:15:03"
+    },
+    {
+      "key": "删除工作流订单130",
+      "text": "删除工作流订单 130",
+      "extracted": {
+        "intent": "workflow",
+        "action": "delete"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T16:57:39",
+      "updated_at": "2026-05-03T16:57:39"
+    },
+    {
+      "key": "删除工作流订单131",
+      "text": "删除工作流订单 131",
+      "extracted": {
+        "intent": "workflow",
+        "action": "delete"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T16:59:09",
+      "updated_at": "2026-05-03T16:59:09"
+    },
+    {
+      "key": "查询销售单159详情",
+      "text": "查询销售单159详情",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "159"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T18:28:28",
+      "updated_at": "2026-05-03T18:28:28"
+    },
+    {
+      "key": "新建销售单",
+      "text": "新建销售单",
+      "extracted": {
+        "intent": "order"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T18:37:46",
+      "updated_at": "2026-05-03T18:37:46"
+    },
+    {
+      "key": "销售单159打印",
+      "text": "销售单 159 打印",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "159"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T19:31:14",
+      "updated_at": "2026-05-03T19:31:14"
+    },
+    {
+      "key": "修改销售单159",
+      "text": "修改销售单 159",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "159"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T20:00:53",
+      "updated_at": "2026-05-03T20:00:53"
+    },
+    {
+      "key": "删除工作流订单139",
+      "text": "删除工作流订单 139",
+      "extracted": {
+        "intent": "workflow",
+        "action": "delete"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T22:24:00",
+      "updated_at": "2026-05-03T22:24:00"
+    },
+    {
+      "key": "139",
+      "text": "??????? 139",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "139"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-03T22:30:25",
+      "updated_at": "2026-05-03T22:30:25"
+    },
+    {
+      "key": "喜悦半斤进货",
+      "text": "喜悦半斤 进货",
+      "extracted": {
+        "intent": "purchase",
+        "products": [
+          {
+            "name": "喜悦半斤",
+            "quantity": null,
+            "unit": null
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T12:26:51",
+      "updated_at": "2026-05-04T12:26:51"
+    },
+    {
+      "key": "喜悦3两黄色有多少",
+      "text": "喜悦3两黄色有多少",
+      "extracted": {
+        "intent": "inventory",
+        "product_name": "喜悦三两",
+        "color": "黄色"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T16:32:28",
+      "updated_at": "2026-05-04T16:32:28"
+    },
+    {
+      "key": "喜悦3两黄色有多少套",
+      "text": "喜悦3两黄色有多少套",
+      "extracted": {
+        "intent": "inventory",
+        "product_name": "喜悦三两",
+        "color": "黄色"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T16:32:54",
+      "updated_at": "2026-05-04T16:32:54"
+    },
+    {
+      "key": "喜悦黄色3两有多少套",
+      "text": "喜悦黄色3两有多少套",
+      "extracted": {
+        "intent": "inventory",
+        "product_name": "喜悦三两",
+        "color": "黄色"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T16:33:28",
+      "updated_at": "2026-05-04T16:33:28"
+    },
+    {
+      "key": "盘点喜悦3两黄色10套百鑫仓库",
+      "text": "盘点 喜悦3两黄色10套  百鑫仓库",
+      "extracted": {
+        "intent": "stocktaking",
+        "warehouse": "百鑫",
+        "products": [
+          {
+            "name": "喜悦三两",
+            "quantity": 10,
+            "unit": "套"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T16:38:10",
+      "updated_at": "2026-05-04T16:38:10"
+    },
+    {
+      "key": "邹氏下单喜悦3两红色5套喜悦3小盒黄色5套喜悦3两橙色5套",
+      "text": "邹氏 下单 喜悦3两红色5套 喜悦3小盒黄色5套 喜悦3两橙色5套",
+      "extracted": {
+        "intent": "order",
+        "customer": "邹氏",
+        "products": [
+          {
+            "name": "喜悦三两",
+            "qty": 5,
+            "unit": "套",
+            "color": "红色"
+          },
+          {
+            "name": "喜悦三小盒",
+            "qty": 5,
+            "unit": "套",
+            "color": "黄色"
+          },
+          {
+            "name": "喜悦三两",
+            "qty": 5,
+            "unit": "套",
+            "color": "橙色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T17:24:08",
+      "updated_at": "2026-05-04T17:24:08"
+    },
+    {
+      "key": "不用直接进货",
+      "text": "不用  直接进货",
+      "extracted": {
+        "intent": "purchase",
+        "warehouse": "百鑫",
+        "products": [
+          {
+            "name": "喜悦三两",
+            "quantity": null,
+            "unit": null
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T17:31:51",
+      "updated_at": "2026-05-04T17:31:51"
+    },
+    {
+      "key": "进货喜悦3两红色5套百鑫仓库",
+      "text": "进货 喜悦3两红色5套 百鑫仓库",
+      "extracted": {
+        "intent": "purchase",
+        "warehouse": "百鑫",
+        "products": [
+          {
+            "name": "喜悦三两",
+            "quantity": 5,
+            "unit": "套"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T17:38:50",
+      "updated_at": "2026-05-04T17:38:50"
+    },
+    {
+      "key": "盘点喜悦3两红色清零百鑫仓库",
+      "text": "盘点 喜悦3两红色 清零 百鑫仓库",
+      "extracted": {
+        "intent": "stocktaking",
+        "warehouse": "百鑫",
+        "products": [
+          {
+            "name": "喜悦三两",
+            "quantity": 0,
+            "unit": "套"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T17:52:25",
+      "updated_at": "2026-05-04T17:52:25"
+    },
+    {
+      "key": "销售单156打印",
+      "text": "销售单 156 打印",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "156"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T17:59:05",
+      "updated_at": "2026-05-04T17:59:05"
+    },
+    {
+      "key": "修改销售单164",
+      "text": "修改销售单 164",
+      "extracted": {
+        "intent": "sales_query",
+        "sales_id": "164"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-04T18:40:21",
+      "updated_at": "2026-05-04T18:40:21"
+    },
+    {
+      "key": "一枝一叶最近做了什么",
+      "text": "一枝一叶最近做了什么",
+      "extracted": {
+        "intent": "sales_query",
+        "customer": "一枝一叶"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T11:00:42",
+      "updated_at": "2026-05-05T11:00:42"
+    },
+    {
+      "key": "开单大师堂小盒子150个价格改1元",
+      "text": "开单 大师堂   小盒子150个 价格改1元",
+      "extracted": {
+        "intent": "order",
+        "customer": "大师堂",
+        "products": [
+          {
+            "name": "小盒子",
+            "qty": 150,
+            "unit": "个",
+            "color": "",
+            "price": 1
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T14:27:47",
+      "updated_at": "2026-05-05T14:27:47"
+    },
+    {
+      "key": "开单大师堂茶客150个价格改1元",
+      "text": "开单 大师堂  茶客150个  价格改1元",
+      "extracted": {
+        "intent": "order",
+        "customer": "大师堂",
+        "products": [
+          {
+            "name": "茶客",
+            "qty": 150,
+            "unit": "个",
+            "color": "",
+            "price": 1
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T16:58:58",
+      "updated_at": "2026-05-05T16:58:58"
+    },
+    {
+      "key": "开单大师堂茶客2泡盒150个改价1元一个",
+      "text": "开单 大师堂  茶客2泡盒  150个 改价1元一个",
+      "extracted": {
+        "intent": "order",
+        "customer": "大师堂",
+        "products": [
+          {
+            "name": "茶客二泡盒",
+            "qty": 150,
+            "unit": "个",
+            "color": "",
+            "price": 1
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T17:17:15",
+      "updated_at": "2026-05-05T17:17:15"
+    },
+    {
+      "key": "开单大师堂茶客2泡盒150个改价1元",
+      "text": "开单 大师堂   茶客2泡盒  150个 改价1元",
+      "extracted": {
+        "intent": "order",
+        "customer": "大师堂",
+        "products": [
+          {
+            "name": "茶客二泡盒",
+            "qty": 150,
+            "unit": "个",
+            "color": "",
+            "price": 1
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T19:47:41",
+      "updated_at": "2026-05-05T19:47:41"
+    },
+    {
+      "key": "现在1件起的礼盒有什么",
+      "text": "现在1件起的礼盒有什么",
+      "extracted": {
+        "intent": "series_manage",
+        "action": "query"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T19:53:46",
+      "updated_at": "2026-05-05T19:53:46"
+    },
+    {
+      "key": "开单妙岩茶业茶派2大盒黄色5套",
+      "text": "开单  妙岩茶业   茶派2大盒黄色5套",
+      "extracted": {
+        "intent": "order",
+        "customer": "妙岩茶业",
+        "products": [
+          {
+            "name": "茶派二大盒",
+            "qty": 5,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T20:14:16",
+      "updated_at": "2026-05-05T20:14:16"
+    },
+    {
+      "key": "开单妙岩茶叶茶派2大盒黄色5套",
+      "text": "开单 妙岩茶叶  茶派2大盒黄色 5套",
+      "extracted": {
+        "intent": "order",
+        "customer": "妙岩茶叶",
+        "products": [
+          {
+            "name": "茶派二大盒",
+            "qty": 5,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T20:16:55",
+      "updated_at": "2026-05-05T20:16:55"
+    },
+    {
+      "key": "开单茶派2大盒黄色5套妙岩茶叶",
+      "text": "开单  茶派2大盒黄色5套 妙岩茶叶",
+      "extracted": {
+        "intent": "order",
+        "customer": "妙岩茶叶",
+        "products": [
+          {
+            "name": "茶派二大盒",
+            "qty": 5,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-05T20:19:35",
+      "updated_at": "2026-05-05T20:19:35"
+    },
+    {
+      "key": "开单茶派2大盒黄色5套妙岩茶叶自己店里库存",
+      "text": "开单 茶派2大盒黄色5套  妙岩茶叶  自己店里库存",
+      "extracted": {
+        "intent": "order",
+        "customer": "妙岩茶叶",
+        "warehouse": "自己店里",
+        "products": [
+          {
+            "name": "茶派二大盒",
+            "qty": 5,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-06T11:52:55",
+      "updated_at": "2026-05-06T11:52:55"
+    },
+    {
+      "key": "喜悦三两黄色有没有",
+      "text": "喜悦三两黄色有没有？",
+      "extracted": {
+        "intent": "inventory",
+        "product_name": "喜悦三两",
+        "color": "黄色"
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-06T12:47:37",
+      "updated_at": "2026-05-06T12:47:37"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+# LangGraph 核心
+langgraph>=0.2.60
+langchain-core>=0.3.62
+langchain-anthropic>=0.3.14
+
+# 大模型
+anthropic>=0.52.0
+
+# 数据库
+pymysql>=1.1.1
+
+# HTTP 请求
+httpx>=0.28.1
+requests>=2.32.3
+
+# 图片处理
+Pillow>=10.4.0
+RapidOCR>=2.0.0
+onnxruntime>=1.25.0
+opencv-python>=4.10.0
+
+# OSS
+oss2>=2.19.0
+aliyun-python-sdk-core>=2.16.0
+
+# YAML 配置
+pyyaml>=6.0.2
+
+# 数据验证
+pydantic>=2.10.5
+
+# 日志
+loguru>=0.7.3
+
+# Web 框架（HTTP API）
+flask>=3.0.0
+
+# 飞书 SDK
+lark-oapi>=1.2.0
+
+# 环境变量
+python-dotenv>=1.0.0
