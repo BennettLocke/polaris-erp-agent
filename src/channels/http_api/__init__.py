@@ -1724,6 +1724,6 @@ def health():
     return jsonify({"status": "ok", "agent": "sjagent"})
 
 
-def run_api_server(host: str = "0.0.0.0", port: int = 8080):
+def run_api_server(host: str = "127.0.0.1", port: int = 8080):
     """启动 HTTP API 服务器"""
     app.run(host=host, port=port, debug=False)
