@@ -1535,6 +1535,25 @@ def product_save_api():
         return _api_exception_response(e)
 
 
+@app.route("/api/product/delete", methods=["POST"])
+def product_delete_api():
+    """删除商品。"""
+    from src.engine.api_client import ERPSystemClient
+
+    try:
+        body = request.get_json(silent=True)
+        if body is None:
+            body = request.form.to_dict(flat=True)
+        ids = (body or {}).get("ids")
+        if not ids:
+            return jsonify({"code": 400, "msg": "缺少商品ID"}), 400
+        result = ERPSystemClient().product_delete(ids)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"商品删除异常: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/product/upload", methods=["POST"])
 def product_upload_api():
     """上传商品图片。"""

@@ -271,6 +271,15 @@ class ERPSystemClient:
         return self._post("ProductSave", form)
 
     @retry_on_api_error(max_retries=3)
+    def product_delete(self, ids: list[int] | str | int) -> dict:
+        """删除商品"""
+        if isinstance(ids, list):
+            value = ",".join(str(item) for item in ids)
+        else:
+            value = str(ids)
+        return self._post("ProductDelete", {"ids": value})
+
+    @retry_on_api_error(max_retries=3)
     def product_upload(self, filename: str, content: bytes, content_type: str = "image/jpeg") -> dict:
         """上传商品图片"""
         return self._upload("ProductUpload", {
