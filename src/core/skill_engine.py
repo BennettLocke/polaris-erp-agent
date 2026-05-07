@@ -190,6 +190,8 @@ class SkillEngine:
 
         # 执行（传入 pre-extracted params）
         try:
+            if intent in {"chat", "unknown", "help"}:
+                params = {**params, "history": history}
             result = workflow.execute(user_input, params=params)
         except Exception as e:
             logger.error(f"[SkillEngine] skill 执行失败: {e}")

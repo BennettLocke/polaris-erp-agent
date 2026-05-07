@@ -24,6 +24,12 @@ class ChatWorkflow(BaseWorkflow):
     """闲聊/帮助"""
 
     def execute(self, user_input: str, params: dict = None) -> dict:
+        params = params or {}
+        history = params.get("history") or []
+        contextual_reply = self._reply_from_history(user_input, history)
+        if contextual_reply:
+            return self._reply(contextual_reply)
+
         if any(kw in user_input for kw in ["企业微信", "微信通知", "通知到企业微信"]):
             return self._reply(
                 "目前北极星还没有接入企业微信通知。我现在能在 WebUI 里处理库存、调货、销售单、工作流订单和确认/取消操作。"
@@ -46,8 +52,37 @@ class ChatWorkflow(BaseWorkflow):
         # 闲聊
         from src.core.llm import llm_chat
         try:
-            prompt = "你是肆计包装-北极星订单管理机器人，名字叫北极星。用简短亲切的语气回复用户。不要使用emoji。"
+            recent = self._format_recent_history(history)
+            prompt = (
+                "你是肆计包装-北极星订单管理机器人，名字叫北极星。"
+                "用简短亲切的语气回复用户，不要使用emoji。"
+                "如果用户在追问上一轮订单、图片识别、库存、工作流或销售单，要结合最近对话回答，不要说看不到上下文。"
+                f"\n\n最近对话：\n{recent}"
+            )
             reply = llm_chat(prompt, user_input)
             return self._reply(reply)
         except Exception:
             return self._reply("你好！有什么可以帮您的？")
+
+    def _reply_from_history(self, user_input: str, history: list[dict]) -> str:
+        text = user_input.strip()
+        if not history:
+            return ""
+        if any(kw in text for kw in ["不是已经识别", "明明识别", "识别出来了", "刚才识别"]):
+            for item in reversed(history):
+                content = item.get("content", "")
+                if item.get("role") == "assistant" and "图片识别完成" in content:
+                    return "看到了，刚才确实已经识别出内容了。上一条结果是：\n" + content
+        return ""
+
+    def _format_recent_history(self, history: list[dict]) -> str:
+        if not history:
+            return "无"
+        lines = []
+        for item in history[-8:]:
+            role = "用户" if item.get("role") == "user" else "北极星"
+            content = str(item.get("content", "")).strip()
+            if len(content) > 500:
+                content = content[:500] + "..."
+            lines.append(f"{role}: {content}")
+        return "\n".join(lines)

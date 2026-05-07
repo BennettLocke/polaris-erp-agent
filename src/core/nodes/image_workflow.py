@@ -118,8 +118,8 @@ def process_single_image(image_path: str, caller) -> dict:
                     continue
                 temp_path = save_temp_image(cropped, i)
                 cropped_images.append(temp_path)
-                _, ocr_text = processor.ocr_recognize(cropped, top_ratio=REMARK_OCR_TOP_RATIO)
-                child_results.append(_process_ocr_order([ocr_text], temp_path, caller))
+                ocr_texts = recognize_remark_texts(processor, cropped)
+                child_results.append(_process_ocr_order(ocr_texts, temp_path, caller))
 
             result["items"] = child_results
             result["workflow_orders"] = [item["workflow_order"] for item in child_results if item.get("workflow_order")]
@@ -135,8 +135,8 @@ def process_single_image(image_path: str, caller) -> dict:
             if errors and not result["workflow_orders"]:
                 result["error"] = "；".join(errors)
         else:
-            _, ocr_text = processor.ocr_recognize(local_path, top_ratio=REMARK_OCR_TOP_RATIO)
-            result.update(_process_ocr_order([ocr_text], local_path, caller))
+            ocr_texts = recognize_remark_texts(processor, local_path)
+            result.update(_process_ocr_order(ocr_texts, local_path, caller))
 
     finally:
         # 清理临时裁切图
@@ -153,6 +153,22 @@ def process_single_image(image_path: str, caller) -> dict:
     return result
 
 
+def recognize_remark_texts(processor: ImageProcessor, image) -> list[str]:
+    """Run OCR on the remark area, widening once when the first pass is too sparse."""
+    if isinstance(image, str):
+        image = processor._load_image(image)
+    texts: list[str] = []
+    for ratio in (REMARK_OCR_TOP_RATIO, 0.38):
+        _, text = processor.ocr_recognize(image, top_ratio=ratio)
+        text = (text or "").strip()
+        if text and text not in texts:
+            texts.append(text)
+        parsed = parse_ocr_text_list(texts)
+        if parsed.get("goods_name") and (parsed.get("craft") or parsed.get("quantity", 1) != 1):
+            break
+    return texts or [""]
+
+
 def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
     item = {
         "parsed": {},
@@ -164,6 +180,7 @@ def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
     item["image_source_path"] = image_path
 
     parsed = parse_ocr_text_list(ocr_texts)
+    parsed = repair_ocr_parsed_fields(parsed, caller)
     item["parsed"] = parsed
 
     goods_name = parsed.get("goods_name", "")
@@ -318,6 +335,29 @@ def _parse_quantity(line: str) -> tuple[int, str] | None:
     return None
 
 
+def _goods_word_pattern() -> str:
+    return r"(长半斤|短半斤|半斤|[一二三四五六七八九十\d]+两|[一二三四五六七八九十\d]+小盒|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
+
+
+def _looks_like_goods_text(text: str) -> bool:
+    return bool(re.search(_goods_word_pattern(), _normalize_ocr_line(text)))
+
+
+def _is_invalid_customer(value: str | None) -> bool:
+    text = _clean_field_value(str(value or ""))
+    if not text or text in {"客户未识别", "未识别", "无", "暂无"}:
+        return True
+    if len(text) < 2:
+        return True
+    if re.fullmatch(r"[0-9A-Za-z_-]{1,2}", text):
+        return True
+    if re.search(r"\d", text):
+        return True
+    if _looks_like_goods_text(text) and not re.search(r"(公司|茶业|茶叶|店|商行|夷品|一枝一叶|客户)", text):
+        return True
+    return False
+
+
 def _extract_goods_from_remark(line: str) -> str:
     text = _normalize_ocr_line(line)
     without_date = re.sub(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", "", text)
@@ -336,8 +376,7 @@ def _looks_like_goods_line(line: str) -> bool:
         return False
     if re.fullmatch(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text):
         return False
-    gift_words = r"(长半斤|半斤|[一二三四五六七八九十\d]+两|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
-    return bool(_parse_quantity(text) and re.search(gift_words, text))
+    return bool(_parse_quantity(text) and _looks_like_goods_text(text))
 
 
 def _clean_goods_value(value: str) -> str:
@@ -390,9 +429,13 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
             continue
 
         if pending_label == "customer":
-            result["customer_name"] = _clean_field_value(line)
+            if not _looks_like_goods_text(line):
+                customer_value = _clean_field_value(line)
+                if not _is_invalid_customer(customer_value):
+                    result["customer_name"] = customer_value
+                pending_label = ""
+                continue
             pending_label = ""
-            continue
 
         # 客户
         if re.fullmatch(r"(客户|客人|客户名称)\s*:?", line):
@@ -452,6 +495,118 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
         result["color"] = extract_color_from_text(full_text) or ""
 
     return result
+
+
+def repair_ocr_parsed_fields(parsed: dict, caller) -> dict:
+    """
+    Repair OCR structure with ERP data.
+
+    Common design remarks often look like "客户：\n夷品锦程3小盒黄色".
+    OCR got the text right, but the parser may put the whole line into customer.
+    Here we verify possible splits against the customer table and product table.
+    """
+    parsed = dict(parsed or {})
+    full_text = parsed.get("full_text", "")
+    lines = [_normalize_ocr_line(line) for line in full_text.splitlines() if _normalize_ocr_line(line)]
+    color = parsed.get("color", "")
+
+    customer_name = _clean_field_value(parsed.get("customer_name", ""))
+    goods_name = _clean_field_value(parsed.get("goods_name", ""))
+
+    split_sources = []
+    if customer_name and _looks_like_goods_text(customer_name):
+        split_sources.append(customer_name)
+    if goods_name and _looks_like_goods_text(goods_name):
+        split_sources.append(goods_name)
+    if not goods_name or split_sources:
+        split_sources.extend(line for line in lines if _looks_like_goods_text(line))
+
+    for source in dict.fromkeys(split_sources):
+        split = _split_customer_goods_by_erp(source, caller, color)
+        if not split:
+            continue
+        inferred_customer, inferred_goods = split
+        if _is_invalid_customer(customer_name) or _looks_like_goods_text(customer_name):
+            customer_name = inferred_customer
+        if not goods_name or source == goods_name or _looks_like_goods_text(customer_name):
+            goods_name = inferred_goods
+        break
+
+    if not goods_name:
+        for line in lines:
+            if _looks_like_goods_text(line):
+                candidate = _extract_goods_from_remark(line)
+                if candidate:
+                    goods_name = candidate
+                    break
+
+    if _is_invalid_customer(customer_name):
+        inferred = _infer_customer_from_ocr_lines(lines, goods_name, caller)
+        customer_name = inferred or "散客"
+        parsed["customer_inferred"] = bool(inferred)
+        parsed["customer_missing"] = not bool(inferred)
+
+    parsed["customer_name"] = customer_name
+    parsed["goods_name"] = goods_name
+    return parsed
+
+
+def _split_customer_goods_by_erp(text: str, caller, color: str = "") -> tuple[str, str] | None:
+    candidate = _extract_goods_from_remark(text)
+    candidate = re.sub(r"^(客户|客人|客户名称)\s*:?", "", candidate).strip()
+    if not candidate or not _looks_like_goods_text(candidate):
+        return None
+
+    max_customer_len = min(8, len(candidate) - 1)
+    for idx in range(2, max_customer_len + 1):
+        customer_part = _clean_field_value(candidate[:idx])
+        goods_part = _clean_goods_value(candidate[idx:])
+        if not customer_part or not goods_part or not _looks_like_goods_text(goods_part):
+            continue
+        customer_name = _find_exact_customer_name(customer_part, caller)
+        if not customer_name:
+            continue
+        if find_product_by_goods_name(goods_part, caller, color):
+            return customer_name, goods_part
+    return None
+
+
+def _find_exact_customer_name(keyword: str, caller) -> str:
+    keyword = _clean_field_value(keyword)
+    if _is_invalid_customer(keyword):
+        return ""
+    try:
+        rows = caller.call("customer_query", keyword=keyword)
+    except Exception as e:
+        logger.warning(f"OCR客户纠错查询失败: {keyword}, error={e}")
+        return ""
+    for row in rows or []:
+        name = _clean_field_value(str(row.get("name") or row.get("customer_name") or ""))
+        if name == keyword:
+            return name
+    if len(rows or []) == 1:
+        name = _clean_field_value(str((rows or [])[0].get("name") or (rows or [])[0].get("customer_name") or ""))
+        if keyword in name or name in keyword:
+            return name
+    return ""
+
+
+def _infer_customer_from_ocr_lines(lines: list[str], goods_name: str, caller) -> str:
+    for line in lines:
+        text = re.sub(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", "", line)
+        text = _clean_field_value(re.sub(r"^(客户|客人|客户名称)\s*:?", "", text))
+        if not text or _is_invalid_customer(text):
+            continue
+        if goods_name and goods_name.replace(" ", "") in text.replace(" ", ""):
+            continue
+        if _looks_like_goods_text(text) or _parse_quantity(text) or _extract_craft_terms(text):
+            continue
+        if re.fullmatch(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text):
+            continue
+        customer_name = _find_exact_customer_name(text, caller)
+        if customer_name:
+            return customer_name
+    return ""
 
 
 def find_product_by_goods_name(goods_name: str, caller, color: str = "") -> dict | None:
@@ -583,9 +738,12 @@ def create_workflow_order(parsed: dict, image_url: str, caller) -> dict | None:
     调用 WorkflowOrderSave
     """
     try:
+        customer_name = parsed.get("customer_name") or "散客"
+        if _is_invalid_customer(customer_name):
+            customer_name = "散客"
         result = caller.call(
             "workflow_order_save",
-            customer_name=parsed.get("customer_name", "散客"),
+            customer_name=customer_name,
             goods_name=parsed.get("goods_name", ""),
             order_quantity=parsed.get("quantity", 1),
             color=parsed.get("color", ""),
