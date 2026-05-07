@@ -23,6 +23,13 @@ SHOPXO_AUTH_CACHE: dict[str, tuple[float, dict]] = {}
 SHOPXO_AUTH_CACHE_TTL = 86400 * 30
 
 
+def _api_exception_response(e: Exception):
+    response = getattr(e, "response", None)
+    if isinstance(response, dict) and response:
+        return jsonify(response)
+    return jsonify({"code": 500, "msg": str(e)}), 500
+
+
 def _shopxo_base_url() -> str:
     try:
         from src.core.config import get_config
@@ -1461,6 +1468,105 @@ def product_search():
     except Exception as e:
         logger.error(f"商品搜索异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/product/list", methods=["GET"])
+def product_list():
+    """商品管理列表，直接走 ERP Agent API。"""
+    from src.engine.api_client import ERPSystemClient
+
+    try:
+        client = ERPSystemClient()
+        result = client.product_list(
+            keyword=request.args.get("keyword") or None,
+            brand_name=request.args.get("brand_name") or None,
+            status=request.args.get("status", type=int) if request.args.get("status") not in (None, "") else None,
+            category_id=request.args.get("category_id", type=int) or None,
+            page=request.args.get("page", default=1, type=int),
+            page_size=request.args.get("page_size", default=20, type=int),
+        )
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"商品列表异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/options", methods=["GET"])
+def product_options():
+    """商品编辑基础数据。"""
+    from src.engine.api_client import ERPSystemClient
+
+    try:
+        product_id = request.args.get("id", type=int)
+        result = ERPSystemClient().product_save_info(product_id)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"商品基础数据异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/<int:product_id>", methods=["GET"])
+def product_detail_api(product_id: int):
+    """商品详情。"""
+    from src.engine.api_client import ERPSystemClient
+
+    try:
+        result = ERPSystemClient().product_detail(product_id)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"商品详情异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/save", methods=["POST"])
+def product_save_api():
+    """创建/编辑商品。"""
+    from src.engine.api_client import ERPSystemClient
+
+    try:
+        body = request.get_json(silent=True)
+        if body is None:
+            body = request.form.to_dict(flat=True)
+        result = ERPSystemClient().product_save(body or {})
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"商品保存异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/upload", methods=["POST"])
+def product_upload_api():
+    """上传商品图片。"""
+    from src.engine.api_client import ERPSystemClient
+
+    try:
+        file = request.files.get("image")
+        if file is None:
+            return jsonify({"code": 400, "msg": "缺少图片文件"}), 400
+        filename = secure_filename(file.filename or f"product_{int(time.time())}.jpg")
+        content = file.read()
+        if not content:
+            return jsonify({"code": 400, "msg": "图片文件为空"}), 400
+        result = ERPSystemClient().product_upload(filename, content, file.mimetype or "application/octet-stream")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"商品图片上传异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/<int:product_id>/shelves", methods=["POST"])
+def product_shelves_api(product_id: int):
+    """同步商城商品上下架。"""
+    from src.engine.api_client import ERPSystemClient
+
+    try:
+        body = request.get_json(silent=True) or request.form.to_dict(flat=True) or {}
+        state = int(body.get("state", 0))
+        result = ERPSystemClient().product_shelves_update(product_id, state)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"商品上下架异常: {e}")
+        return _api_exception_response(e)
 
 
 @app.route("/api/customer/list", methods=["GET"])

@@ -1,4 +1,5 @@
 """统一 API 请求引擎 - 完整 ERP 接口封装"""
+import json
 import httpx
 from urllib.parse import quote
 from typing import Any, Optional
@@ -61,6 +62,30 @@ class ERPSystemClient:
         except httpx.HTTPError as e:
             logger.error(f"HTTP 请求异常: {e}")
             raise APIError(f"网络请求失败: {e}")
+
+    def _upload(self, action: str, files: dict, data: dict | None = None) -> dict:
+        """multipart upload request"""
+        url = self._build_url(action)
+        logger.info(f"API UPLOAD: {action}")
+
+        try:
+            response = self._client.post(url, data=data or {}, files=files)
+            try:
+                result = response.json()
+            except ValueError:
+                logger.error(f"API returned non-JSON: status={response.status_code}, body={response.text[:200]}")
+                raise APIError(f"API returned non-JSON response: status={response.status_code}")
+
+            if result.get("code") != 0:
+                raise APIError(
+                    message=result.get("msg", "API call failed"),
+                    code=result.get("code"),
+                    response=result,
+                )
+            return result
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP upload error: {e}")
+            raise APIError(f"Upload request failed: {e}")
 
     def _get(self, action: str, params: dict = None) -> dict:
         """GET 请求"""
@@ -172,6 +197,8 @@ class ERPSystemClient:
         self,
         keyword: Optional[str] = None,
         brand_name: Optional[str] = None,
+        status: Optional[int] = None,
+        category_id: Optional[int] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict:
@@ -184,6 +211,10 @@ class ERPSystemClient:
             params["keyword"] = keyword
         if brand_name:
             params["brand_name"] = brand_name
+        if status is not None:
+            params["status"] = status
+        if category_id:
+            params["category_id"] = category_id
         return self._get("ProductList", params)
 
     @retry_on_api_error(max_retries=3)
@@ -209,6 +240,44 @@ class ERPSystemClient:
         if brand_name:
             data["brand_name"] = brand_name
         return self._post("ProductAdd", data)
+
+    @retry_on_api_error(max_retries=3)
+    def product_detail(self, product_id: int) -> dict:
+        """商品详情"""
+        return self._get("ProductDetail", {"id": product_id})
+
+    @retry_on_api_error(max_retries=3)
+    def product_save_info(self, product_id: int | None = None) -> dict:
+        """商品编辑基础数据"""
+        params = {}
+        if product_id:
+            params["id"] = product_id
+        return self._get("ProductSaveInfo", params)
+
+    @retry_on_api_error(max_retries=3)
+    def product_save(self, data: dict) -> dict:
+        """创建/编辑商品"""
+        form: dict[str, Any] = {}
+        for key, value in (data or {}).items():
+            if value is None:
+                continue
+            if isinstance(value, (list, dict)):
+                form[key] = json.dumps(value, ensure_ascii=False)
+            else:
+                form[key] = value
+        return self._post("ProductSave", form)
+
+    @retry_on_api_error(max_retries=3)
+    def product_upload(self, filename: str, content: bytes, content_type: str = "image/jpeg") -> dict:
+        """上传商品图片"""
+        return self._upload("ProductUpload", {
+            "image": (filename or "product.jpg", content, content_type or "application/octet-stream")
+        })
+
+    @retry_on_api_error(max_retries=3)
+    def product_shelves_update(self, product_id: int, state: int) -> dict:
+        """同步商城商品上下架"""
+        return self._post("ProductShelvesUpdate", {"id": product_id, "state": state})
 
     # ==================== 客户管理（2个）====================
 
