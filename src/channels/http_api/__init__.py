@@ -1482,6 +1482,7 @@ def product_list():
             brand_name=request.args.get("brand_name") or None,
             status=request.args.get("status", type=int) if request.args.get("status") not in (None, "") else None,
             category_id=request.args.get("category_id", type=int) or None,
+            group=request.args.get("group", default=1, type=int) == 1,
             page=request.args.get("page", default=1, type=int),
             page_size=request.args.get("page_size", default=20, type=int),
         )

@@ -199,6 +199,7 @@ class ERPSystemClient:
         brand_name: Optional[str] = None,
         status: Optional[int] = None,
         category_id: Optional[int] = None,
+        group: bool = False,
         page: int = 1,
         page_size: int = 50,
     ) -> dict:
@@ -215,6 +216,8 @@ class ERPSystemClient:
             params["status"] = status
         if category_id:
             params["category_id"] = category_id
+        if group:
+            params["group"] = 1
         return self._get("ProductList", params)
 
     @retry_on_api_error(max_retries=3)
