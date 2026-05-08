@@ -1807,9 +1807,14 @@ def auth_wechat_quick_login():
     authcode = (body.get("authcode") or body.get("code") or "").strip()
     if not authcode:
         return jsonify({"code": 400, "msg": "缺少微信登录 code"}), 400
+    miniapp_appid = (
+        body.get("appid")
+        or os.environ.get("SHOPXO_MINIAPP_AUTH_APPID")
+        or "wx6fcdcf7f0f4cd033"
+    )
 
     try:
-        result = _shopxo_post("user", "appminiuserauth", {"authcode": authcode})
+        result = _shopxo_post("user", "appminiuserauth", {"authcode": authcode, "appid": miniapp_appid})
         if int(result.get("code", -1)) != 0:
             return jsonify({"code": 401, "msg": result.get("msg") or "微信快捷登录失败"}), 401
 
