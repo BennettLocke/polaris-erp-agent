@@ -1757,6 +1757,36 @@ def auth_login():
         return jsonify({"code": 500, "msg": f"商城登录异常: {e}"}), 500
 
 
+@app.route("/api/auth/wechat-quick-login", methods=["POST"])
+def auth_wechat_quick_login():
+    """Login through ShopXO's mini-program auth flow, avoiding password captcha."""
+    body = request.get_json(silent=True) or request.form.to_dict() or {}
+    authcode = (body.get("authcode") or body.get("code") or "").strip()
+    if not authcode:
+        return jsonify({"code": 400, "msg": "缺少微信登录 code"}), 400
+
+    try:
+        result = _shopxo_post("user", "appminiuserauth", {"authcode": authcode})
+        if int(result.get("code", -1)) != 0:
+            return jsonify({"code": 401, "msg": result.get("msg") or "微信快捷登录失败"}), 401
+
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        user_data = data.get("user") if isinstance(data.get("user"), dict) else data
+        token = _nested_token(data) or _nested_token(result)
+        if not token:
+            token = f"sj_local_{uuid.uuid4().hex}"
+
+        user = _normalize_shopxo_user(user_data, token)
+        if not user.get("id") and isinstance(data, dict):
+            user = _normalize_shopxo_user(data, token)
+
+        SHOPXO_AUTH_CACHE[token] = (time.time() + SHOPXO_AUTH_CACHE_TTL, user)
+        return jsonify({"code": 0, "data": {"token": token, "user": user}})
+    except Exception as e:
+        logger.error(f"微信快捷登录异常: {e}")
+        return jsonify({"code": 500, "msg": f"微信快捷登录异常: {e}"}), 500
+
+
 @app.route("/api/auth/captcha", methods=["GET"])
 def auth_captcha():
     """Proxy the ShopXO image captcha so the miniapp can keep using the sjagent API host."""
