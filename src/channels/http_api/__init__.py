@@ -118,6 +118,7 @@ def _shopxo_user_by_account(accounts: str) -> dict | None:
             """
             SELECT
                 u.id, u.username, u.nickname, u.mobile, u.email, u.avatar,
+                u.status, u.user_role,
                 up.token AS platform_token
             FROM sxo_user u
             LEFT JOIN sxo_user_platform up
@@ -146,6 +147,40 @@ def _shopxo_user_by_account(accounts: str) -> dict | None:
     return _normalize_shopxo_user(row, token)
 
 
+def _shopxo_user_permission(user_id) -> dict:
+    if not user_id:
+        return {"status": None, "user_role": None, "is_admin": False, "miniapp_allowed": False}
+    try:
+        from src.engine.db_client import get_db_client
+        db = get_db_client()
+        rows = db.query(
+            """
+            SELECT id, status, user_role
+            FROM sxo_user
+            WHERE id = %s
+              AND is_delete_time = 0
+              AND is_logout_time = 0
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+    except Exception as e:
+        logger.warning(f"商城用户权限查询失败: {e}")
+        return {"status": None, "user_role": None, "is_admin": False, "miniapp_allowed": False}
+    if not rows:
+        return {"status": None, "user_role": None, "is_admin": False, "miniapp_allowed": False}
+    row = rows[0]
+    status = int(row.get("status") or 0)
+    user_role = int(row.get("user_role") or 0)
+    is_admin = status == 0 and user_role == 0
+    return {
+        "status": status,
+        "user_role": user_role,
+        "is_admin": is_admin,
+        "miniapp_allowed": is_admin,
+    }
+
+
 def _auth_token_from_request() -> str:
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
@@ -165,7 +200,7 @@ def _normalize_shopxo_user(user: dict, token: str = "") -> dict:
         or user.get("email")
         or (f"用户{user_id}" if user_id else "商城用户")
     )
-    return {
+    normalized = {
         "id": user_id,
         "token": token or user.get("token") or "",
         "display_name": display_name,
@@ -176,6 +211,12 @@ def _normalize_shopxo_user(user: dict, token: str = "") -> dict:
         "avatar": user.get("avatar") or "",
         "raw": user,
     }
+    normalized.update(_shopxo_user_permission(user_id))
+    return normalized
+
+
+def _shopxo_user_can_access_miniapp(user: dict | None) -> bool:
+    return bool(isinstance(user, dict) and user.get("miniapp_allowed") is True)
 
 
 def _verify_shopxo_token(token: str, force: bool = False) -> dict | None:
@@ -215,6 +256,8 @@ def _miniapp_auth_guard():
         user = None
     if not user:
         return jsonify({"code": 401, "msg": "请先登录商城账号"}), 401
+    if not _shopxo_user_can_access_miniapp(user):
+        return jsonify({"code": 401, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 401
     request.shopxo_user = user
     return None
 
@@ -1750,6 +1793,8 @@ def auth_login():
             token = user.get("token", "")
         else:
             user = _normalize_shopxo_user(data, token)
+        if not _shopxo_user_can_access_miniapp(user):
+            return jsonify({"code": 403, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 403
         SHOPXO_AUTH_CACHE[token] = (time.time() + SHOPXO_AUTH_CACHE_TTL, user)
         return jsonify({"code": 0, "data": {"token": token, "user": user}})
     except Exception as e:
@@ -1779,6 +1824,8 @@ def auth_wechat_quick_login():
         user = _normalize_shopxo_user(user_data, token)
         if not user.get("id") and isinstance(data, dict):
             user = _normalize_shopxo_user(data, token)
+        if not _shopxo_user_can_access_miniapp(user):
+            return jsonify({"code": 403, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 403
 
         SHOPXO_AUTH_CACHE[token] = (time.time() + SHOPXO_AUTH_CACHE_TTL, user)
         return jsonify({"code": 0, "data": {"token": token, "user": user}})
@@ -1821,6 +1868,8 @@ def auth_me():
         user = _verify_shopxo_token(token, force=request.args.get("force") in ("1", "true", "True"))
         if not user:
             return jsonify({"code": 401, "msg": "登录已失效，请重新登录"}), 401
+        if not _shopxo_user_can_access_miniapp(user):
+            return jsonify({"code": 401, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 401
         return jsonify({"code": 0, "data": {"token": token, "user": user}})
     except Exception as e:
         logger.error(f"商城用户信息校验异常: {e}")
