@@ -257,7 +257,7 @@ def _miniapp_auth_guard():
     if not user:
         return jsonify({"code": 401, "msg": "请先登录商城账号"}), 401
     if not _shopxo_user_can_access_miniapp(user):
-        return jsonify({"code": 401, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 401
+        return jsonify({"code": 403, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 403
     request.shopxo_user = user
     return None
 
@@ -1793,8 +1793,6 @@ def auth_login():
             token = user.get("token", "")
         else:
             user = _normalize_shopxo_user(data, token)
-        if not _shopxo_user_can_access_miniapp(user):
-            return jsonify({"code": 403, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 403
         SHOPXO_AUTH_CACHE[token] = (time.time() + SHOPXO_AUTH_CACHE_TTL, user)
         return jsonify({"code": 0, "data": {"token": token, "user": user}})
     except Exception as e:
@@ -1824,9 +1822,6 @@ def auth_wechat_quick_login():
         user = _normalize_shopxo_user(user_data, token)
         if not user.get("id") and isinstance(data, dict):
             user = _normalize_shopxo_user(data, token)
-        if not _shopxo_user_can_access_miniapp(user):
-            return jsonify({"code": 403, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 403
-
         SHOPXO_AUTH_CACHE[token] = (time.time() + SHOPXO_AUTH_CACHE_TTL, user)
         return jsonify({"code": 0, "data": {"token": token, "user": user}})
     except Exception as e:
@@ -1868,8 +1863,6 @@ def auth_me():
         user = _verify_shopxo_token(token, force=request.args.get("force") in ("1", "true", "True"))
         if not user:
             return jsonify({"code": 401, "msg": "登录已失效，请重新登录"}), 401
-        if not _shopxo_user_can_access_miniapp(user):
-            return jsonify({"code": 401, "msg": "当前账号不是管理员，暂无小程序业务权限"}), 401
         return jsonify({"code": 0, "data": {"token": token, "user": user}})
     except Exception as e:
         logger.error(f"商城用户信息校验异常: {e}")
