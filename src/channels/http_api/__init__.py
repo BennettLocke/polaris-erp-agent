@@ -1231,6 +1231,23 @@ def sales_print_task_api(sales_id: int):
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+@app.route("/api/sales/<int:sales_id>", methods=["DELETE"])
+def sales_delete_api(sales_id: int):
+    """Delete a sales order directly from the WebUI/mini app API."""
+    from src.core.tools.caller import get_tool_caller
+    caller = get_tool_caller()
+    if sales_id <= 0:
+        return jsonify({"code": 400, "msg": "sales_id is required"}), 400
+    try:
+        result = caller.call("sales_delete", ids=str(sales_id))
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error")}), 500
+        return jsonify({"code": 0, "data": result})
+    except Exception as e:
+        logger.error(f"sales delete failed: sales_id={sales_id}, error={e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
 @app.route("/api/inventory/cards", methods=["GET"])
 def inventory_cards():
     """
