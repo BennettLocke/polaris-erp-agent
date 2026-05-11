@@ -5,6 +5,7 @@ HTTP API 渠道（预留 WebUI 和外部调用）
 import json
 import os
 import re
+import threading
 import uuid
 import time
 from pathlib import Path
@@ -29,6 +30,8 @@ ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
 SHOPXO_AUTH_CACHE: dict[str, tuple[float, dict]] = {}
 SHOPXO_AUTH_CACHE_TTL = 86400 * 30
 WEB_AUTH_TABLE = "sjagent_web_users"
+_WEB_AUTH_TABLE_READY = False
+_WEB_AUTH_TABLE_LOCK = threading.Lock()
 
 
 def _api_exception_response(e: Exception):
@@ -44,38 +47,45 @@ def _web_auth_db():
 
 
 def _ensure_web_auth_table():
-    db = _web_auth_db()
-    db.execute(f"""
-        CREATE TABLE IF NOT EXISTS `{WEB_AUTH_TABLE}` (
-            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `username` VARCHAR(64) NOT NULL,
-            `password_hash` VARCHAR(255) NOT NULL,
-            `display_name` VARCHAR(80) NOT NULL DEFAULT '',
-            `approval_status` VARCHAR(16) NOT NULL DEFAULT 'approved',
-            `is_admin` TINYINT(1) NOT NULL DEFAULT 0,
-            `is_active` TINYINT(1) NOT NULL DEFAULT 1,
-            `created_at` INT UNSIGNED NOT NULL DEFAULT 0,
-            `updated_at` INT UNSIGNED NOT NULL DEFAULT 0,
-            `last_login_at` INT UNSIGNED NOT NULL DEFAULT 0,
-            `approved_at` INT UNSIGNED NOT NULL DEFAULT 0,
-            `approved_by` INT UNSIGNED NOT NULL DEFAULT 0,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_username` (`username`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """)
-    columns = {
-        str(row.get("Field"))
-        for row in db.query(f"SHOW COLUMNS FROM `{WEB_AUTH_TABLE}`")
-    }
-    additions = {
-        "approval_status": "ALTER TABLE `{table}` ADD COLUMN `approval_status` VARCHAR(16) NOT NULL DEFAULT 'approved' AFTER `display_name`",
-        "is_admin": "ALTER TABLE `{table}` ADD COLUMN `is_admin` TINYINT(1) NOT NULL DEFAULT 0 AFTER `approval_status`",
-        "approved_at": "ALTER TABLE `{table}` ADD COLUMN `approved_at` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `last_login_at`",
-        "approved_by": "ALTER TABLE `{table}` ADD COLUMN `approved_by` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `approved_at`",
-    }
-    for column, sql in additions.items():
-        if column not in columns:
-            db.execute(sql.format(table=WEB_AUTH_TABLE))
+    global _WEB_AUTH_TABLE_READY
+    if _WEB_AUTH_TABLE_READY:
+        return
+    with _WEB_AUTH_TABLE_LOCK:
+        if _WEB_AUTH_TABLE_READY:
+            return
+        db = _web_auth_db()
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS `{WEB_AUTH_TABLE}` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `username` VARCHAR(64) NOT NULL,
+                `password_hash` VARCHAR(255) NOT NULL,
+                `display_name` VARCHAR(80) NOT NULL DEFAULT '',
+                `approval_status` VARCHAR(16) NOT NULL DEFAULT 'approved',
+                `is_admin` TINYINT(1) NOT NULL DEFAULT 0,
+                `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                `created_at` INT UNSIGNED NOT NULL DEFAULT 0,
+                `updated_at` INT UNSIGNED NOT NULL DEFAULT 0,
+                `last_login_at` INT UNSIGNED NOT NULL DEFAULT 0,
+                `approved_at` INT UNSIGNED NOT NULL DEFAULT 0,
+                `approved_by` INT UNSIGNED NOT NULL DEFAULT 0,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_username` (`username`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        columns = {
+            str(row.get("Field"))
+            for row in db.query(f"SHOW COLUMNS FROM `{WEB_AUTH_TABLE}`")
+        }
+        additions = {
+            "approval_status": "ALTER TABLE `{table}` ADD COLUMN `approval_status` VARCHAR(16) NOT NULL DEFAULT 'approved' AFTER `display_name`",
+            "is_admin": "ALTER TABLE `{table}` ADD COLUMN `is_admin` TINYINT(1) NOT NULL DEFAULT 0 AFTER `approval_status`",
+            "approved_at": "ALTER TABLE `{table}` ADD COLUMN `approved_at` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `last_login_at`",
+            "approved_by": "ALTER TABLE `{table}` ADD COLUMN `approved_by` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `approved_at`",
+        }
+        for column, sql in additions.items():
+            if column not in columns:
+                db.execute(sql.format(table=WEB_AUTH_TABLE))
+        _WEB_AUTH_TABLE_READY = True
 
 
 def _web_auth_user_by_username(username: str) -> dict | None:

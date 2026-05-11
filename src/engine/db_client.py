@@ -1,5 +1,6 @@
 """MySQL 直连客户端 - 库存查询用"""
 import re
+import threading
 import pymysql
 from pymysql.cursors import DictCursor
 from contextlib import contextmanager
@@ -18,7 +19,7 @@ class DatabaseClient:
     """
 
     _instance: Optional["DatabaseClient"] = None
-    _connection: Optional[pymysql.Connection] = None
+    _local = threading.local()
 
     def __new__(cls) -> "DatabaseClient":
         if cls._instance is None:
@@ -30,10 +31,11 @@ class DatabaseClient:
         self.db_config = self.config.db_config
 
     def _get_connection(self) -> pymysql.Connection:
-        """获取或创建连接"""
-        if self._connection is None or not self._connection.open:
+        """获取当前线程的数据库连接。"""
+        connection = getattr(self._local, "connection", None)
+        if connection is None or not connection.open:
             try:
-                self._connection = pymysql.connect(
+                connection = pymysql.connect(
                     host=self.db_config["host"],
                     port=self.db_config["port"],
                     user=self.db_config["user"],
@@ -43,20 +45,20 @@ class DatabaseClient:
                     cursorclass=DictCursor,
                     autocommit=True,
                 )
+                self._local.connection = connection
                 logger.info("数据库连接已建立")
             except pymysql.Error as e:
-                self._connection = None
+                self._local.connection = None
                 logger.error(f"数据库连接失败: {e}")
                 raise DBError(f"数据库连接失败: {e}")
         else:
-            # 检查连接是否存活
             try:
-                self._connection.ping(reconnect=True)
+                connection.ping(reconnect=True)
             except pymysql.Error:
                 logger.warning("数据库连接已失效，重新连接")
-                self._connection = None
+                self._local.connection = None
                 return self._get_connection()
-        return self._connection
+        return connection
 
     @contextmanager
     def cursor(self):
@@ -80,7 +82,7 @@ class DatabaseClient:
         except pymysql.OperationalError as e:
             # 连接断开，清空连接以便重连
             logger.warning(f"数据库连接断开，准备重连: {e}")
-            self._connection = None
+            self._local.connection = None
             raise DBError(f"SQL 查询失败（连接断开）: {e}")
         except pymysql.Error as e:
             logger.error(f"SQL 查询异常: {e}")
@@ -96,16 +98,18 @@ class DatabaseClient:
         except pymysql.OperationalError as e:
             # 连接断开，清空连接以便重连
             logger.warning(f"数据库连接断开，准备重连: {e}")
-            self._connection = None
+            self._local.connection = None
             raise DBError(f"SQL 执行失败（连接断开）: {e}")
         except pymysql.Error as e:
             logger.error(f"SQL 执行异常: {e}")
             raise DBError(f"SQL 执行失败: {e}")
 
     def close(self):
-        """关闭连接"""
-        if self._connection and self._connection.open:
-            self._connection.close()
+        """关闭当前线程的数据库连接。"""
+        connection = getattr(self._local, "connection", None)
+        if connection and connection.open:
+            connection.close()
+            self._local.connection = None
             logger.info("数据库连接已关闭")
 
     # ---- 库存查询 SQL ----
