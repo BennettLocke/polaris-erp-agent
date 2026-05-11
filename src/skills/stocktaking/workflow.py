@@ -318,8 +318,11 @@ class StocktakingWorkflow(BaseWorkflow):
         if not items:
             return self._reply("盘点商品信息丢失，请重新操作。")
 
+        warehouse_id = int(state.get("warehouse_id") or 2)
+        state["warehouse_id"] = warehouse_id
+        state["warehouse_name"] = "自己店里" if warehouse_id == 1 else "百鑫仓库"
         payload = [
-            {"product_id": item["product_id"], "unit_id": item.get("unit_id", 1), "number": item.get("number", item.get("qty", 1))}
+            {"product_id": item["product_id"], "unit_id": item.get("unit_id", 1), "number": item.get("qty", item.get("number", 1))}
             for item in items
         ]
         try:

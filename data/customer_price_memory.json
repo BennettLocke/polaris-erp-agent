@@ -1,0 +1,56 @@
+{
+  "11:842:5": {
+    "customer_id": 11,
+    "customer_name": "测试客户",
+    "product_id": 842,
+    "product_name": "标签",
+    "unit_id": 5,
+    "unit": "张",
+    "price": 6.0
+  },
+  "11:649:1": {
+    "customer_id": 11,
+    "customer_name": "测试客户",
+    "product_id": 649,
+    "product_name": "【喜物】三小盒",
+    "unit_id": 1,
+    "unit": "套",
+    "price": 28.0
+  },
+  "50:732:1": {
+    "customer_id": 50,
+    "customer_name": "开单",
+    "product_id": 732,
+    "product_name": "【见喜】六小盒",
+    "unit_id": 1,
+    "unit": "套",
+    "price": 36.0
+  },
+  "28:732:1": {
+    "customer_id": 28,
+    "customer_name": "宴袍",
+    "product_id": 732,
+    "product_name": "【见喜】六小盒",
+    "unit_id": 1,
+    "unit": "套",
+    "price": 36.0
+  },
+  "11:647:1": {
+    "customer_id": 11,
+    "customer_name": "测试客户",
+    "product_id": 647,
+    "product_name": "【喜物】三小盒",
+    "unit_id": 1,
+    "unit": "套",
+    "price": 28.0
+  },
+  "26:136:1": {
+    "customer_id": 26,
+    "customer_name": "一枝一叶",
+    "product_id": 136,
+    "product_name": "【岩味】三小盒",
+    "unit_id": 1,
+    "unit": "套",
+    "price": 28.0
+  }
+}

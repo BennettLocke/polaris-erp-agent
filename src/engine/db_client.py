@@ -1,4 +1,5 @@
 """MySQL 直连客户端 - 库存查询用"""
+import re
 import pymysql
 from pymysql.cursors import DictCursor
 from contextlib import contextmanager
@@ -254,6 +255,8 @@ class DatabaseClient:
 
         add(keyword)
         add(compact)
+        if re.search(r"(?:3\s*两|2\s*两|三两|二两)", compact):
+            add(re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", compact))
         digit_to_words = {
             "1": ("一",),
             "2": ("二", "两"),

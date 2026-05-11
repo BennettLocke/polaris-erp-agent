@@ -18,7 +18,7 @@ $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 
 Start-Process `
     -FilePath $Python `
-    -ArgumentList @("main.py", "--mode", "http", "--http-port", "8080") `
+    -ArgumentList @("main.py", "--mode", "http", "--http-port", "8081") `
     -WorkingDirectory $AppDir `
     -RedirectStandardOutput $OutLog `
     -RedirectStandardError $ErrLog `

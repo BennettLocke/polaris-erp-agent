@@ -1,0 +1,1622 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 订单库存工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f6f8;
+      --surface: #ffffff;
+      --surface-2: #f9fafb;
+      --text: #20242a;
+      --muted: #727b87;
+      --line: #e3e7ec;
+      --line-strong: #d4dae2;
+      --accent: #1f8a70;
+      --accent-soft: #e5f5ef;
+      --blue: #3769e9;
+      --blue-soft: #eaf0ff;
+      --amber: #b86b00;
+      --amber-soft: #fff2d7;
+      --coral: #d3544a;
+      --coral-soft: #ffeceb;
+      --shadow: 0 16px 42px rgba(30, 38, 48, 0.08);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.8), rgba(245,246,248,0.92)),
+        radial-gradient(circle at 14% 8%, rgba(31,138,112,0.08), transparent 26%),
+        radial-gradient(circle at 86% 18%, rgba(55,105,233,0.07), transparent 24%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    body.modal-open {
+      overflow: hidden;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background .16s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: var(--line-strong);
+      box-shadow: 0 8px 20px rgba(30, 38, 48, 0.08);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 236px minmax(0, 1fr) 374px;
+      min-height: 100vh;
+    }
+
+    @media (min-width: 761px) {
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      .app {
+        height: 100vh;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .sidebar,
+      .context {
+        height: 100vh;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+
+      .main {
+        height: 100vh;
+        min-height: 0;
+        overflow: hidden;
+      }
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: rgba(255,255,255,0.72);
+      backdrop-filter: blur(20px);
+      padding: 18px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 2px 8px 8px;
+    }
+
+    .mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #17231f;
+      color: #f4fff9;
+      font-weight: 800;
+      box-shadow: 0 10px 28px rgba(23, 35, 31, 0.18);
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 5px;
+    }
+
+    .nav button {
+      height: 42px;
+      padding: 0 10px;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: transparent;
+      border-color: transparent;
+      box-shadow: none;
+    }
+
+    .nav-label {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+      color: #30363d;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.1;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: .78;
+    }
+
+    .nav button.active .nav-icon {
+      color: var(--accent);
+      opacity: 1;
+    }
+
+    .nav button:hover {
+      background: rgba(255,255,255,0.74);
+      box-shadow: none;
+    }
+
+    .nav button.active {
+      background: var(--surface);
+      border-color: var(--line);
+      box-shadow: 0 8px 22px rgba(30, 38, 48, 0.06);
+    }
+
+    .nav .badge {
+      min-width: 22px;
+      height: 22px;
+      padding: 0 7px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .side-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 12px;
+      box-shadow: 0 10px 28px rgba(30, 38, 48, 0.05);
+    }
+
+    .side-card h3,
+    .context h3,
+    .panel-title h2,
+    .drawer h2 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    .side-card p {
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .mini-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: auto;
+    }
+
+    .mini-stat {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: rgba(255,255,255,0.62);
+      padding: 9px;
+    }
+
+    .mini-stat strong {
+      display: block;
+      font-size: 18px;
+    }
+
+    .mini-stat span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      min-height: 70px;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: rgba(255,255,255,0.48);
+      backdrop-filter: blur(16px);
+    }
+
+    .search {
+      min-width: 240px;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 7px;
+      padding: 0 12px;
+      height: 42px;
+    }
+
+    .search span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .search input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+    }
+
+    .primary {
+      height: 40px;
+      padding: 0 14px;
+      border-color: var(--accent);
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+    }
+
+    .ghost {
+      height: 40px;
+      padding: 0 12px;
+      background: rgba(255,255,255,0.68);
+    }
+
+    .content {
+      flex: 1;
+      min-height: 0;
+      padding: 22px;
+      overflow: auto;
+      overscroll-behavior: contain;
+    }
+
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: block;
+      animation: fadeUp .22s ease both;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+    }
+
+    .hero-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .brief {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 14px;
+      box-shadow: 0 10px 30px rgba(30, 38, 48, 0.05);
+      transition: transform .16s ease, box-shadow .16s ease;
+    }
+
+    .brief:hover,
+    .business-card:hover,
+    .product-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow);
+    }
+
+    .brief strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 7px;
+    }
+
+    .brief p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .brief .number {
+      font-size: 24px;
+      font-weight: 800;
+      margin-top: 8px;
+    }
+
+    .chat {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,0.78);
+      box-shadow: 0 14px 36px rgba(30, 38, 48, 0.06);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+    }
+
+    .chat-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.74);
+    }
+
+    .chat-head h1 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .chat-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--accent);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .status-dot::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(31,138,112,0.12);
+    }
+
+    .messages {
+      padding: 18px;
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 14px;
+    }
+
+    .message {
+      display: grid;
+      gap: 7px;
+      max-width: 78%;
+    }
+
+    .message.user {
+      justify-self: end;
+    }
+
+    .bubble {
+      border-radius: 8px;
+      padding: 11px 13px;
+      line-height: 1.55;
+      font-size: 14px;
+      box-shadow: 0 8px 20px rgba(30, 38, 48, 0.05);
+    }
+
+    .assistant .bubble {
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }
+
+    .user .bubble {
+      background: #1d2a25;
+      color: white;
+    }
+
+    .msg-meta {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 4px;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 14px 36px rgba(30, 38, 48, 0.06);
+    }
+
+    .composer input {
+      height: 42px;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      padding: 0 6px;
+      color: var(--text);
+    }
+
+    .attach-button {
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      font-size: 23px;
+      line-height: 1;
+      color: #30363d;
+    }
+
+    .attachment-input {
+      display: none;
+    }
+
+    .attachment-tray {
+      grid-column: 1 / -1;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      padding: 0 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .composer.has-attachment .attachment-tray {
+      display: flex;
+    }
+
+    .attachment-chip {
+      max-width: 100%;
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: #30363d;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .context {
+      border-left: 1px solid var(--line);
+      background: rgba(255,255,255,0.72);
+      backdrop-filter: blur(20px);
+      padding: 18px;
+      overflow: auto;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .panel-title p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .tag.green {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: #cbe9dd;
+    }
+
+    .tag.green-outline {
+      background: #f8f6ef;
+      color: #6f6653;
+      border-color: #ded6c4;
+    }
+
+    .tag.blue {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: #cfdbff;
+    }
+
+    .tag.amber {
+      background: var(--amber-soft);
+      color: var(--amber);
+      border-color: #f3d99d;
+    }
+
+    .tag.coral {
+      background: var(--coral-soft);
+      color: var(--coral);
+      border-color: #ffd0cd;
+    }
+
+    .business-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 14px;
+      transition: transform .16s ease, box-shadow .16s ease;
+    }
+
+    .history-items {
+      display: grid;
+      gap: 7px;
+      margin: 10px 0;
+    }
+
+    .history-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f5f6f8;
+      font-size: 12px;
+    }
+
+    .history-item span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text);
+    }
+
+    .history-item span small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-item strong {
+      color: var(--green);
+      font-size: 13px;
+    }
+
+    .history-item em {
+      color: var(--green);
+      font-style: normal;
+      font-weight: 700;
+    }
+
+    .sales-card {
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .order-card {
+      min-height: 332px;
+      display: grid;
+      align-content: start;
+      gap: 12px;
+    }
+
+    .customer-name {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .customer-name strong {
+      font-size: 17px;
+    }
+
+    .product-line {
+      display: grid;
+      gap: 4px;
+    }
+
+    .product-line strong {
+      font-size: 15px;
+    }
+
+    .order-image {
+      position: relative;
+      height: 112px;
+      overflow: hidden;
+      border-radius: var(--radius);
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.66), rgba(255,255,255,0)),
+        var(--tone, #e6e1d8);
+      border: 1px solid var(--line);
+    }
+
+    .order-image::before,
+    .order-image::after {
+      content: "";
+      position: absolute;
+      border-radius: 7px;
+      transform: rotate(-9deg);
+      background: rgba(255,255,255,0.86);
+      box-shadow: 0 16px 24px rgba(30, 38, 48, 0.12);
+    }
+
+    .order-image::before {
+      width: 92px;
+      height: 58px;
+      left: 44px;
+      top: 30px;
+    }
+
+    .order-image::after {
+      width: 78px;
+      height: 50px;
+      right: 42px;
+      top: 38px;
+      opacity: .72;
+    }
+
+    .order-image .image-caption {
+      position: absolute;
+      left: 12px;
+      bottom: 10px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.76);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    .card-top h3 {
+      font-size: 15px;
+    }
+
+    .kv {
+      display: grid;
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .kv-row strong {
+      color: var(--text);
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: auto;
+      padding-top: 10px;
+    }
+
+    .card-actions button {
+      min-height: 34px;
+      padding: 0 10px;
+      font-size: 13px;
+    }
+
+    .table-lite {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    .table-lite th,
+    .table-lite td {
+      padding: 8px 6px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+    }
+
+    .table-lite th {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .section-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(246px, 1fr));
+      gap: 10px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    #orders .section-head {
+      grid-column: 1 / -1;
+      width: 100%;
+      margin-bottom: 2px;
+    }
+
+    .section-head h1 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .section-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .product-card {
+      min-height: 276px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+      transition: transform .16s ease, box-shadow .16s ease;
+      display: grid;
+      grid-template-rows: 132px 1fr;
+    }
+
+    .product-image {
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.62), rgba(255,255,255,0)),
+        var(--tone, #dce7e0);
+    }
+
+    .product-image::before,
+    .product-image::after {
+      content: "";
+      position: absolute;
+      border-radius: 6px;
+      transform: rotate(-10deg);
+      background: rgba(255,255,255,0.82);
+      box-shadow: 0 18px 28px rgba(30, 38, 48, 0.12);
+    }
+
+    .product-image::before {
+      width: 88px;
+      height: 58px;
+      left: 36px;
+      top: 38px;
+    }
+
+    .product-image::after {
+      width: 78px;
+      height: 50px;
+      right: 34px;
+      top: 48px;
+      opacity: .72;
+    }
+
+    .product-body {
+      padding: 13px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .product-body h3 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .order-row {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: start;
+      width: 100%;
+      max-width: 286px;
+      min-height: 318px;
+      margin: 0;
+      transition: transform .16s ease, box-shadow .16s ease;
+    }
+
+    .order-row::before {
+      content: "";
+      display: block;
+      height: 98px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.66), rgba(255,255,255,0)),
+        linear-gradient(160deg, transparent 0 34%, rgba(255,255,255,0.80) 34% 62%, transparent 62%),
+        var(--tone, #e6e1d8);
+      box-shadow: inset 0 -18px 32px rgba(30, 38, 48, 0.05);
+    }
+
+    #orders.view {
+      display: none;
+    }
+
+    #orders.view.active {
+      display: block;
+    }
+
+    #orders .order-row:nth-of-type(2) { --tone: #ded8cf; }
+    #orders .order-row:nth-of-type(3) { --tone: #ece9df; }
+    #orders .order-row:nth-of-type(4) { --tone: #f0dce3; }
+
+    .order-row > div {
+      min-width: 0;
+    }
+
+    .order-row > div:nth-child(2) {
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .order-row > div:nth-child(4) {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .order-row:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 28px rgba(30, 38, 48, 0.06);
+    }
+
+    .order-row strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+
+    .drawer-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(17, 24, 32, 0.28);
+      opacity: 0;
+      pointer-events: none;
+      backdrop-filter: blur(0);
+      transition: opacity .22s ease, backdrop-filter .22s ease;
+      z-index: 20;
+    }
+
+    .drawer {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: min(560px, calc(100vw - 32px));
+      max-height: min(82vh, 680px);
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,0.72);
+      border-radius: var(--radius);
+      box-shadow: 0 28px 90px rgba(18, 24, 32, 0.28);
+      transform: translate(-50%, -46%) scale(.96);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform .24s cubic-bezier(.2,.8,.2,1), opacity .18s ease;
+      z-index: 21;
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 16px;
+      overflow: hidden;
+    }
+
+    .drawer.open {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .drawer-mask.open {
+      opacity: 1;
+      pointer-events: auto;
+      backdrop-filter: blur(7px);
+    }
+
+    .drawer::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.84), rgba(255,255,255,0) 34%),
+        radial-gradient(circle at 16% 0%, rgba(31,138,112,0.10), transparent 34%);
+    }
+
+    .drawer > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .drawer-form {
+      display: grid;
+      align-content: start;
+      gap: 12px;
+      overflow: auto;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    input,
+    select,
+    textarea {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-2);
+      color: var(--text);
+      padding: 9px 10px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 86px;
+      resize: vertical;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: rgba(31,138,112,0.55);
+      box-shadow: 0 0 0 4px rgba(31,138,112,0.10);
+    }
+
+    .mobile-context-toggle {
+      display: none;
+    }
+
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .drawer,
+      .drawer-mask,
+      .view.active,
+      button {
+        transition: none;
+        animation: none;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .app {
+        grid-template-columns: 218px minmax(0, 1fr);
+      }
+
+      .context {
+        display: none;
+      }
+
+      .mobile-context-toggle {
+        display: inline-flex;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .app {
+        grid-template-columns: 1fr;
+        padding-bottom: 64px;
+      }
+
+      .sidebar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 10;
+        height: 64px;
+        padding: 7px 8px;
+        border-right: 0;
+        border-top: 1px solid var(--line);
+        display: block;
+      }
+
+      .brand,
+      .side-card,
+      .mini-stats {
+        display: none;
+      }
+
+      .nav {
+        height: 100%;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 4px;
+      }
+
+      .nav button {
+        height: 50px;
+        justify-content: center;
+        text-align: center;
+        padding: 0 4px;
+        font-size: 13px;
+      }
+
+      .nav-label {
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .nav-icon {
+        width: 17px;
+        height: 17px;
+      }
+
+      .nav .badge {
+        display: none;
+      }
+
+      .topbar {
+        min-height: auto;
+        padding: 12px;
+        flex-wrap: wrap;
+      }
+
+      .search {
+        order: 3;
+        min-width: 100%;
+      }
+
+      .content {
+        padding: 12px;
+      }
+
+      .workspace {
+        height: auto;
+        min-height: 0;
+      }
+
+      .hero-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .message {
+        max-width: 92%;
+      }
+
+      .section-head,
+      .panel-title {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .order-row {
+        width: 100%;
+        margin-right: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="mark">AI</div>
+        <div>
+          <strong>订单工作台</strong>
+          <span>对话驱动的订单库存</span>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="主导航">
+        <button class="active" data-view="workbench">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13.5 12 6l8 7.5"/><path d="M6.5 12.5V20h11v-7.5"/><path d="M10 20v-5h4v5"/></svg>
+            <span>工作台</span>
+          </span>
+          <span class="badge">AI</span>
+        </button>
+        <button data-view="sales">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v5h5"/><path d="M10 12h6"/><path d="M10 16h6"/></svg>
+            <span>销售单</span>
+          </span>
+          <span class="badge">12</span>
+        </button>
+        <button data-view="orders">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/></svg>
+            <span>订单</span>
+          </span>
+          <span class="badge">18</span>
+        </button>
+        <button data-view="inventory">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5 12 4l8 4.5-8 4.5z"/><path d="M4 8.5V16l8 4 8-4V8.5"/><path d="M12 13v7"/></svg>
+            <span>库存</span>
+          </span>
+          <span class="badge">4</span>
+        </button>
+        <button data-view="products">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12v8H4v-8"/><path d="M3 7h18v5H3z"/><path d="M12 7v13"/><path d="M8 7a2.5 2.5 0 1 1 4 0"/><path d="M16 7a2.5 2.5 0 1 0-4 0"/></svg>
+            <span>商品</span>
+          </span>
+          <span class="badge">32</span>
+        </button>
+      </nav>
+
+      <div class="mini-stats">
+        <div class="mini-stat"><strong>管理员</strong><span>当前账号</span></div>
+        <div class="mini-stat"><strong>在线</strong><span>登录状态</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="search">
+          <span>搜索</span>
+          <input placeholder="客户、订单、商品、规格" />
+        </div>
+        <button class="ghost mobile-context-toggle" id="contextButton">业务卡片</button>
+        <button class="ghost" id="newChatButton">新建对话</button>
+        <button class="primary" id="newOrderButton">新建开单</button>
+      </header>
+
+      <section class="content">
+        <div class="view active" id="workbench">
+          <div class="workspace">
+            <div class="hero-strip">
+              <div class="brief">
+                <strong>今日销售单数量</strong>
+                <p>已生成销售单</p>
+                <div class="number" id="todaySalesCount">-- 张</div>
+              </div>
+              <div class="brief">
+                <strong>今日销售金额</strong>
+                <p>销售单总金额</p>
+                <div class="number" id="todaySalesAmount">¥--</div>
+              </div>
+              <div class="brief">
+                <strong>待完成</strong>
+                <p>订单还没做完</p>
+                <div class="number" id="pendingWorkflowCount">-- 单</div>
+              </div>
+            </div>
+
+            <div class="chat">
+              <div class="chat-head">
+                <div>
+                  <h1>AI 业务工作台</h1>
+                  <p>开单、查库存、改订单、上下架商品，都从这里开始。</p>
+                </div>
+                <span class="status-dot">智能体在线</span>
+              </div>
+              <div class="messages" id="messages">
+                <div class="message assistant">
+                  <div class="bubble">下午好。今天已生成 12 张销售单，销售金额 ¥2,052，还有 5 单没做完。你可以直接说要开单、查库存或编辑商品。</div>
+                  <div class="msg-meta">AI 助手</div>
+                </div>
+                <div class="message user">
+                  <div class="bubble">查一下黑色天地盖 8 号盒库存，顺便看能不能给王小姐开 20 套。</div>
+                  <div class="msg-meta">你</div>
+                </div>
+                <div class="message assistant">
+                  <div class="bubble">黑色 8 号盒两个仓库合计 32 套，可以开 20 套。右侧已经生成开单确认和库存建议。</div>
+                  <div class="msg-meta">AI 助手</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="composer">
+                <button class="attach-button" id="attachButton" aria-label="添加附件" title="添加附件">+</button>
+                <input class="attachment-input" id="attachmentInput" type="file" multiple />
+                <input id="chatInput" placeholder="输入业务指令，例如：把蓝色礼盒下架，原因是图片要重拍" />
+                <button class="primary" id="sendButton">发送</button>
+                <div class="attachment-tray" id="attachmentTray" aria-live="polite"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="view" id="sales">
+          <div class="section-head">
+            <div>
+              <h1>销售单</h1>
+              <p>这里放已经生成的销售单，方便手动打印、核对和删除。</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div id="salesPager" class="pager"></div>
+              <button class="primary">新建销售单</button>
+            </div>
+          </div>
+          <div id="salesList" class="section-grid">
+            <div class="loading-placeholder" id="salesLoading"><div class="spinner"></div><span>加载中...</span></div>
+          </div>
+        </div>
+
+        <div class="view" id="orders">
+          <div class="section-head">
+            <div>
+              <h1>订单</h1>
+              <p>手动查单、改状态、编辑订单和删除订单。</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="pager" id="workflowPager"></div>
+              <button class="primary" id="newOrderButton2">新建订单</button>
+            </div>
+          </div>
+          <div id="workflowList" class="section-grid"></div>
+        </div>
+
+        <div class="view" id="inventory">
+          <div class="section-head">
+            <div>
+              <h1>库存</h1>
+              <p>按规格看颜色库存，两个仓库数量放在同一张卡里，方便调货和进货。</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div id="inventoryPager" class="pager"></div>
+              <button class="primary">新增进货</button>
+            </div>
+          </div>
+          <div class="section-grid">
+            <div class="business-card">
+              <div class="card-top"><h3>天地盖 8 号</h3><span class="tag green">正常</span></div>
+              <table class="table-lite">
+                <thead><tr><th>颜色</th><th>仓一</th><th>仓二</th></tr></thead>
+                <tbody><tr><td>黑色</td><td>20</td><td>12</td></tr><tr><td>白色</td><td>18</td><td>8</td></tr><tr><td>雾蓝</td><td>3</td><td>0</td></tr></tbody>
+              </table>
+              <div class="card-actions"><button>调货</button><button>进货</button></div>
+            </div>
+            <div class="business-card">
+              <div class="card-top"><h3>抽屉盒 6 号</h3><span class="tag amber">需补货</span></div>
+              <table class="table-lite">
+                <thead><tr><th>颜色</th><th>仓一</th><th>仓二</th></tr></thead>
+                <tbody><tr><td>奶白</td><td>9</td><td>4</td></tr><tr><td>浅粉</td><td>7</td><td>1</td></tr><tr><td>灰绿</td><td>22</td><td>11</td></tr></tbody>
+              </table>
+              <div class="card-actions"><button>调货</button><button>进货</button></div>
+            </div>
+            <div class="business-card">
+              <div class="card-top"><h3>礼品盒 10 号</h3><span class="tag green">正常</span></div>
+              <table class="table-lite">
+                <thead><tr><th>颜色</th><th>仓一</th><th>仓二</th></tr></thead>
+                <tbody><tr><td>黑金</td><td>16</td><td>18</td></tr><tr><td>酒红</td><td>11</td><td>12</td></tr><tr><td>米杏</td><td>14</td><td>9</td></tr></tbody>
+              </table>
+              <div class="card-actions"><button>调货</button><button>进货</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="view" id="products">
+          <div class="section-head">
+            <div>
+              <h1>商品</h1>
+              <p>这里就是手动查看商品、编辑商品、删除和商城上下架的位置。</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div id="productPager" class="pager"></div>
+              <button class="primary" id="newProductButton">新增商品</button>
+            </div>
+          </div>
+          <div class="section-grid">
+            <article class="product-card" style="--tone:#dce7e0">
+              <div class="product-image"></div>
+              <div class="product-body">
+                <div>
+                  <h3>黑色天地盖 8 号</h3>
+                  <div class="muted">¥38 / 套 · 库存 32</div>
+                </div>
+                <div><span class="tag green">商城上架</span> <span class="tag blue">热销</span></div>
+                <div class="card-actions"><button class="editProduct">编辑</button><button>删除</button><button>下架</button></div>
+              </div>
+            </article>
+            <article class="product-card" style="--tone:#f0e2dc">
+              <div class="product-image"></div>
+              <div class="product-body">
+                <div>
+                  <h3>白色抽屉盒 6 号</h3>
+                  <div class="muted">¥35 / 套 · 库存 25</div>
+                </div>
+                <div><span class="tag green">商城上架</span></div>
+                <div class="card-actions"><button class="editProduct">编辑</button><button>删除</button><button>下架</button></div>
+              </div>
+            </article>
+            <article class="product-card" style="--tone:#dde7f4">
+              <div class="product-image"></div>
+              <div class="product-body">
+                <div>
+                  <h3>雾蓝抽屉盒</h3>
+                  <div class="muted">¥36 / 套 · 库存 3</div>
+                </div>
+                <div><span class="tag coral">低库存</span> <span class="tag amber">待补图</span></div>
+                <div class="card-actions"><button class="editProduct">编辑</button><button>删除</button><button>上架</button></div>
+              </div>
+            </article>
+            <article class="product-card" style="--tone:#eaded0">
+              <div class="product-image"></div>
+              <div class="product-body">
+                <div>
+                  <h3>黑金礼品盒 10 号</h3>
+                  <div class="muted">¥49 / 套 · 库存 34</div>
+                </div>
+                <div><span class="tag green">商城上架</span></div>
+                <div class="card-actions"><button class="editProduct">编辑</button><button>删除</button><button>下架</button></div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="context" id="contextPanel">
+      <div class="panel-title">
+        <div>
+          <h2>最近业务记录</h2>
+          <p>保留最近 5 条查询、开单和工作流结果。</p>
+        </div>
+        <span class="tag green">可执行</span>
+      </div>
+    </aside>
+  </div>
+
+  <div class="drawer-mask" id="drawerMask"></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="编辑面板" tabindex="-1">
+    <div class="panel-title">
+      <div>
+        <h2 id="drawerTitle">编辑商品</h2>
+        <p id="drawerSubtitle">从对话或商品页都可以打开这个面板。</p>
+      </div>
+      <button class="ghost" id="closeDrawer">关闭</button>
+    </div>
+    <div class="drawer-form" id="drawerBody"></div>
+    <div class="card-actions">
+      <button class="primary" id="saveDrawer">保存</button>
+      <button id="cancelDrawer">取消</button>
+    </div>
+  </aside>
+
+  <script>
+    const views = document.querySelectorAll(".view");
+    const navButtons = document.querySelectorAll("[data-view]");
+    const messages = document.getElementById("messages");
+    const chatInput = document.getElementById("chatInput");
+    const composer = document.querySelector(".composer");
+    const attachButton = document.getElementById("attachButton");
+    const attachmentInput = document.getElementById("attachmentInput");
+    const attachmentTray = document.getElementById("attachmentTray");
+    const drawer = document.getElementById("drawer");
+    const drawerMask = document.getElementById("drawerMask");
+    const drawerTitle = document.getElementById("drawerTitle");
+    const drawerSubtitle = document.getElementById("drawerSubtitle");
+    const drawerBody = document.getElementById("drawerBody");
+
+    function setView(name) {
+      views.forEach(view => view.classList.toggle("active", view.id === name));
+      document.querySelectorAll(".nav button").forEach(button => {
+        button.classList.toggle("active", button.dataset.view === name);
+      });
+    }
+
+    function addMessage(text, who) {
+      const message = document.createElement("div");
+      message.className = `message ${who}`;
+      message.innerHTML = `<div class="bubble">${text}</div><div class="msg-meta">${who === "user" ? "你" : "AI 助手"}</div>`;
+      messages.appendChild(message);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function sendPrompt(text) {
+      const value = (text || chatInput.value).trim();
+      if (!value) return;
+      addMessage(value, "user");
+      chatInput.value = "";
+      attachmentInput.value = "";
+      attachmentTray.innerHTML = "";
+      composer.classList.remove("has-attachment");
+      window.setTimeout(() => {
+        addMessage("我已识别业务意图，并把可执行卡片放到右侧。你可以确认执行，也可以点编辑进入手动修改。", "assistant");
+      }, 280);
+    }
+
+    attachButton.addEventListener("click", () => {
+      attachmentInput.click();
+    });
+
+    attachmentInput.addEventListener("change", () => {
+      const files = Array.from(attachmentInput.files);
+      attachmentTray.replaceChildren(...files.map(file => {
+        const chip = document.createElement("span");
+        chip.className = "attachment-chip";
+        chip.textContent = file.name;
+        return chip;
+      }));
+      composer.classList.toggle("has-attachment", files.length > 0);
+    });
+
+    function openDrawer(type) {
+      const isOrder = type === "order";
+      drawerTitle.textContent = isOrder ? "编辑订单" : "编辑商品";
+      drawerSubtitle.textContent = isOrder ? "核对客户、商品、数量和订单状态。" : "维护商品图片、价格、库存展示和商城上下架状态。";
+      drawerBody.innerHTML = isOrder ? `
+        <label>客户 <input value="王小姐"></label>
+        <label>商品 <input value="黑色天地盖 8 号"></label>
+        <div class="two-col">
+          <label>数量 <input value="20 套"></label>
+          <label>单价 <input value="38"></label>
+        </div>
+        <div class="two-col">
+          <label>制作状态 <select><option>制作中</option><option>制作完成</option></select></label>
+          <label>配送状态 <select><option>待配送</option><option>配送完成</option></select></label>
+        </div>
+        <label>备注 <textarea>客户要求周日前送达。</textarea></label>
+      ` : `
+        <label>商品名称 <input value="黑色天地盖 8 号"></label>
+        <div class="two-col">
+          <label>价格 <input value="38"></label>
+          <label>单位 <input value="套"></label>
+        </div>
+        <div class="two-col">
+          <label>库存展示 <input value="32"></label>
+          <label>商城状态 <select><option>上架</option><option>下架</option></select></label>
+        </div>
+        <label>规格说明 <textarea>适合礼品包装，黑色哑光，常用规格。</textarea></label>
+        <label>商品图片 <input value="product-black-box.jpg"></label>
+      `;
+      document.body.classList.add("modal-open");
+      drawer.classList.add("open");
+      drawerMask.classList.add("open");
+      window.setTimeout(() => drawer.focus(), 80);
+    }
+
+    function closeDrawer() {
+      drawer.classList.remove("open");
+      drawerMask.classList.remove("open");
+      document.body.classList.remove("modal-open");
+    }
+
+    navButtons.forEach(button => {
+      button.addEventListener("click", () => setView(button.dataset.view));
+    });
+
+    document.getElementById("sendButton").addEventListener("click", () => sendPrompt());
+    chatInput.addEventListener("keydown", event => {
+      if (event.key === "Enter") sendPrompt();
+    });
+
+    document.getElementById("newChatButton").addEventListener("click", () => {
+      messages.innerHTML = "";
+      addMessage("新的对话已经开始。你可以直接描述要处理的订单、库存或商品问题。", "assistant");
+      setView("workbench");
+    });
+
+    document.getElementById("newOrderButton").addEventListener("click", () => openDrawer("order"));
+    document.getElementById("newOrderButton2").addEventListener("click", () => openDrawer("order"));
+    document.getElementById("editOrderFromContext").addEventListener("click", () => openDrawer("order"));
+    document.getElementById("editProductFromContext").addEventListener("click", () => openDrawer("product"));
+    document.getElementById("newProductButton").addEventListener("click", () => openDrawer("product"));
+    document.querySelectorAll(".editOrder").forEach(button => {
+      button.addEventListener("click", () => openDrawer("order"));
+    });
+    document.querySelectorAll(".editProduct").forEach(button => {
+      button.addEventListener("click", () => openDrawer("product"));
+    });
+
+    document.getElementById("closeDrawer").addEventListener("click", closeDrawer);
+    document.getElementById("cancelDrawer").addEventListener("click", closeDrawer);
+    document.getElementById("saveDrawer").addEventListener("click", () => {
+      closeDrawer();
+      addMessage("已保存修改，相关订单和商品信息会同步更新。", "assistant");
+    });
+    drawerMask.addEventListener("click", closeDrawer);
+    document.getElementById("contextButton").addEventListener("click", () => openDrawer("order"));
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && drawer.classList.contains("open")) closeDrawer();
+    });
+  </script>
+</body>
+</html>

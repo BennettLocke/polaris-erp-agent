@@ -744,6 +744,391 @@
       "count": 1,
       "created_at": "2026-05-06T12:47:37",
       "updated_at": "2026-05-06T12:47:37"
+    },
+    {
+      "key": "开单测试客户标签1张",
+      "text": "开单  测试客户 标签1张",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "标签",
+            "qty": 1,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T15:13:46",
+      "updated_at": "2026-05-10T15:13:46"
+    },
+    {
+      "key": "开单测试客户标签2张",
+      "text": "开单 测试客户  标签2张",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "标签",
+            "qty": 2,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T15:32:32",
+      "updated_at": "2026-05-10T15:32:32"
+    },
+    {
+      "key": "开单散客喜悦3两橙色8套极致3两红色1件",
+      "text": "开单 散客 喜悦3两橙色 8套 极致3两红色1件",
+      "extracted": {
+        "intent": "order",
+        "customer": "散客",
+        "products": [
+          {
+            "name": "喜悦三两",
+            "qty": 8,
+            "unit": "套",
+            "color": "橙色"
+          },
+          {
+            "name": "极致三两",
+            "qty": 1,
+            "unit": "件",
+            "color": "红色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T16:31:32",
+      "updated_at": "2026-05-10T16:31:32"
+    },
+    {
+      "key": "开单测试客户标签3张",
+      "text": "开单 测试客户  标签3张",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "标签",
+            "qty": 3,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T17:29:54",
+      "updated_at": "2026-05-10T17:29:54"
+    },
+    {
+      "key": "开单测试客户标签5张",
+      "text": "开单 测试客户 标签5张",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "标签",
+            "qty": 5,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 2,
+      "created_at": "2026-05-10T18:15:48",
+      "updated_at": "2026-05-10T18:15:49"
+    },
+    {
+      "key": "开单九壶寨标签2张",
+      "text": "开单 九壶寨 标签2张",
+      "extracted": {
+        "intent": "order",
+        "customer": "九壶寨",
+        "products": [
+          {
+            "name": "标签",
+            "qty": 2,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:07:41",
+      "updated_at": "2026-05-10T20:07:41"
+    },
+    {
+      "key": "开单越客人家标签2张",
+      "text": "开单 越客人家 标签2张",
+      "extracted": {
+        "intent": "order",
+        "customer": "越客人家",
+        "products": [
+          {
+            "name": "标签",
+            "qty": 2,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:08:36",
+      "updated_at": "2026-05-10T20:08:36"
+    },
+    {
+      "key": "开单齐唯标签2张",
+      "text": "开单 齐唯 标签2张",
+      "extracted": {
+        "intent": "order",
+        "customer": "齐唯",
+        "products": [
+          {
+            "name": "标签",
+            "qty": 2,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:14:03",
+      "updated_at": "2026-05-10T20:14:03"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色2套",
+      "text": "开单 测试客户 喜物3小盒黑色2套",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:14:26",
+      "updated_at": "2026-05-10T20:14:26"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色2套自己店里",
+      "text": "开单 测试客户 喜物3小盒黑色2套 自己店里",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "warehouse": "自己店里",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:23:19",
+      "updated_at": "2026-05-10T20:23:19"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色2套不用查库存",
+      "text": "开单 测试客户 喜物3小盒黑色2套 不用查库存",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:52:22",
+      "updated_at": "2026-05-10T20:52:22"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色999套自己店里",
+      "text": "开单 测试客户 喜物3小盒黑色999套 自己店里",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "warehouse": "自己店里",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 999,
+            "unit": "套",
+            "color": "黑色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:54:20",
+      "updated_at": "2026-05-10T20:54:20"
+    },
+    {
+      "key": "开单喜物3小盒黑色2套",
+      "text": "开单 喜物3小盒黑色2套",
+      "extracted": {
+        "intent": "order",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T20:59:20",
+      "updated_at": "2026-05-10T20:59:20"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色999套",
+      "text": "开单 测试客户 喜物3小盒黑色999套",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 999,
+            "unit": "套",
+            "color": "黑色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T21:16:03",
+      "updated_at": "2026-05-10T21:16:03"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色2套标签5张",
+      "text": "开单 测试客户 喜物3小盒黑色2套 标签5张",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          },
+          {
+            "name": "标签",
+            "qty": 5,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T21:16:30",
+      "updated_at": "2026-05-10T21:16:30"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色2套标签2张",
+      "text": "开单 测试客户 喜物3小盒黑色2套 标签2张",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          },
+          {
+            "name": "标签",
+            "qty": 2,
+            "unit": "张",
+            "color": ""
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T21:22:24",
+      "updated_at": "2026-05-10T21:22:24"
+    },
+    {
+      "key": "开单测试客户喜物3小盒黑色黄色各2套",
+      "text": "开单 测试客户 喜物3小盒黑色黄色各2套",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          },
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黄色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T21:24:27",
+      "updated_at": "2026-05-10T21:24:27"
+    },
+    {
+      "key": "测试客户喜物3小盒黑色2套",
+      "text": "测试客户 喜物3小盒黑色2套",
+      "extracted": {
+        "intent": "order",
+        "customer": "测试客户",
+        "products": [
+          {
+            "name": "喜物三小盒",
+            "qty": 2,
+            "unit": "套",
+            "color": "黑色"
+          }
+        ]
+      },
+      "source": "llm",
+      "count": 1,
+      "created_at": "2026-05-10T21:32:56",
+      "updated_at": "2026-05-10T21:32:56"
     }
   ]
 }

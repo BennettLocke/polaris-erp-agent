@@ -10,6 +10,7 @@ B5. 开销售单
 """
 import json
 import re
+from pathlib import Path
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
 from src.core.config import get_config
@@ -23,6 +24,7 @@ NON_CHECK_CATEGORIES = ["泡袋", "包茶", "内衬", "PVC", "标签", "纸箱",
 
 # 单位映射
 UNIT_MAP = {"套": 1, "捆": 2, "个": 3, "斤": 4, "张": 5, "件": 1}
+PRICE_MEMORY_FILE = Path("data/customer_price_memory.json")
 
 
 class OrderFlowWorkflow(BaseWorkflow):
@@ -37,6 +39,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         B1: 提取参数（优先用 LLM 预提取的，否则 fallback）
         B2-B5: 固定流程执行
         """
+        user_input = self._normalize_order_input(user_input)
         # 优先使用 LLM 预提取的参数
         if params and params.get("products"):
             # 从统一 LLM 结果中提取订单参数
@@ -49,10 +52,15 @@ class OrderFlowWorkflow(BaseWorkflow):
             params = llm_extract_order_params(user_input)
 
         params = params or {}
+        inline_products = self._extract_inline_products(user_input)
+        if len(inline_products) > len(params.get("products", []) or []):
+            params["products"] = inline_products
         params["products"] = self._enrich_order_products(params.get("products", []), user_input)
-        customer_name = params.get("customer")
+        customer_defaulted = bool(params.get("customer_defaulted")) or not bool(str(params.get("customer") or "").strip())
+        customer_name = str(params.get("customer") or "散客").strip()
         products = params.get("products", [])
-        warehouse_hint = params.get("warehouse")
+        warehouse_hint = params.get("warehouse") or self._extract_warehouse_hint(user_input)
+        skip_inventory = bool(params.get("skip_inventory")) or self._skip_inventory_check(user_input)
         logger.info(f"[OrderFlow] 提取结果: customer={customer_name}, products={len(products)}个, warehouse={warehouse_hint}")
 
         if not products:
@@ -78,6 +86,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                     {
                         "customer_id": customer_id,
                         "customer_name": customer_name,
+                        "customer_defaulted": customer_defaulted,
                         "products": products,
                         "product_index": index,
                         "warehouse_hint": warehouse_hint,
@@ -93,13 +102,20 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         # ---- B4: 库存决策 ----
         logger.info("[OrderFlow] B4: 库存决策")
-        inventory_result = self._inventory_decision(resolved_products, warehouse_hint)
+        if skip_inventory:
+            warehouse_id = self._warehouse_id_from_hint(warehouse_hint)
+            for p in resolved_products:
+                p["warehouse_id"] = warehouse_id
+            inventory_result = {"status": "ok", "warehouse_id": warehouse_id, "skip_inventory": True}
+        else:
+            inventory_result = self._inventory_decision(resolved_products, warehouse_hint)
 
         if inventory_result["status"] == "ask":
             # 需要问用户确认仓库/进货等关键动作
             state = {
                 "customer_id": customer_id,
                 "customer_name": customer_name,
+                "customer_defaulted": customer_defaulted,
                 "products": resolved_products,
                 "warehouse_hint": warehouse_hint,
                 "pending_action": inventory_result.get("pending_action", "choose_warehouse"),
@@ -107,15 +123,18 @@ class OrderFlowWorkflow(BaseWorkflow):
             }
             return self._ask(inventory_result["question"], state)
 
-        if inventory_result["status"] == "auto_purchase":
-            purchase_result = self._execute_purchase(resolved_products)
-            if purchase_result.get("error"):
-                return self._reply(f"进货失败：{purchase_result['error']}")
-
         # ---- B5: 开单 ----
         logger.info("[OrderFlow] B5: 开单")
         warehouse_id = inventory_result.get("warehouse_id", 2)
-        return self._create_order(customer_id, customer_name, resolved_products, warehouse_id)
+        return self._confirm_create_order(
+            customer_id,
+            customer_name,
+            resolved_products,
+            warehouse_id,
+            inventory_result["status"] == "auto_purchase",
+            skip_inventory=inventory_result.get("skip_inventory", False),
+            customer_defaulted=customer_defaulted,
+        )
 
     def resume(self, user_input: str, state: dict) -> dict:
         """Resume a paused order flow after a user confirmation."""
@@ -161,6 +180,34 @@ class OrderFlowWorkflow(BaseWorkflow):
         products = state["products"]
         pending_action = state.get("pending_action", "choose_warehouse")
 
+        if pending_action == "confirm_create_order":
+            if any(word in user_input for word in ["修改", "改成", "改为", "换成"]):
+                qty_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:张|套|件|个|份|盒)?", user_input)
+                if qty_match and products:
+                    qty = max(1, int(float(qty_match.group(1))))
+                    products[0]["qty"] = qty
+                    products[0]["quantity"] = qty
+                    state["products"] = products
+                return self._ask("已更新确认信息，请在确认弹窗里继续核对；确认后我再执行开单。", state)
+            if not self._is_yes(user_input):
+                if self._is_stop_order(user_input) or any(word in user_input for word in ["取消", "不要", "否", "不"]):
+                    return self._reply("已取消本次开单，没有创建销售单。")
+                return self._ask("还没有执行开单。请在确认弹窗核对后点确认，或回复「取消」停止。", state)
+            if state.get("auto_purchase"):
+                purchase_result = self._execute_purchase(products, int(state.get("warehouse_id") or 2))
+                if purchase_result.get("error"):
+                    return self._reply(f"进货失败：{purchase_result['error']}")
+            elif not state.get("skip_inventory"):
+                shortage = self._purchase_confirmation_for_shortage(customer_id, customer_name, products, int(state.get("warehouse_id") or 2))
+                if shortage:
+                    return shortage
+            return self._create_order(
+                customer_id,
+                customer_name,
+                products,
+                state.get("warehouse_id", 2),
+            )
+
         if pending_action == "confirm_product_name":
             index = state.get("product_index", 0)
             if self._is_yes(user_input):
@@ -190,10 +237,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                         p["need_purchase"] = True
                         p.pop("pending_self_ship", None)
                 if not self._need_purchase_confirmation(products):
-                    purchase_result = self._execute_purchase(products)
-                    if purchase_result.get("error"):
-                        return self._reply(f"进货失败：{purchase_result['error']}")
-                    return self._create_order(customer_id, customer_name, products, 2)
+                    return self._confirm_create_order(customer_id, customer_name, products, 2, auto_purchase=True)
                 return self._ask(
                     self._format_purchase_confirm_question(products, customer_name),
                     {
@@ -209,10 +253,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                     p.pop("pending_self_ship", None)
             if any(p.get("need_purchase") for p in products):
                 if not self._need_purchase_confirmation(products):
-                    purchase_result = self._execute_purchase(products)
-                    if purchase_result.get("error"):
-                        return self._reply(f"进货失败：{purchase_result['error']}")
-                    return self._create_order(customer_id, customer_name, products, 2)
+                    return self._confirm_create_order(customer_id, customer_name, products, 2, auto_purchase=True)
                 return self._ask(
                     "还有商品百鑫和自己店里都无货，需要先进货到百鑫仓库。请回复「确认」进货并继续开单，或回复「取消」停止。",
                     {
@@ -222,15 +263,19 @@ class OrderFlowWorkflow(BaseWorkflow):
                         "pending_action": "confirm_purchase",
                     },
                 )
-            return self._create_order(customer_id, customer_name, products, 1)
+            return self._confirm_create_order(customer_id, customer_name, products, 1)
 
         if pending_action == "confirm_purchase":
             if not self._is_yes(user_input):
                 return self._reply("已取消进货，本次订单未开单。")
-            purchase_result = self._execute_purchase(products)
+            warehouse_id = int(state.get("warehouse_id") or 2)
+            purchase_result = self._execute_purchase(products, warehouse_id)
             if purchase_result.get("error"):
                 return self._reply(f"进货失败：{purchase_result['error']}")
-            return self._create_order(customer_id, customer_name, products, 2)
+            if state.get("return_to_order"):
+                warehouse_id = int((products[0] or {}).get("warehouse_id") or warehouse_id) if products else warehouse_id
+                return self._create_order(customer_id, customer_name, products, warehouse_id)
+            return self._reply("进货成功。")
 
         warehouse = llm_extract_warehouse(user_input)
         warehouse_id = warehouse["warehouse_id"]
@@ -253,10 +298,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 p.pop("pending_warehouse_choice", None)
         if any(p.get("need_purchase") for p in products):
             if not self._need_purchase_confirmation(products):
-                purchase_result = self._execute_purchase(products)
-                if purchase_result.get("error"):
-                    return self._reply(f"进货失败：{purchase_result['error']}")
-                return self._create_order(customer_id, customer_name, products, 2)
+                return self._confirm_create_order(customer_id, customer_name, products, 2, auto_purchase=True)
             return self._ask(
                 "还有商品百鑫和自己店里都无货，需要先进货到百鑫仓库。请回复「确认」进货并继续开单，或回复「取消」停止。",
                 {
@@ -267,9 +309,55 @@ class OrderFlowWorkflow(BaseWorkflow):
                 },
             )
         logger.info(f"[OrderFlow] resume warehouse={warehouse['warehouse_name']}(id={warehouse_id})")
-        return self._create_order(customer_id, customer_name, products, warehouse_id)
+        return self._confirm_create_order(customer_id, customer_name, products, warehouse_id)
 
     # ---- 内部方法 ----
+
+    def _normalize_order_input(self, text: str) -> str:
+        value = str(text or "").strip()
+        # Common speech/typing style: "开单测试客户 喜物..." should be read as
+        # "开单 测试客户 喜物...", otherwise the first command can leak into
+        # the customer/product boundary.
+        value = re.sub(r"^(开单|下单|销售单|帮我开单|帮我下单)(?=\S)", r"\1 ", value)
+        return re.sub(r"\s+", " ", value).strip()
+
+    def _extract_inline_products(self, text: str) -> list[dict]:
+        products = []
+        value = self._normalize_order_input(text)
+        for match in re.finditer(r"([^\s，,、]+?)\s*(\d+(?:\.\d+)?)\s*(套|张|件|个|盒|份)", value):
+            raw_name = match.group(1).strip()
+            if not raw_name or raw_name in {"开单", "下单", "销售单", "客户", "商品"}:
+                continue
+            colors = self._extract_colors_in_text(raw_name)
+            qty = int(float(match.group(2)))
+            unit = match.group(3)
+            if "各" in raw_name and len(colors) >= 2:
+                name = raw_name.replace("各", "")
+                for color in colors:
+                    name = name.replace(color, "")
+                name = name.strip()
+                for color in colors:
+                    products.append({"name": name, "color": color, "qty": qty, "quantity": qty, "unit": unit})
+                continue
+            color = colors[0] if colors else ""
+            name = raw_name.replace(color, "").strip() if color else raw_name
+            products.append({"name": name, "color": color or "", "qty": qty, "quantity": qty, "unit": unit})
+        return products
+
+    def _extract_warehouse_hint(self, text: str) -> str | None:
+        value = str(text or "")
+        if any(word in value for word in ("自己店里", "自己仓", "店里仓", "门店", "店里", "自己")):
+            return "自己店里"
+        if any(word in value for word in ("百鑫仓库", "百鑫仓", "百鑫")):
+            return "百鑫仓库"
+        return None
+
+    def _warehouse_id_from_hint(self, warehouse_hint: str | None) -> int:
+        return 1 if warehouse_hint and ("自己" in warehouse_hint or "店里" in warehouse_hint) else 2
+
+    def _skip_inventory_check(self, text: str) -> bool:
+        value = str(text or "")
+        return any(word in value for word in ("不用查库存", "不查库存", "免库存", "直接开单", "直接开"))
 
     def _continue_after_product_resolution(
         self,
@@ -313,11 +401,13 @@ class OrderFlowWorkflow(BaseWorkflow):
                     "pending_warehouse": inventory_result.get("pending_warehouse"),
                 },
             )
-        if inventory_result["status"] == "auto_purchase":
-            purchase_result = self._execute_purchase(resolved_products)
-            if purchase_result.get("error"):
-                return self._reply(f"进货失败：{purchase_result['error']}")
-        return self._create_order(customer_id, customer_name, resolved_products, inventory_result.get("warehouse_id", 2))
+        return self._confirm_create_order(
+            customer_id,
+            customer_name,
+            resolved_products,
+            inventory_result.get("warehouse_id", 2),
+            inventory_result["status"] == "auto_purchase",
+        )
 
     def _search_customer(self, name: str) -> int | None:
         """B2: 搜索客户，返回 customer_id"""
@@ -359,6 +449,13 @@ class OrderFlowWorkflow(BaseWorkflow):
         logger.info(f"[OrderFlow] 搜索 '{keyword}', color={color} → {len(results)} 条候选")
 
         target = self._select_confirmed_product(results, keyword, color)
+        if target is None and color and self._is_non_gift(keyword):
+            no_color_results = self._search_product_candidates(keyword, "")
+            no_color_target = self._select_confirmed_product(no_color_results, keyword, "")
+            if no_color_target is not None:
+                target = no_color_target
+                results = no_color_results
+                color = ""
         if target is None:
             llm_keywords = self._llm_product_keywords(name, color)
             for llm_keyword in llm_keywords:
@@ -376,6 +473,10 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         product_id = target.get("id") or target.get("product_id")
         if product_id and ("产品名称" in target or not target.get("price")):
+            detail = self._product_detail(product_id)
+            if detail:
+                target = {**target, **detail}
+        if product_id:
             detail = self._product_detail(product_id)
             if detail:
                 target = {**target, **detail}
@@ -398,6 +499,23 @@ class OrderFlowWorkflow(BaseWorkflow):
             logger.info(f"[OrderFlow] 件套换算: {product['name']} {product.get('qty',1)}件 × {sets_per_case}套/件 = {qty}套")
 
         unit_id = self._lookup_unit_id(unit)
+        base_rows = target.get("base") if isinstance(target.get("base"), list) else []
+        if base_rows:
+            selected_base = None
+            for base in base_rows:
+                try:
+                    if unit_id and int(base.get("unit_id") or 0) == int(unit_id):
+                        selected_base = base
+                        break
+                except (TypeError, ValueError):
+                    continue
+            selected_base = selected_base or base_rows[0]
+            base_unit_id = selected_base.get("unit_id")
+            if base_unit_id:
+                unit_id = base_unit_id
+            unit = selected_base.get("unit_name") or unit
+            if price_override is None and selected_base.get("price") not in (None, ""):
+                price = selected_base.get("price")
         if not unit_id:
             logger.warning(f"[OrderFlow] unit_id 未确认: unit={unit}")
             return None
@@ -600,6 +718,16 @@ class OrderFlowWorkflow(BaseWorkflow):
 
     def _product_detail(self, product_id) -> dict | None:
         try:
+            from src.engine.api_client import ERPSystemClient
+            result = ERPSystemClient().product_detail(int(product_id))
+            data = result.get("data") if isinstance(result, dict) else None
+            if isinstance(data, dict) and isinstance(data.get("data"), dict):
+                data = data["data"]
+            if isinstance(data, dict) and data:
+                return data
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 商品API详情查询失败: {e}")
+        try:
             return self.caller.call("product_info", product_id=int(product_id))
         except Exception as e:
             logger.warning(f"[OrderFlow] 商品详情查询失败: {e}")
@@ -633,6 +761,11 @@ class OrderFlowWorkflow(BaseWorkflow):
             if color in str(text or ""):
                 return color
         return ""
+
+    def _extract_colors_in_text(self, text: str) -> list[str]:
+        value = str(text or "")
+        matches = [(value.find(color), color) for color in self._colors() if color in value]
+        return [color for _, color in sorted(matches, key=lambda item: item[0]) if _ >= 0]
 
     def _lookup_unit_id(self, unit_name: str) -> int | None:
         """Look up unit_id from ERP unit table instead of hardcoding it."""
@@ -700,8 +833,12 @@ class OrderFlowWorkflow(BaseWorkflow):
         if product.get("price_overridden"):
             logger.info(f"[OrderFlow] 用户指定价格: {product['name']} = {product['price']}")
             return
-        if product["price"] > 0:
-            return  # 已有价格
+
+        remembered = self._remembered_price(customer_id, product)
+        if remembered:
+            product["price"] = remembered
+            logger.info(f"[OrderFlow] 本地记忆价: {product['name']} = {remembered}")
+            return
 
         # 查历史成交价
         try:
@@ -713,12 +850,63 @@ class OrderFlowWorkflow(BaseWorkflow):
                 product["price"] = float(history)
                 logger.info(f"[OrderFlow] 历史价: {product['name']} = {history}")
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 历史价查询失败: {product.get('name', '')}: {e}")
+
+        if product["price"] > 0:
+            logger.info(f"[OrderFlow] 零售价: {product['name']} = {product['price']}")
+            return
 
         # 用零售价（search_product 已返回 price）
         # 如果还是 0，用 0（开单时 API 会用默认价）
         logger.info(f"[OrderFlow] 价格: {product['name']} = {product['price']}（零售价）")
+
+    def _price_memory_key(self, customer_id: int, product: dict) -> str:
+        return f"{int(customer_id)}:{int(product.get('product_id') or 0)}:{int(product.get('unit_id') or 0)}"
+
+    def _read_price_memory(self) -> dict:
+        try:
+            if PRICE_MEMORY_FILE.exists():
+                with PRICE_MEMORY_FILE.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 读取价格记忆失败: {e}")
+        return {}
+
+    def _write_price_memory(self, data: dict):
+        try:
+            PRICE_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with PRICE_MEMORY_FILE.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 写入价格记忆失败: {e}")
+
+    def _remembered_price(self, customer_id: int, product: dict) -> float | None:
+        data = self._read_price_memory()
+        item = data.get(self._price_memory_key(customer_id, product))
+        if not isinstance(item, dict):
+            return None
+        try:
+            price = float(item.get("price") or 0)
+        except (TypeError, ValueError):
+            return None
+        return price if price > 0 else None
+
+    def _remember_price(self, customer_id: int, customer_name: str, product: dict, price: float):
+        if not customer_id or not product.get("product_id") or not product.get("unit_id") or price <= 0:
+            return
+        data = self._read_price_memory()
+        data[self._price_memory_key(customer_id, product)] = {
+            "customer_id": int(customer_id),
+            "customer_name": customer_name,
+            "product_id": int(product.get("product_id")),
+            "product_name": product.get("name", ""),
+            "unit_id": int(product.get("unit_id")),
+            "unit": product.get("unit", ""),
+            "price": float(price),
+        }
+        self._write_price_memory(data)
 
     def _inventory_decision(self, products: list[dict], warehouse_hint: str | None) -> dict:
         """
@@ -728,20 +916,13 @@ class OrderFlowWorkflow(BaseWorkflow):
             {"status": "ok", "warehouse_id": 2}  → 不需要问用户
             {"status": "ask", "question": "...", "pending_warehouse": [...]}  → 需要问用户
         """
-        # 如果用户已指定仓库，百鑫可直接走；自己店里必须二次确认。
+        # 如果用户已指定仓库，确认卡里预选该仓库，最终仍由用户确认。
         if warehouse_hint and warehouse_hint not in ("不指定", "未指定", "无", "null", ""):
             wid = 1 if "自己" in warehouse_hint or "店里" in warehouse_hint else 2
             for p in products:
-                if wid == 1:
-                    p["pending_self_ship"] = True
-                else:
-                    p["warehouse_id"] = wid
-            if wid == 1:
-                return {
-                    "status": "ask",
-                    "question": "你指定从自己店里发货。请确认是否使用自己店里的库存发货？",
-                    "pending_action": "confirm_self_ship",
-                }
+                p["warehouse_id"] = wid
+                p.pop("pending_self_ship", None)
+                p.pop("pending_warehouse_choice", None)
             return {"status": "ok", "warehouse_id": wid}
 
         # 检查是否所有商品都是非礼盒类
@@ -753,8 +934,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 p["warehouse_id"] = 2
             return {"status": "ok", "warehouse_id": 2}
 
-        # 有礼盒类商品 → 需要查库存
-        need_warehouse_ask = []
+        # 有礼盒类商品 → 默认百鑫仓库，确认卡里可人工改为自己店里。
         for p in products:
             is_non = self._is_non_gift(p["name"])
             logger.info(f"[OrderFlow] 库存判断: {p['name']} → 非礼盒={is_non}")
@@ -771,44 +951,20 @@ class OrderFlowWorkflow(BaseWorkflow):
             logger.info(f"[OrderFlow] 库存: {p['name']} → 百鑫={baixin_qty}, 自己={self_qty}")
 
             if baixin_qty > 0 and self_qty > 0:
-                # 两个仓库都有货 → 需要问用户
-                p["pending_warehouse_choice"] = True
-                need_warehouse_ask.append(p)
+                p["warehouse_id"] = 2
             elif baixin_qty > 0:
                 p["warehouse_id"] = 2
             elif self_qty > 0:
-                p["pending_self_ship"] = True
-                need_warehouse_ask.append(p)  # 只有自己店里有，需要确认
+                p["warehouse_id"] = 2
+                p["need_purchase"] = True
             else:
                 # 都无货 → 需要进货
                 p["warehouse_id"] = 2
                 p["need_purchase"] = True
 
-        if need_warehouse_ask:
-            # 构建问题
-            names = "、".join([p["name"] + (f" {p['color']}" if p.get("color") else "") for p in need_warehouse_ask])
-            inv_text = "\n".join([
-                f"- {p['name']}{(' ' + p['color']) if p.get('color') else ''}: 自己店里{p['inventory'].get('自己店里', 0)}套, 百鑫{p['inventory'].get('百鑫仓库', 0)}套"
-                for p in need_warehouse_ask
-            ])
-            if all(p.get("pending_self_ship") for p in need_warehouse_ask):
-                question = f"以下商品百鑫无货，但自己店里有货。请确认是否从自己店里调货/发货：\n{inv_text}\n\n回复「确认」从自己店里发货，回复「取消」则改为先进货到百鑫仓库。"
-                return {"status": "ask", "question": question, "pending_action": "confirm_self_ship"}
-            question = f"以下商品需要选择发货仓库：\n{inv_text}\n\n请回复「自己店里」或「百鑫」。如果选择自己店里，我会再让你确认一次。"
-            return {"status": "ask", "question": question, "pending_action": "choose_warehouse", "pending_warehouse": need_warehouse_ask}
-
         need_purchase = [p for p in products if p.get("need_purchase")]
         if need_purchase:
-            if not self._need_purchase_confirmation(products):
-                return {
-                    "status": "auto_purchase",
-                    "warehouse_id": 2,
-                }
-            return {
-                "status": "ask",
-                "question": self._format_purchase_confirm_question(products),
-                "pending_action": "confirm_purchase",
-            }
+            return {"status": "ok", "warehouse_id": 2}
 
         return {"status": "ok", "warehouse_id": 2}
 
@@ -826,11 +982,72 @@ class OrderFlowWorkflow(BaseWorkflow):
 
     def _format_purchase_confirm_question(self, products: list[dict], customer_name: str = "") -> str:
         need_purchase = [p for p in products if p.get("need_purchase")]
-        lines = [f"将先给{customer_name or '客户'}的订单进货到百鑫仓库，再继续开销售单。请确认执行："]
+        warehouse_id = need_purchase[0].get("warehouse_id", 2) if need_purchase else 2
+        lines = [f"将先给{customer_name or '客户'}的订单进货到{self._warehouse_name(warehouse_id)}，再继续开销售单。请确认执行："]
         for p in need_purchase:
             lines.append(self._format_purchase_plan_line(p))
         lines.append("回复「确认」执行进货并开单，回复「取消」停止。")
         return "\n".join(lines)
+
+    def _warehouse_name(self, warehouse_id: int) -> str:
+        return "自己店里" if int(warehouse_id or 2) == 1 else "百鑫仓库"
+
+    def _warehouse_stock(self, inventory: dict, warehouse_id: int) -> int:
+        return int(inventory.get(self._warehouse_name(warehouse_id), 0) or 0)
+
+    def _purchase_confirmation_for_shortage(
+        self,
+        customer_id: int,
+        customer_name: str,
+        products: list[dict],
+        warehouse_id: int,
+    ) -> dict | None:
+        warehouse_id = int(warehouse_id or 2)
+        shortage_products = []
+        for p in products:
+            product_warehouse_id = int(p.get("warehouse_id") or warehouse_id or 2)
+            p["warehouse_id"] = product_warehouse_id
+            if self._is_non_gift(p.get("name", "")):
+                p.pop("need_purchase", None)
+                p.pop("purchase_warehouse_id", None)
+                p.pop("shortage_qty", None)
+                continue
+            inventory = self._query_inventory(p["product_id"])
+            p["inventory"] = inventory
+            selected_stock = self._warehouse_stock(inventory, product_warehouse_id)
+            try:
+                qty = int(float(p.get("qty") or 1))
+            except (TypeError, ValueError):
+                qty = 1
+            if selected_stock < qty:
+                p["need_purchase"] = True
+                p["purchase_warehouse_id"] = int(p.get("purchase_warehouse_id") or product_warehouse_id)
+                p["shortage_qty"] = max(1, qty - selected_stock)
+                shortage_products.append(p)
+            else:
+                p.pop("need_purchase", None)
+                p.pop("purchase_warehouse_id", None)
+                p.pop("shortage_qty", None)
+
+        if not shortage_products:
+            return None
+
+        lines = ["部分商品库存不足，需要先进货再开销售单。请确认进货信息："]
+        for p in shortage_products:
+            lines.append(self._format_purchase_plan_line(p))
+        lines.append("确认后会先进货到所选仓库，再继续开销售单；取消则不执行。")
+        return self._ask(
+            "\n".join(lines),
+            {
+                "pending_action": "confirm_purchase",
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "products": products,
+                "warehouse_id": warehouse_id,
+                "purchase_warehouse_id": int(shortage_products[0].get("purchase_warehouse_id") or warehouse_id or 2),
+                "return_to_order": True,
+            },
+        )
 
     def _need_purchase_confirmation(self, products: list[dict]) -> bool:
         """Only one-piece-order purchases require an explicit confirmation in order flow."""
@@ -868,6 +1085,13 @@ class OrderFlowWorkflow(BaseWorkflow):
             purchase_qty = order_qty
             purchase_unit = order_unit
 
+        try:
+            edited_purchase_qty = int(float(product.get("purchase_qty") or 0))
+        except (TypeError, ValueError):
+            edited_purchase_qty = 0
+        if edited_purchase_qty > 0:
+            purchase_qty = edited_purchase_qty
+
         product["purchase_qty"] = int(purchase_qty)
         product["purchase_unit"] = purchase_unit
         product["purchase_per_piece"] = per_piece
@@ -880,38 +1104,44 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _is_yes(self, text: str) -> bool:
         """Conservative confirmation parser for irreversible inventory/order actions."""
         value = (text or "").strip().lower()
-        yes_words = ("确认", "同意", "可以", "是", "好", "好的", "继续", "yes", "y", "ok")
         no_words = ("取消", "不要", "否", "不", "no", "n")
         if any(w in value for w in no_words):
             return False
+        yes_words = ("确认", "同意", "可以", "是", "好", "好的", "继续", "执行", "创建", "开单", "yes", "y", "ok")
         return any(w in value for w in yes_words)
 
-    def _execute_purchase(self, products: list[dict]) -> dict:
-        """Purchase all products marked as need_purchase into Baixin warehouse."""
-        purchase_products = []
+    def _execute_purchase(self, products: list[dict], warehouse_id: int = 2) -> dict:
+        """Purchase all products marked as need_purchase into the selected warehouse."""
+        warehouse_id = int(warehouse_id or 2)
+        purchase_groups: dict[int, list[dict]] = {}
         for p in products:
             if not p.get("need_purchase"):
                 continue
+            target_warehouse_id = int(p.get("purchase_warehouse_id") or p.get("warehouse_id") or warehouse_id or 2)
             plan = self._annotate_purchase_plan(p)
-            purchase_products.append(self._purchase_payload_item(p, plan))
-            p["warehouse_id"] = 2
+            purchase_groups.setdefault(target_warehouse_id, []).append(self._purchase_payload_item(p, plan))
+            p["warehouse_id"] = target_warehouse_id
+            p["purchase_warehouse_id"] = target_warehouse_id
             p.pop("need_purchase", None)
 
-        if not purchase_products:
+        if not purchase_groups:
             return {"ok": True}
 
         try:
-            result = self.caller.call(
-                "other_enter_add",
-                warehouse_id=2,
-                products=purchase_products,
-                note="送至百鑫",
-            )
+            results = []
+            for target_warehouse_id, purchase_products in purchase_groups.items():
+                result = self.caller.call(
+                    "other_enter_add",
+                    warehouse_id=target_warehouse_id,
+                    products=purchase_products,
+                    note=f"送至{self._warehouse_name(target_warehouse_id)}",
+                )
+                results.append(result)
+                if isinstance(result, dict) and result.get("error"):
+                    return {"error": result["error"]}
         except Exception as e:
             return {"error": str(e)}
-        if isinstance(result, dict) and result.get("error"):
-            return {"error": result["error"]}
-        return {"ok": True, "result": result}
+        return {"ok": True, "result": results}
 
     def _purchase_payload_item(self, product: dict, plan: dict) -> dict:
         """ERP has no 件 unit, so 1件起 purchases are entered as equivalent 套."""
@@ -961,8 +1191,70 @@ class OrderFlowWorkflow(BaseWorkflow):
             logger.warning(f"[OrderFlow] 库存查询失败: {e}")
             return {}
 
+    def _confirm_create_order(
+        self,
+        customer_id: int,
+        customer_name: str,
+        products: list[dict],
+        warehouse_id: int,
+        auto_purchase: bool = False,
+        skip_inventory: bool = False,
+        customer_defaulted: bool = False,
+    ) -> dict:
+        """Always pause before mutating ERP state."""
+        warehouse_id = int(warehouse_id or 2)
+        for p in products:
+            p["warehouse_id"] = int(p.get("warehouse_id") or warehouse_id or 2)
+        lines = ["请确认是否执行开单：", f"客户：{customer_name}"]
+        if customer_defaulted:
+            lines.append("提醒：这次没有识别到客户，已默认按散客处理；确认前可以改客户。")
+        lines.append("动作：先进货入库，再创建销售单" if auto_purchase else "动作：创建销售单")
+        lines.append("商品：")
+        for p in products:
+            wh = "自己店里" if int(p.get("warehouse_id") or warehouse_id or 2) == 1 else "百鑫仓库"
+            color = f" {p.get('color')}" if p.get("color") else ""
+            price = p.get("price", 0)
+            lines.append(f"- {p.get('name', p.get('title', '商品'))}{color} {p.get('qty', 1)}{p.get('unit', '套')}，{wh}，单价 {price}")
+        lines.append("确认后才会真正写入进销存。")
+        return self._ask(
+            "\n".join(lines),
+            {
+                "pending_action": "confirm_create_order",
+                "customer_id": customer_id,
+                "customer_name": customer_name,
+                "products": products,
+                "warehouse_id": warehouse_id,
+                "auto_purchase": auto_purchase,
+                "skip_inventory": skip_inventory,
+                "customer_defaulted": customer_defaulted,
+            },
+        )
+
     def _create_order(self, customer_id: int, customer_name: str, products: list[dict], warehouse_id: int) -> dict:
         """B5: 开销售单"""
+        warehouse_id = int(warehouse_id or 2)
+        for p in products:
+            p["warehouse_id"] = int(p.get("warehouse_id") or warehouse_id or 2)
+            detail = self._product_detail(p.get("product_id")) if p.get("product_id") else None
+            base_rows = detail.get("base") if isinstance(detail, dict) and isinstance(detail.get("base"), list) else []
+            if not base_rows:
+                continue
+            current_unit_id = p.get("unit_id")
+            selected_base = None
+            for base in base_rows:
+                try:
+                    if current_unit_id and int(base.get("unit_id") or 0) == int(current_unit_id):
+                        selected_base = base
+                        break
+                except (TypeError, ValueError):
+                    continue
+            selected_base = selected_base or base_rows[0]
+            if selected_base.get("unit_id"):
+                p["unit_id"] = int(selected_base["unit_id"])
+            if selected_base.get("unit_name"):
+                p["unit"] = selected_base["unit_name"]
+            if not p.get("price") and selected_base.get("price") not in (None, ""):
+                p["price"] = float(selected_base["price"])
         blocked = self._validate_before_sales(products)
         if blocked:
             return self._reply(f"[BLOCKED: Missing Critical Info]\n{blocked}")
@@ -995,29 +1287,42 @@ class OrderFlowWorkflow(BaseWorkflow):
             data = result if isinstance(result, dict) else json.loads(json.dumps(result))
             if data.get("code") == 0:
                 sales_no = data.get("data", "")
-                from src.core.session import SessionManager, get_current_session_id
-                if sales_no:
-                    SessionManager(get_current_session_id()).set_meta("last_order", {
-                        "type": "sales",
-                        "id": str(sales_no),
-                        "customer": customer_name,
-                    })
                 # 构建回复
                 lines = [f"开单成功！销售单号：{sales_no}", ""]
                 lines.append(f"客户：{customer_name}")
                 lines.append("商品：")
                 total = 0
+                order_items = []
                 for p in products:
                     price = p.get("price", 0)
                     qty = p.get("qty", 1)
                     subtotal = price * qty
                     total += subtotal
                     wh = "自己店里" if p.get("warehouse_id", warehouse_id) == 1 else "百鑫仓库"
+                    order_items.append({
+                        "name": p.get("name", ""),
+                        "color": p.get("color", ""),
+                        "qty": qty,
+                        "unit": p.get("unit", "套"),
+                        "price": price,
+                        "subtotal": subtotal,
+                        "warehouse": wh,
+                    })
+                    self._remember_price(customer_id, customer_name, p, price)
                     lines.append(f"  {p['name']}{(' ' + p['color']) if p.get('color') else ''}: {qty}{p.get('unit','套')} × {price}元 = {subtotal}元（{wh}发货）")
                 lines.append(f"\n合计：{total}元")
+                from src.core.session import SessionManager, get_current_session_id
+                if sales_no:
+                    SessionManager(get_current_session_id()).set_meta("last_order", {
+                        "type": "sales",
+                        "id": str(sales_no),
+                        "customer": customer_name,
+                        "products": order_items,
+                        "total": total,
+                    })
                 return self._reply("\n".join(lines))
             else:
-                msg = data.get("msg", "未知错误")
+                msg = data.get("msg") or data.get("error") or "未知错误"
                 return self._reply(f"开单失败：{msg}")
 
         except Exception as e:

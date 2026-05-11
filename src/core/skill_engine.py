@@ -307,6 +307,8 @@ class SkillEngine:
             return True
         if intent == "stocktaking" and fast_extracted.get("products"):
             return True
+        if intent == "order" and fast_extracted.get("products") and fast_extracted.get("customer"):
+            return True
         return False
 
     def _merge_learned_with_fast(self, learned: dict, fast: dict | None) -> dict:
@@ -717,22 +719,43 @@ class SkillEngine:
         return re.sub(r"\s+", " ", keyword).strip()
 
     def _is_order_request(self, user_input: str) -> bool:
-        return any(w in user_input for w in ["下单", "开单", "订货"]) and any(unit in user_input for unit in ["套", "张", "个", "件", "捆", "斤"])
+        has_unit = any(unit in user_input for unit in ["套", "张", "个", "件", "捆", "斤"])
+        if not has_unit:
+            return False
+        if any(w in user_input for w in ["下单", "开单", "订货"]):
+            return True
+        return bool(re.search(r"^[^\s，,]{2,20}\s+.+\d+(?:\.\d+)?\s*(?:套|张|个|件|捆|斤)", user_input.strip()))
 
     def _extract_order_params_fast(self, user_input: str) -> dict | None:
         import re
         customer = ""
-        m = re.search(r'(?:客户|客户[:：])\s*([^\s，,]+)', user_input)
+        command_words = ("开单", "下单", "销售单", "帮我开单", "帮我下单")
+        text = user_input.strip()
+        command_pattern = r"^(?:帮我开单|帮我下单|开单|下单|销售单)\s*"
+        command_match = re.match(command_pattern, text)
+        text_without_command = re.sub(command_pattern, "", text, count=1).strip()
+        m = re.search(r'(?<![\u4e00-\u9fa5A-Za-z0-9])客户[:：]?\s*([^\s，,]+)', text_without_command)
         if m:
             customer = m.group(1).strip()
         else:
-            m = re.search(r'^([^\s，,]+).*?(?:下单|开单)', user_input)
-            if m:
-                customer = m.group(1).strip()
+            if command_match:
+                m = re.search(r'^([^\s，,]{2,20})\s+.+\d+(?:\.\d+)?\s*(?:套|张|个|件|捆|斤)', text_without_command)
+                if m:
+                    customer = m.group(1).strip()
+            else:
+                m = re.search(r'^([^\s，,]+).*?(?:下单|开单)', text)
+                if m:
+                    customer = m.group(1).strip()
+                else:
+                    m = re.search(r'^([^\s，,]{2,20})\s+.+\d+(?:\.\d+)?\s*(?:套|张|个|件|捆|斤)', text)
+                    if m:
+                        customer = m.group(1).strip()
+        if customer in command_words or customer in {"客户", "客户名字", "客户名", "客户名称", "名字", "姓名", "名称"}:
+            customer = ""
 
         colors = ["红色", "黄色", "橙色", "蓝色", "绿色", "橄榄绿", "咖色", "深咖色", "古铜色", "黑色", "白色", "紫色", "粉色"]
         products = []
-        cleaned = re.sub(r'客户[:：]?\s*[^\s，,]+', '', user_input)
+        cleaned = re.sub(r'(?<![\u4e00-\u9fa5A-Za-z0-9])客户[:：]?\s*[^\s，,]+', '', text_without_command or text)
         for match in re.finditer(r'([\u4e00-\u9fa5A-Za-z0-9【】]+?)\s*(\d+)\s*(套|张|个|件|捆|斤)', cleaned):
             name = match.group(1).strip()
             if name in {"客户", "商品", "产品", "下单", "开单"}:
@@ -756,7 +779,8 @@ class SkillEngine:
         """
         if intent == "order":
             if not params.get("customer"):
-                return {"question": "请问是哪个客户的订单？", "state": {"partial_params": params}}
+                params["customer"] = "散客"
+                params["customer_defaulted"] = True
             products = params.get("products", [])
             if not products:
                 return {"question": "请问要下什么商品？例如：标签4张 岩味半斤红色1套", "state": {"partial_params": params}}
@@ -1062,7 +1086,7 @@ class SkillEngine:
         """处理 workflow 返回结果"""
         if result.get("status") == "ask":
             # 需要问用户 → 保存状态
-            session.save_pending(intent, result["state"])
+            session.save_pending(result.get("intent") or intent, result["state"])
             session.save_turn(user_input, result["question"])
             return result["question"]
         else:

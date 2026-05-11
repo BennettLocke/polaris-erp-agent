@@ -4,6 +4,7 @@ HTTP API 渠道（预留 WebUI 和外部调用）
 """
 import json
 import os
+import re
 import uuid
 import time
 from pathlib import Path
@@ -284,7 +285,103 @@ def _session_snapshot(session_id: str) -> dict:
         "pending_action": pending_action,
         "state": state or {},
         "last_extraction": session.get_meta("last_extraction", {}),
+        "last_order": session.get_meta("last_order", {}),
     }
+
+
+def _pending_number(value, default=0):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _pending_price(value, default=0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _sanitize_pending_state(intent: str | None, new_state: dict, old_state: dict | None) -> dict:
+    """Keep edited confirmation forms from corrupting resolved ERP ids."""
+    if intent != "order" or new_state.get("pending_action") != "confirm_create_order":
+        return new_state
+
+    old_state = old_state or {}
+    products = new_state.get("products") or []
+    old_products = old_state.get("products") or []
+    if not isinstance(products, list):
+        return new_state
+
+    from src.skills.order_flow.workflow import OrderFlowWorkflow
+    workflow = OrderFlowWorkflow()
+    old_customer_name = str(old_state.get("customer_name") or old_state.get("customer") or "").strip()
+    customer_name = str(new_state.get("customer_name") or new_state.get("customer") or old_customer_name or "散客").strip()
+    customer_id = new_state.get("customer_id") or old_state.get("customer_id")
+    customer_changed = bool(customer_name and customer_name != old_customer_name)
+    if customer_changed:
+        customer_id = workflow._search_customer(customer_name)
+        if customer_id is None:
+            customer_id = workflow._create_customer(customer_name)
+        if customer_id is None:
+            raise ValueError(f"客户「{customer_name}」未找到，也无法自动创建。")
+        new_state["customer_id"] = customer_id
+        new_state["customer_name"] = customer_name
+        new_state.pop("customer_defaulted", None)
+    warehouse_id = new_state.get("warehouse_id") or old_state.get("warehouse_id") or 2
+    cleaned = []
+    for index, product in enumerate(products):
+        if not isinstance(product, dict):
+            continue
+        old = old_products[index] if index < len(old_products) and isinstance(old_products[index], dict) else {}
+        name = (product.get("name") or product.get("title") or old.get("name") or old.get("title") or "").strip()
+        color = (product.get("color") or old.get("color") or "").strip()
+        qty = _pending_number(product.get("qty", product.get("quantity", old.get("qty", 1))), old.get("qty", 1) or 1)
+        edited_price = product.get("price", None)
+        price = _pending_price(edited_price, old.get("price", 0) or 0) if edited_price not in (None, "") else old.get("price", 0) or 0
+        old_name = (old.get("name") or old.get("title") or "").strip()
+        old_color = (old.get("color") or "").strip()
+        name_changed = bool(name and name != old_name)
+        color_changed = color != old_color
+
+        if name_changed or color_changed or not old.get("product_id") or not old.get("unit_id"):
+            candidate = dict(old)
+            candidate.update(product)
+            candidate["name"] = name
+            candidate["color"] = color
+            candidate["qty"] = qty
+            resolved = workflow._search_product(candidate)
+            if resolved is None:
+                raise ValueError(f"商品「{name or old_name} {color}」未匹配到，不能确认开单。")
+            if customer_id:
+                workflow._fill_price(int(customer_id), resolved)
+            merged = resolved
+        else:
+            merged = dict(old)
+            safe_updates = {}
+            for key in ("qty", "quantity", "price", "warehouse_id"):
+                if key in product:
+                    safe_updates[key] = product[key]
+            merged.update(safe_updates)
+            if customer_changed and customer_id and edited_price in (None, ""):
+                workflow._fill_price(int(customer_id), merged)
+                price = merged.get("price", price)
+
+        merged["name"] = name or merged.get("name") or merged.get("title") or old_name
+        merged["color"] = color
+        merged["qty"] = max(1, qty)
+        merged["quantity"] = max(1, qty)
+        merged["price"] = price or merged.get("price", 0)
+        merged["warehouse_id"] = product.get("warehouse_id") or old.get("warehouse_id") or warehouse_id
+        try:
+            merged["warehouse_id"] = int(merged["warehouse_id"] or 2)
+        except (TypeError, ValueError):
+            merged["warehouse_id"] = 2
+        cleaned.append(merged)
+
+    new_state["products"] = cleaned
+    return new_state
 
 
 def _extract_list_rows(result: dict) -> list[dict]:
@@ -295,6 +392,495 @@ def _extract_list_rows(result: dict) -> list[dict]:
     if isinstance(data, dict):
         return data.get("list") or data.get("data") or data.get("rows") or []
     return data if isinstance(data, list) else []
+
+
+def _db_client():
+    from src.engine.db_client import get_db_client
+    return get_db_client()
+
+
+def _like_keyword(keyword: str) -> str:
+    return f"%{str(keyword or '').strip()}%"
+
+
+def _normalize_inventory_keyword(keyword: str) -> str:
+    text = str(keyword or "").strip()
+    if not text:
+        return ""
+    for word in ("库存", "有货", "有库存", "查货", "查一下", "查下", "查询", "看看", "帮我", "礼盒", "盒子", "的", "吗", "呢"):
+        text = text.replace(word, " ")
+    text = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", text)
+    text = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", text)
+    text = re.sub(r"(?:1\s*两|一\s*两)", "一两", text)
+    specs = ["二三两", "半斤", "一两", "三小盒", "六小盒", "十小盒", "长半斤"]
+    for spec in specs:
+        text = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _image_first(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, list):
+        return str(value[0]) if value else ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        decoded = json.loads(text)
+        if isinstance(decoded, list):
+            return str(decoded[0]) if decoded else ""
+        if isinstance(decoded, str):
+            return decoded
+    except Exception:
+        pass
+    return text.split(",")[0].strip()
+
+
+def _product_status_text(status) -> str:
+    return {
+        0: "正常",
+        1: "下架",
+        2: "停售",
+        3: "停产",
+    }.get(int(status or 0), "正常")
+
+
+def _db_sales_cards(keyword: str, page: int, page_size: int, status: int | None = None) -> tuple[list[dict], int]:
+    db = _db_client()
+    where = ["1=1"]
+    join_extra = ""
+    params: list = []
+    if status is not None:
+        where.append("s.status = %s")
+        params.append(status)
+    if keyword:
+        like = _like_keyword(keyword)
+        where.append(
+            "("
+            "s.sales_no LIKE %s OR c.name LIKE %s OR c.company_name LIKE %s "
+            "OR sd.title LIKE %s OR sd.spec LIKE %s"
+            ")"
+        )
+        params.extend([like, like, like, like, like])
+        join_extra = " LEFT JOIN sxo_plugins_erp_sales_detail sd ON sd.sales_id = s.id"
+    where_sql = " AND ".join(where)
+    offset = (page - 1) * page_size
+    group_sql = "GROUP BY s.id" if keyword else ""
+    total_rows = db.query(
+        f"""
+        SELECT COUNT({ 'DISTINCT s.id' if keyword else '*' }) AS total
+        FROM sxo_plugins_erp_sales s
+        LEFT JOIN sxo_plugins_erp_company c ON c.id = s.customer_id
+        {join_extra}
+        WHERE {where_sql}
+        """,
+        tuple(params),
+    )
+    total = int(total_rows[0].get("total") or 0) if total_rows else 0
+    sales_rows = db.query(
+        f"""
+        SELECT
+            s.id, s.sales_no, s.customer_id, s.status, s.pay_status, s.total_price,
+            s.price, s.buy_number_count, s.note, s.admin_note, s.add_time,
+            COALESCE(NULLIF(c.name, ''), NULLIF(c.company_name, ''), s.contacts_name, CONCAT('客户#', s.customer_id)) AS customer_name
+        FROM sxo_plugins_erp_sales s
+        LEFT JOIN sxo_plugins_erp_company c ON c.id = s.customer_id
+        {join_extra}
+        WHERE {where_sql}
+        {group_sql}
+        ORDER BY s.add_time DESC, s.id DESC
+        LIMIT %s OFFSET %s
+        """,
+        tuple(params + [page_size, offset]),
+    )
+    ids = [int(row["id"]) for row in sales_rows if row.get("id")]
+    details_by_sales: dict[int, list[dict]] = {sid: [] for sid in ids}
+    if ids:
+        placeholders = ",".join(["%s"] * len(ids))
+        detail_rows = db.query(
+            f"""
+            SELECT sales_id, product_id, title, spec, images, warehouse_id, price, buy_number, total_price
+            FROM sxo_plugins_erp_sales_detail
+            WHERE sales_id IN ({placeholders})
+            ORDER BY id ASC
+            """,
+            tuple(ids),
+        )
+        for item in detail_rows:
+            sid = int(item.get("sales_id") or 0)
+            details_by_sales.setdefault(sid, []).append({
+                "product_id": item.get("product_id"),
+                "title": item.get("title") or "商品",
+                "spec": item.get("spec") or "",
+                "quantity": item.get("buy_number") or 0,
+                "price": _as_money(item.get("price")),
+                "total_price": _as_money(item.get("total_price")),
+                "image": _image_first(item.get("images")),
+                "warehouse_id": item.get("warehouse_id"),
+            })
+    cards = []
+    for row in sales_rows:
+        sid = int(row.get("id") or 0)
+        products = details_by_sales.get(sid, [])
+        total_quantity = 0
+        for product in products:
+            try:
+                total_quantity += float(product.get("quantity") or 0)
+            except (TypeError, ValueError):
+                pass
+        cards.append({
+            "id": sid,
+            "sales_no": row.get("sales_no") or str(sid),
+            "customer_name": row.get("customer_name") or "客户未识别",
+            "status": row.get("status"),
+            "status_text": _sales_status_text(row.get("status")),
+            "pay_status": row.get("pay_status"),
+            "total_price": _as_money(row.get("total_price") or row.get("price")),
+            "buy_number_count": row.get("buy_number_count") or 0,
+            "total_quantity": total_quantity or row.get("buy_number_count") or 0,
+            "date_text": _date_text(row.get("add_time")),
+            "product_summary": _first_product_line(products),
+            "products": products,
+            "note": row.get("note") or row.get("admin_note") or "",
+        })
+    return cards, total
+
+
+def _db_workflow_orders(keyword: str, page: int, page_size: int, status_filter: str = "active") -> tuple[list[dict], int]:
+    db = _db_client()
+    where = ["1=1"]
+    params: list = []
+    now = int(time.time())
+    seven_days_ago = now - 86400 * 7
+    if status_filter == "unmade":
+        where.append("COALESCE(is_made, 0) <> 1")
+    elif status_filter == "pending":
+        where.append("(COALESCE(order_type, 0) <> 1 OR COALESCE(is_made, 0) <> 1 OR COALESCE(is_delivered, 0) <> 1)")
+    elif status_filter != "all":
+        where.append(
+            "("
+            "COALESCE(order_type, 0) <> 1 "
+            "OR COALESCE(is_made, 0) <> 1 "
+            "OR COALESCE(is_delivered, 0) <> 1 "
+            "OR COALESCE(complete_time, order_time, add_time, 0) >= %s"
+            ")"
+        )
+        params.append(seven_days_ago)
+    if keyword:
+        like = _like_keyword(keyword)
+        where.append("(customer_name LIKE %s OR customer_phone LIKE %s OR goods_name LIKE %s OR goods_color LIKE %s)")
+        params.extend([like, like, like, like])
+    where_sql = " AND ".join(where)
+    total_rows = db.query(f"SELECT COUNT(*) AS total FROM sxo_workflow_order WHERE {where_sql}", tuple(params))
+    total = int(total_rows[0].get("total") or 0) if total_rows else 0
+    offset = (page - 1) * page_size
+    rows = db.query(
+        f"""
+        SELECT *
+        FROM sxo_workflow_order
+        WHERE {where_sql}
+        ORDER BY COALESCE(order_time, add_time) DESC, id DESC
+        LIMIT %s OFFSET %s
+        """,
+        tuple(params + [page_size, offset]),
+    )
+    return [_workflow_card(row) for row in rows], total
+
+
+def _db_product_list_flat(keyword: str, page: int, page_size: int, status=None, category_id: int | None = None) -> tuple[list[dict], int]:
+    db = _db_client()
+    where = ["1=1"]
+    join_category = ""
+    params: list = []
+    if status not in (None, ""):
+        where.append("p.status = %s")
+        params.append(int(status))
+    if category_id:
+        join_category = " JOIN sxo_plugins_erp_product_category_join pcj ON pcj.product_id = p.id"
+        where.append("pcj.product_category_id = %s")
+        params.append(int(category_id))
+    if keyword:
+        like = _like_keyword(keyword)
+        compact = f"%{str(keyword).replace(' ', '').replace('　', '')}%"
+        where.append(
+            "("
+            "p.title LIKE %s OR p.spec LIKE %s OR p.coding LIKE %s OR p.simple_desc LIKE %s "
+            "OR REPLACE(REPLACE(REPLACE(REPLACE(p.title, '【', ''), '】', ''), ' ', ''), '　', '') LIKE %s"
+            ")"
+        )
+        params.extend([like, like, like, like, compact])
+    where_sql = " AND ".join(where)
+    total_rows = db.query(
+        f"SELECT COUNT(DISTINCT p.id) AS total FROM sxo_plugins_erp_product p {join_category} WHERE {where_sql}",
+        tuple(params),
+    )
+    total = int(total_rows[0].get("total") or 0) if total_rows else 0
+    offset = (page - 1) * page_size
+    rows = db.query(
+        f"""
+        SELECT p.id, p.title, p.spec, p.coding, p.simple_desc, p.images, p.main_images, p.price, p.min_price, p.max_price,
+               p.inventory, p.status, p.group_key, p.content, p.cost_price, p.add_time, p.upd_time,
+               g.id AS system_goods_id, g.is_shelves AS system_goods_is_shelves,
+               GROUP_CONCAT(DISTINCT pcj2.product_category_id ORDER BY pcj2.product_category_id) AS product_category_ids,
+               GROUP_CONCAT(DISTINCT pc.name ORDER BY pc.sort DESC, pc.id ASC SEPARATOR ' / ') AS product_category_text
+        FROM sxo_plugins_erp_product p
+        {join_category}
+        LEFT JOIN (
+            SELECT product_id, MAX(goods_id) AS goods_id
+            FROM sxo_plugins_erp_system_goods_sync_product_log
+            GROUP BY product_id
+        ) sg ON sg.product_id = p.id
+        LEFT JOIN sxo_goods g ON g.id = sg.goods_id
+        LEFT JOIN sxo_plugins_erp_product_category_join pcj2 ON pcj2.product_id = p.id
+        LEFT JOIN sxo_plugins_erp_product_category pc ON pc.id = pcj2.product_category_id
+        WHERE {where_sql}
+        GROUP BY p.id
+        ORDER BY p.upd_time DESC, p.id DESC
+        LIMIT %s OFFSET %s
+        """,
+        tuple(params + [page_size, offset]),
+    )
+    items = []
+    for row in rows:
+        image = _image_first(row.get("main_images") or row.get("images"))
+        items.append({
+            "id": row.get("id"),
+            "product_id": row.get("id"),
+            "title": row.get("title") or "商品",
+            "name": row.get("title") or "商品",
+            "spec": row.get("spec") or "",
+            "coding": row.get("coding") or "",
+            "simple_desc": row.get("simple_desc") or "",
+            "price": _as_money(row.get("price") or row.get("min_price")),
+            "min_price": _as_money(row.get("min_price") or row.get("price")),
+            "max_price": _as_money(row.get("max_price") or row.get("price")),
+            "inventory": row.get("inventory") or 0,
+            "status": row.get("status"),
+            "status_text": _product_status_text(row.get("status")),
+            "images": image,
+            "main_images": image,
+            "content": row.get("content") or "",
+            "cost_price": _as_money(row.get("cost_price")),
+            "group_key": row.get("group_key") or "",
+            "product_category_ids": [
+                int(item) for item in str(row.get("product_category_ids") or "").split(",") if str(item).isdigit()
+            ],
+            "product_category_text": row.get("product_category_text") or "",
+            "system_goods_id": row.get("system_goods_id") or 0,
+            "system_goods_is_shelves": int(row.get("system_goods_is_shelves") or 0),
+        })
+    return items, total
+
+
+def _db_product_grouped_list(keyword: str, page: int, page_size: int, status=None, category_id: int | None = None) -> tuple[list[dict], int]:
+    db = _db_client()
+    where = ["1=1"]
+    join_category = ""
+    params: list = []
+    if status not in (None, ""):
+        where.append("p.status = %s")
+        params.append(int(status))
+    if category_id:
+        join_category = " JOIN sxo_plugins_erp_product_category_join pcj ON pcj.product_id = p.id"
+        where.append("pcj.product_category_id = %s")
+        params.append(int(category_id))
+    if keyword:
+        like = _like_keyword(keyword)
+        compact = f"%{str(keyword).replace(' ', '').replace('　', '')}%"
+        where.append(
+            "("
+            "p.title LIKE %s OR p.spec LIKE %s OR p.coding LIKE %s OR p.simple_desc LIKE %s "
+            "OR REPLACE(REPLACE(REPLACE(REPLACE(p.title, '【', ''), '】', ''), ' ', ''), '　', '') LIKE %s"
+            ")"
+        )
+        params.extend([like, like, like, like, compact])
+
+    where_sql = " AND ".join(where)
+    group_expr = "COALESCE(NULLIF(p.group_key, ''), CAST(p.id AS CHAR))"
+    total_rows = db.query(
+        f"SELECT COUNT(DISTINCT {group_expr}) AS total FROM sxo_plugins_erp_product p {join_category} WHERE {where_sql}",
+        tuple(params),
+    )
+    total = int(total_rows[0].get("total") or 0) if total_rows else 0
+    offset = (page - 1) * page_size
+    group_rows = db.query(
+        f"""
+        SELECT {group_expr} AS product_group_key, MAX(p.upd_time) AS latest_time, MAX(p.id) AS latest_id
+        FROM sxo_plugins_erp_product p
+        {join_category}
+        WHERE {where_sql}
+        GROUP BY product_group_key
+        ORDER BY latest_time DESC, latest_id DESC
+        LIMIT %s OFFSET %s
+        """,
+        tuple(params + [page_size, offset]),
+    )
+    group_keys = [str(row.get("product_group_key") or "") for row in group_rows if row.get("product_group_key") is not None]
+    if not group_keys:
+        return [], total
+
+    placeholders = ",".join(["%s"] * len(group_keys))
+    rows = db.query(
+        f"""
+        SELECT p.id, p.title, p.spec, p.coding, p.simple_desc, p.images, p.main_images, p.price, p.min_price, p.max_price,
+               p.inventory, p.status, p.group_key, p.content, p.cost_price, p.add_time, p.upd_time,
+               g.id AS system_goods_id, g.is_shelves AS system_goods_is_shelves,
+               GROUP_CONCAT(DISTINCT pcj2.product_category_id ORDER BY pcj2.product_category_id) AS product_category_ids,
+               GROUP_CONCAT(DISTINCT pc.name ORDER BY pc.sort DESC, pc.id ASC SEPARATOR ' / ') AS product_category_text
+        FROM sxo_plugins_erp_product p
+        LEFT JOIN (
+            SELECT product_id, MAX(goods_id) AS goods_id
+            FROM sxo_plugins_erp_system_goods_sync_product_log
+            GROUP BY product_id
+        ) sg ON sg.product_id = p.id
+        LEFT JOIN sxo_goods g ON g.id = sg.goods_id
+        LEFT JOIN sxo_plugins_erp_product_category_join pcj2 ON pcj2.product_id = p.id
+        LEFT JOIN sxo_plugins_erp_product_category pc ON pc.id = pcj2.product_category_id
+        WHERE COALESCE(NULLIF(p.group_key, ''), CAST(p.id AS CHAR)) IN ({placeholders})
+        GROUP BY p.id
+        ORDER BY p.title ASC, p.id ASC
+        """,
+        tuple(group_keys),
+    )
+
+    grouped: dict[str, list[dict]] = {key: [] for key in group_keys}
+    for row in rows:
+        key = str(row.get("group_key") or row.get("id") or "")
+        image = _image_first(row.get("main_images") or row.get("images"))
+        item = {
+            "id": row.get("id"),
+            "product_id": row.get("id"),
+            "title": row.get("title") or "商品",
+            "name": row.get("title") or "商品",
+            "spec": row.get("spec") or "",
+            "coding": row.get("coding") or "",
+            "simple_desc": row.get("simple_desc") or "",
+            "price": _as_money(row.get("price") or row.get("min_price")),
+            "min_price": _as_money(row.get("min_price") or row.get("price")),
+            "max_price": _as_money(row.get("max_price") or row.get("price")),
+            "inventory": row.get("inventory") or 0,
+            "status": row.get("status"),
+            "status_text": _product_status_text(row.get("status")),
+            "images": image,
+            "main_images": image,
+            "content": row.get("content") or "",
+            "cost_price": _as_money(row.get("cost_price")),
+            "group_key": row.get("group_key") or "",
+            "product_category_ids": [
+                int(item) for item in str(row.get("product_category_ids") or "").split(",") if str(item).isdigit()
+            ],
+            "product_category_text": row.get("product_category_text") or "",
+            "system_goods_id": row.get("system_goods_id") or 0,
+            "system_goods_is_shelves": int(row.get("system_goods_is_shelves") or 0),
+        }
+        grouped.setdefault(key, []).append(item)
+
+    items = []
+    for key in group_keys:
+        variants = grouped.get(key) or []
+        if not variants:
+            continue
+        primary = next((item for item in variants if item.get("images")), variants[0]).copy()
+        inventories: list[float] = []
+        prices: list[float] = []
+        category_ids: list[int] = []
+        category_texts: list[str] = []
+        shelves_values: list[int] = []
+        for item in variants:
+            try:
+                inventories.append(float(item.get("inventory") or 0))
+            except (TypeError, ValueError):
+                pass
+            try:
+                prices.append(float(item.get("price") or item.get("min_price") or 0))
+            except (TypeError, ValueError):
+                pass
+            shelves_values.append(int(item.get("system_goods_is_shelves") or 0))
+            for cid in item.get("product_category_ids") or []:
+                if cid not in category_ids:
+                    category_ids.append(cid)
+            text = item.get("product_category_text") or ""
+            if text and text not in category_texts:
+                category_texts.append(text)
+        inventory_total = sum(inventories)
+        primary["product_group_data"] = variants
+        primary["spec_count"] = len(variants)
+        primary["inventory"] = int(inventory_total) if inventory_total.is_integer() else inventory_total
+        if prices:
+            primary["price"] = _as_money(min(prices))
+            primary["min_price"] = _as_money(min(prices))
+            primary["max_price"] = _as_money(max(prices))
+        primary["product_category_ids"] = category_ids
+        primary["product_category_text"] = " / ".join(category_texts[:2]) if category_texts else primary.get("product_category_text", "")
+        primary["system_goods_is_shelves"] = 1 if any(value == 1 for value in shelves_values) else 0
+        items.append(primary)
+    return items, total
+
+
+def _db_product_list(keyword: str, page: int, page_size: int, status=None, category_id: int | None = None, group: bool = False) -> tuple[list[dict], int]:
+    if group:
+        return _db_product_grouped_list(keyword, page, page_size, status, category_id)
+    return _db_product_list_flat(keyword, page, page_size, status, category_id)
+
+
+def _db_product_categories() -> list[dict]:
+    db = _db_client()
+    rows = db.query(
+        """
+        SELECT c.id, c.name, c.pid, c.sort, c.is_enable,
+               COUNT(DISTINCT COALESCE(NULLIF(p.group_key, ''), CAST(p.id AS CHAR))) AS total
+        FROM sxo_plugins_erp_product_category c
+        LEFT JOIN sxo_plugins_erp_product_category_join pcj ON pcj.product_category_id = c.id
+        LEFT JOIN sxo_plugins_erp_product p ON p.id = pcj.product_id
+        WHERE c.is_enable = 1
+        GROUP BY c.id
+        ORDER BY c.sort DESC, c.id ASC
+        """
+    )
+    return [
+        {
+            "id": row.get("id"),
+            "name": row.get("name") or f"分类#{row.get('id')}",
+            "pid": row.get("pid") or 0,
+            "total": int(row.get("total") or 0),
+        }
+        for row in rows
+    ]
+
+
+def _db_customer_list(keyword: str, limit: int = 50) -> list[dict]:
+    db = _db_client()
+    where = ["is_customer = 1"]
+    params: list = []
+    if keyword:
+        like = _like_keyword(keyword)
+        where.append("(name LIKE %s OR company_name LIKE %s OR contacts_name LIKE %s OR contacts_mobile LIKE %s OR contacts_tel LIKE %s)")
+        params.extend([like, like, like, like, like])
+    params.append(max(1, min(limit, 100)))
+    rows = db.query(
+        f"""
+        SELECT id, name, company_name, contacts_name, contacts_mobile, contacts_tel, address, is_enable
+        FROM sxo_plugins_erp_company
+        WHERE {' AND '.join(where)}
+        ORDER BY upd_time DESC, id DESC
+        LIMIT %s
+        """,
+        tuple(params),
+    )
+    return [
+        {
+            "id": row.get("id"),
+            "name": row.get("name") or row.get("company_name") or row.get("contacts_name") or f"客户#{row.get('id')}",
+            "customer_name": row.get("name") or row.get("company_name") or row.get("contacts_name") or f"客户#{row.get('id')}",
+            "company_name": row.get("company_name") or "",
+            "contacts_name": row.get("contacts_name") or "",
+            "mobile": row.get("contacts_mobile") or row.get("contacts_tel") or "",
+            "address": row.get("address") or "",
+            "is_enable": row.get("is_enable"),
+        }
+        for row in rows
+    ]
 
 
 def _sales_detail_data(result: dict) -> dict:
@@ -501,6 +1087,12 @@ def _sales_card(caller, row: dict, customer_cache: dict) -> dict:
             "image": item.get("images") or item.get("image") or "",
             "warehouse_id": item.get("warehouse_id"),
         })
+    total_quantity = 0
+    for item in products:
+        try:
+            total_quantity += float(item.get("quantity") or 0)
+        except (TypeError, ValueError):
+            pass
 
     return {
         "id": sid,
@@ -511,6 +1103,7 @@ def _sales_card(caller, row: dict, customer_cache: dict) -> dict:
         "pay_status": info.get("pay_status", row.get("pay_status")),
         "total_price": _as_money(info.get("total_price", row.get("total_price"))),
         "buy_number_count": info.get("buy_number_count", row.get("buy_number_count", 0)),
+        "total_quantity": total_quantity or info.get("buy_number_count", row.get("buy_number_count", 0)),
         "date_text": _date_text(info.get("add_time", row.get("add_time"))),
         "product_summary": _first_product_line(products),
         "products": products,
@@ -524,7 +1117,11 @@ def _workflow_card(row: dict) -> dict:
     order_time = row.get("order_time_text") or _date_text(row.get("order_time") or row.get("add_time"))
     images = row.get("order_images") or []
     if isinstance(images, str):
-        images = [images] if images else []
+        try:
+            parsed_images = json.loads(images)
+            images = parsed_images if isinstance(parsed_images, list) else ([parsed_images] if parsed_images else [])
+        except Exception:
+            images = [images] if images else []
     status = row.get("order_type_text")
     if not status:
         status = "完成" if int(row.get("order_type") or 0) == 1 else "待完成"
@@ -870,8 +1467,47 @@ def _order_params_from_image_result(result: dict) -> dict:
     }
 
 
+def _workflow_params_from_image_result(result: dict) -> list[dict]:
+    rows = []
+    for item in _image_items(result):
+        payload = item.get("workflow_order_payload")
+        if isinstance(payload, dict) and payload.get("goods_name"):
+            rows.append(payload)
+    return rows
+
+
 def _image_has_open_order_marker(result: dict) -> bool:
     return any((item.get("parsed") or {}).get("has_kaipiao") for item in _image_items(result))
+
+
+def _handle_image_workflow_flow(result: dict, session, response_text: str) -> str:
+    parsed_list = _workflow_params_from_image_result(result)
+    if not parsed_list:
+        return response_text
+
+    order_params = _order_params_from_image_result(result)
+    state = {
+        "pending_action": "confirm_image_workflow_orders",
+        "parsed_list": parsed_list,
+    }
+    if _image_has_open_order_marker(result):
+        state["order_params"] = order_params
+    elif order_params.get("products"):
+        state["optional_order_params"] = order_params
+
+    session.save_pending("workflow", state)
+    lines = [
+        response_text,
+        "",
+        f"请确认是否创建 {len(parsed_list)} 个工作流订单：",
+    ]
+    for idx, item in enumerate(parsed_list, 1):
+        color = f" {item.get('color')}" if item.get("color") else ""
+        lines.append(
+            f"{idx}. {item.get('customer') or '散客'} | {item.get('goods_name', '')}{color} | {item.get('quantity') or 1}"
+        )
+    lines.append("确认后才会真正写入工作流订单。")
+    return "\n".join(lines)
 
 
 def _handle_image_sales_flow(result: dict, session, response_text: str) -> str:
@@ -987,6 +1623,28 @@ def chat():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+@app.route("/api/session/pending", methods=["POST"])
+def update_session_pending():
+    """Update pending workflow state after the user edits the confirmation form."""
+    body = request.get_json() or {}
+    session_id = body.get("session_id") or ""
+    state = body.get("state")
+    if not session_id or not isinstance(state, dict):
+        return jsonify({"code": 400, "msg": "session_id and state are required"}), 400
+    from src.core.session import SessionManager
+    session = SessionManager(session_id)
+    if not session.has_pending():
+        return jsonify({"code": 400, "msg": "no pending action"}), 400
+    intent = session.get_pending_intent()
+    old_state = session.get_state() or {}
+    try:
+        state = _sanitize_pending_state(intent, state, old_state)
+    except ValueError as e:
+        return jsonify({"code": 400, "msg": str(e)}), 400
+    session.save_pending(intent, state)
+    return jsonify({"code": 0, "data": {"session": _session_snapshot(session_id)}})
+
+
 @app.route("/api/agent/chat/stream", methods=["POST"])
 def chat_stream():
     """
@@ -1067,7 +1725,9 @@ def image_upload():
 
         session = SessionManager(session_id)
         session.clear_pending()
-        response_text = _handle_image_sales_flow(result, session, response_text)
+        response_text = _handle_image_workflow_flow(result, session, response_text)
+        if not session.has_pending():
+            response_text = _handle_image_sales_flow(result, session, response_text)
         session.set_meta("last_extraction", {
             "user_input": f"上传图片：{file.filename}",
             "intent": "workflow",
@@ -1090,6 +1750,37 @@ def image_upload():
         })
     except Exception as e:
         logger.error(f"图片上传识别异常: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/workflow/images/upload", methods=["POST"])
+def workflow_image_upload():
+    """Upload workflow order images to OSS only, without OCR or order creation."""
+    file = request.files.get("image")
+    if not file or not file.filename:
+        return jsonify({"code": 400, "msg": "image is required"}), 400
+    if not _allowed_image(file.filename):
+        return jsonify({"code": 400, "msg": "只支持 png/jpg/jpeg/webp/bmp 图片"}), 400
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    original_name = secure_filename(file.filename) or "workflow.jpg"
+    suffix = Path(original_name).suffix.lower() or ".jpg"
+    save_name = f"workflow_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
+    save_path = UPLOAD_DIR / save_name
+    file.save(save_path)
+
+    try:
+        from scripts.oss_uploader import OSSUploader
+        from src.core.config import get_config
+
+        result = OSSUploader(get_config().oss_config).upload(str(save_path))
+        if not isinstance(result, dict):
+            return jsonify({"code": 500, "msg": "OSS 上传返回异常", "data": result}), 500
+        if result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        return jsonify({"code": 0, "data": result})
+    except Exception as e:
+        logger.error(f"工作流订单图片上传 OSS 失败: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
@@ -1160,6 +1851,59 @@ def recent_orders():
     })
 
 
+@app.route("/api/dashboard/summary", methods=["GET"])
+def dashboard_summary():
+    """Live dashboard numbers for the WebUI workbench."""
+    try:
+        db = _db_client()
+        now = time.time()
+        local_now = time.localtime(now)
+        day_start_tuple = (
+            local_now.tm_year,
+            local_now.tm_mon,
+            local_now.tm_mday,
+            0,
+            0,
+            0,
+            local_now.tm_wday,
+            local_now.tm_yday,
+            local_now.tm_isdst,
+        )
+        start_ts = int(time.mktime(day_start_tuple))
+        end_ts = start_ts + 86400
+        sales_rows = db.query(
+            """
+            SELECT COUNT(*) AS count, COALESCE(SUM(COALESCE(total_price, price, 0)), 0) AS amount
+            FROM sxo_plugins_erp_sales
+            WHERE add_time >= %s AND add_time < %s
+            """,
+            (start_ts, end_ts),
+        )
+        workflow_rows = db.query(
+            """
+            SELECT COUNT(*) AS count
+            FROM sxo_workflow_order
+            WHERE COALESCE(order_type, 0) <> 1
+               OR COALESCE(is_made, 0) <> 1
+               OR COALESCE(is_delivered, 0) <> 1
+            """,
+        )
+        sales = sales_rows[0] if sales_rows else {}
+        workflow = workflow_rows[0] if workflow_rows else {}
+        return jsonify({
+            "code": 0,
+            "data": {
+                "today_sales_count": int(sales.get("count") or 0),
+                "today_sales_amount": _as_money(sales.get("amount") or 0),
+                "pending_workflow_count": int(workflow.get("count") or 0),
+                "updated_at": int(now),
+            }
+        })
+    except Exception as e:
+        logger.warning(f"工作台概览查询失败: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
 @app.route("/api/sales/cards", methods=["GET"])
 def sales_cards():
     """
@@ -1170,14 +1914,29 @@ def sales_cards():
     caller = get_tool_caller()
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 10, type=int)
-    keyword = (request.args.get("keyword", "") or "").strip()
+    keyword = _normalize_inventory_keyword((request.args.get("keyword", "") or "").strip())
     status_arg = request.args.get("status", "")
     page = max(1, page)
-    page_size = max(1, min(page_size, 20))
+    page_size = max(1, min(page_size, 100))
     status = int(status_arg) if status_arg not in ("", None) else None
 
     try:
-        fetch_size = min(50, max(page_size, 30 if keyword else page_size))
+        cards, total = _db_sales_cards(keyword, page, page_size, status)
+        return jsonify({
+            "code": 0,
+            "data": {
+                "page": page,
+                "page_size": page_size,
+                "list": cards,
+                "total": total,
+                "source": "db",
+            }
+        })
+    except Exception as e:
+        logger.warning(f"销售单数据库查询失败，回退 API: {e}")
+
+    try:
+        fetch_size = min(120, max(page_size, 50 if keyword else page_size))
         result = caller.call(
             "sales_list",
             keyword=keyword if keyword and keyword.upper().startswith("S") else None,
@@ -1223,12 +1982,37 @@ def sales_print_task_api(sales_id: int):
         return jsonify({"code": 400, "msg": "sales_id is required"}), 400
     try:
         result = caller.call("sales_print_task", sales_id=sales_id)
-        if isinstance(result, dict) and result.get("error"):
-            return jsonify({"code": 500, "msg": result.get("error")}), 500
+        if isinstance(result, dict):
+            if result.get("error"):
+                return jsonify({"code": 500, "msg": result.get("error")}), 500
+            result_code = result.get("code")
+            if result_code not in (None, 0, "0"):
+                msg = result.get("msg") or result.get("message") or "打印任务创建失败"
+                return jsonify({"code": result_code, "msg": msg, "data": result}), 500
         return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"sales print task failed: sales_id={sales_id}, error={e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/sales/<int:sales_id>/print-html", methods=["GET"])
+def sales_print_html_api(sales_id: int):
+    """Open the ERP printable sales-order HTML directly."""
+    from src.engine.api_client import ERPSystemClient
+    if sales_id <= 0:
+        return Response("sales_id is required", status=400, mimetype="text/plain")
+    try:
+        html, content_type = ERPSystemClient().sales_print_html_raw(sales_id)
+        if request.args.get("auto", "1") not in ("0", "false", "False"):
+            html = html.replace(
+                "</body>",
+                "<script>window.addEventListener('load',function(){setTimeout(function(){window.print();},600);});</script></body>",
+                1,
+            )
+        return Response(html, mimetype=content_type.split(";")[0] or "text/html")
+    except Exception as e:
+        logger.error(f"sales print html failed: sales_id={sales_id}, error={e}")
+        return Response(f"打印页面打开失败：{e}", status=500, mimetype="text/plain")
 
 
 @app.route("/api/sales/<int:sales_id>", methods=["DELETE"])
@@ -1254,29 +2038,40 @@ def inventory_cards():
     Inventory cards for the UniApp mini-program.
     GET /api/inventory/cards?keyword=岩味&only_in_stock=1&limit=30
     """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
     keyword = (request.args.get("keyword", "") or "").strip()
     only_in_stock = request.args.get("only_in_stock", "1") not in ("0", "false", "False")
     limit = request.args.get("limit", 30, type=int)
-    limit = max(1, min(limit, 80))
+    limit = max(1, min(limit, 200))
     try:
-        rows = caller.call(
-            "inventory_search",
+        rows = _db_client().search_inventory(
             keyword=keyword,
             only_in_stock=only_in_stock,
-            limit=max(limit * 30, 600),
+            limit=max(limit * 30, 1200),
         )
         cards = _inventory_cards(rows if isinstance(rows, list) else [], limit)
         return jsonify({
             "code": 0,
             "data": {
                 "list": cards,
+                "source": "db",
             }
         })
     except Exception as e:
-        logger.error(f"库存卡片查询失败: {e}")
-        return jsonify({"code": 500, "msg": str(e)}), 500
+        logger.warning(f"库存数据库查询失败，回退 API: {e}")
+        try:
+            from src.core.tools.caller import get_tool_caller
+            caller = get_tool_caller()
+            rows = caller.call(
+                "inventory_search",
+                keyword=keyword,
+                only_in_stock=only_in_stock,
+                limit=max(limit * 30, 1200),
+            )
+            cards = _inventory_cards(rows if isinstance(rows, list) else [], limit)
+            return jsonify({"code": 0, "data": {"list": cards, "source": "api"}})
+        except Exception as api_error:
+            logger.error(f"库存卡片查询失败: {api_error}")
+            return jsonify({"code": 500, "msg": str(api_error)}), 500
 
 
 @app.route("/api/product/color-options", methods=["GET"])
@@ -1390,8 +2185,23 @@ def workflow_orders():
     caller = get_tool_caller()
     if request.method == "GET":
         keyword = (request.args.get("keyword", "") or "").strip()
+        status_filter = (request.args.get("filter", "active") or "active").strip()
         page = max(1, request.args.get("page", 1, type=int))
-        page_size = max(1, min(request.args.get("page_size", 10, type=int), 30))
+        page_size = max(1, min(request.args.get("page_size", 10, type=int), 120))
+        try:
+            cards, total = _db_workflow_orders(keyword, page, page_size, status_filter)
+            return jsonify({
+                "code": 0,
+                "data": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "list": cards,
+                    "source": "db",
+                }
+            })
+        except Exception as e:
+            logger.warning(f"工作流订单数据库查询失败，回退 API: {e}")
         try:
             result = caller.call("workflow_order_list", keyword=keyword or None, page=page, page_size=page_size)
             data = result.get("data", {}) if isinstance(result, dict) else {}
@@ -1417,6 +2227,18 @@ def workflow_orders():
     if not goods_name:
         return jsonify({"code": 400, "msg": "goods_name is required"}), 400
     try:
+        order_images_provided = "order_images" in body
+        order_images = body.get("order_images") if order_images_provided else []
+        if isinstance(order_images, str):
+            try:
+                parsed_images = json.loads(order_images)
+                order_images = parsed_images if isinstance(parsed_images, list) else ([parsed_images] if parsed_images else [])
+            except Exception:
+                order_images = [part.strip() for part in order_images.split(",") if part.strip()]
+        elif not isinstance(order_images, list):
+            order_images = []
+        order_images = [str(url).strip() for url in order_images if str(url or "").strip()]
+
         result = caller.call(
             "workflow_order_save",
             order_id=body.get("id"),
@@ -1427,11 +2249,24 @@ def workflow_orders():
             order_quantity=int(body.get("order_quantity") or 0),
             is_screen_print=int(body.get("is_screen_print") or 0),
             order_type=int(body.get("order_type") or 0),
-            order_images=body.get("order_images") or [],
+            order_images=order_images,
             remark=(body.get("remark") or "").strip(),
         )
         if isinstance(result, dict) and result.get("code", 0) != 0:
             return jsonify({"code": result.get("code", 500), "msg": result.get("msg", "保存失败")}), 400
+        if order_images_provided:
+            saved_id = body.get("id")
+            if not saved_id and isinstance(result, dict):
+                data = result.get("data") if isinstance(result.get("data"), dict) else {}
+                saved_id = data.get("id") or data.get("order_id")
+            if saved_id:
+                try:
+                    _db_client().execute(
+                        "UPDATE sxo_workflow_order SET order_images = %s WHERE id = %s",
+                        (json.dumps(order_images, ensure_ascii=False), int(saved_id)),
+                    )
+                except Exception as db_error:
+                    logger.warning(f"宸ヤ綔娴佽鍗曞浘鐗囨暟鎹簱鍚屾澶辫触: {db_error}")
         return jsonify({"code": 0, "data": result.get("data", result) if isinstance(result, dict) else result})
     except Exception as e:
         logger.error(f"工作流订单保存失败: {e}")
@@ -1485,7 +2320,7 @@ def inventory_query():
     caller = get_tool_caller()
 
     product_id = request.args.get("product_id")
-    keyword = request.args.get("keyword")
+    keyword = _normalize_inventory_keyword(request.args.get("keyword") or "")
     warehouse_id = request.args.get("warehouse_id")
 
     try:
@@ -1515,16 +2350,34 @@ def product_search():
     商品搜索接口
     GET /api/product/search?keyword=喜悦
     """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
-
     keyword = request.args.get("keyword", "")
     if not keyword:
         return jsonify({"code": 400, "msg": "keyword is required"}), 400
 
     try:
+        rows = _db_client().search_products(keyword)
+        results = [
+            {
+                "id": row.get("id"),
+                "product_id": row.get("id"),
+                "title": row.get("title") or "商品",
+                "name": row.get("title") or "商品",
+                "spec": row.get("spec") or "",
+                "simple_desc": row.get("simple_desc") or "",
+                "price": _as_money(row.get("price")),
+                "min_price": _as_money(row.get("price")),
+            }
+            for row in rows
+        ]
+        return jsonify({"code": 0, "data": results[:100], "source": "db"})
+    except Exception as e:
+        logger.warning(f"商品数据库搜索失败，回退 API: {e}")
+
+    try:
+        from src.core.tools.caller import get_tool_caller
+        caller = get_tool_caller()
         results = caller.call("product_search", keyword=keyword)
-        return jsonify({"code": 0, "data": results})
+        return jsonify({"code": 0, "data": results, "source": "api"})
     except Exception as e:
         logger.error(f"商品搜索异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -1532,24 +2385,67 @@ def product_search():
 
 @app.route("/api/product/list", methods=["GET"])
 def product_list():
-    """商品管理列表，直接走 ERP Agent API。"""
-    from src.engine.api_client import ERPSystemClient
+    """商品管理列表，优先走 MySQL 直查，写操作仍走 API。"""
+    keyword = request.args.get("keyword") or ""
+    page = request.args.get("page", default=1, type=int)
+    page_size = max(1, min(request.args.get("page_size", default=20, type=int), 200))
+    status = request.args.get("status", type=int) if request.args.get("status") not in (None, "") else None
+    category_id = request.args.get("category_id", type=int) or None
+    group = request.args.get("group", default=1, type=int) == 1
 
     try:
+        items, total = _db_product_list(keyword, max(1, page), page_size, status, category_id, group)
+        return jsonify({
+            "code": 0,
+            "data": {
+                "page": max(1, page),
+                "page_size": page_size,
+                "total": total,
+                "list": items,
+                "source": "db",
+            }
+        })
+    except Exception as e:
+        logger.warning(f"商品数据库列表失败，回退 API: {e}")
+
+    try:
+        from src.engine.api_client import ERPSystemClient
         client = ERPSystemClient()
         result = client.product_list(
-            keyword=request.args.get("keyword") or None,
+            keyword=keyword or None,
             brand_name=request.args.get("brand_name") or None,
             status=request.args.get("status", type=int) if request.args.get("status") not in (None, "") else None,
             category_id=request.args.get("category_id", type=int) or None,
             group=request.args.get("group", default=1, type=int) == 1,
-            page=request.args.get("page", default=1, type=int),
-            page_size=request.args.get("page_size", default=20, type=int),
+            page=max(1, page),
+            page_size=page_size,
         )
         return jsonify(result)
     except Exception as e:
         logger.error(f"商品列表异常: {e}")
         return _api_exception_response(e)
+
+
+@app.route("/api/product/categories", methods=["GET"])
+def product_categories():
+    """商品分类。"""
+    try:
+        categories = _db_product_categories()
+        total_rows = _db_client().query(
+            "SELECT COUNT(DISTINCT COALESCE(NULLIF(group_key, ''), CAST(id AS CHAR))) AS total FROM sxo_plugins_erp_product"
+        )
+        total = int(total_rows[0].get("total") or 0) if total_rows else 0
+        return jsonify({
+            "code": 0,
+            "data": {
+                "list": [{"id": "", "name": "全部产品", "total": total}] + categories,
+                "total": total,
+                "source": "db",
+            },
+        })
+    except Exception as e:
+        logger.error(f"商品分类查询异常: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
 
 
 @app.route("/api/product/options", methods=["GET"])
@@ -1616,19 +2512,32 @@ def product_delete_api():
 
 @app.route("/api/product/upload", methods=["POST"])
 def product_upload_api():
-    """上传商品图片。"""
-    from src.engine.api_client import ERPSystemClient
-
+    """上传商品图片到 OSS。"""
     try:
         file = request.files.get("image")
         if file is None:
             return jsonify({"code": 400, "msg": "缺少图片文件"}), 400
         filename = secure_filename(file.filename or f"product_{int(time.time())}.jpg")
-        content = file.read()
-        if not content:
+        if not _allowed_image(filename):
+            return jsonify({"code": 400, "msg": "只支持 png/jpg/jpeg/webp/bmp 图片"}), 400
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = Path(filename).suffix.lower() or ".jpg"
+        save_name = f"product_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
+        save_path = UPLOAD_DIR / save_name
+        file.save(save_path)
+        if not save_path.exists() or save_path.stat().st_size <= 0:
             return jsonify({"code": 400, "msg": "图片文件为空"}), 400
-        result = ERPSystemClient().product_upload(filename, content, file.mimetype or "application/octet-stream")
-        return jsonify(result)
+
+        from scripts.oss_uploader import OSSUploader
+        from src.core.config import get_config
+
+        result = OSSUploader(get_config().oss_config).upload(str(save_path))
+        if not isinstance(result, dict):
+            return jsonify({"code": 500, "msg": "OSS 上传返回异常", "data": result}), 500
+        if result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"商品图片上传异常: {e}")
         return _api_exception_response(e)
@@ -1655,14 +2564,18 @@ def customer_list():
     客户列表接口
     GET /api/customer/list?keyword=xxx
     """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
-
     keyword = request.args.get("keyword", "")
 
     try:
+        return jsonify({"code": 0, "data": _db_customer_list(keyword), "source": "db"})
+    except Exception as e:
+        logger.warning(f"客户数据库查询失败，回退 API: {e}")
+
+    try:
+        from src.core.tools.caller import get_tool_caller
+        caller = get_tool_caller()
         results = caller.call("customer_query", keyword=keyword)
-        return jsonify({"code": 0, "data": results})
+        return jsonify({"code": 0, "data": results, "source": "api"})
     except Exception as e:
         logger.error(f"客户列表查询异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500

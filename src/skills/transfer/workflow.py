@@ -35,8 +35,8 @@ class TransferWorkflow(BaseWorkflow):
                 return 1
             return 2
 
-        from_wh = parse_wh(params.get("from", "自己店里"))
-        to_wh = parse_wh(params.get("to", "百鑫"))
+        from_wh = parse_wh(params.get("from", "百鑫"))
+        to_wh = parse_wh(params.get("to", "自己店里"))
 
         if from_wh == to_wh:
             return self._reply("调出和调入仓库不能相同。")
@@ -154,6 +154,17 @@ class TransferWorkflow(BaseWorkflow):
         items = state.get("items", [])
         if not items:
             return self._reply("调拨商品信息丢失，请重新操作。")
+
+        from_wh = int(state.get("from_wh") or 2)
+        to_wh = int(state.get("to_wh") or 1)
+        if from_wh == to_wh:
+            return self._reply("调出仓库和调入仓库不能相同。")
+        state["from_wh"] = from_wh
+        state["to_wh"] = to_wh
+        state["from_name"] = "自己店里" if from_wh == 1 else "百鑫仓库"
+        state["to_name"] = "自己店里" if to_wh == 1 else "百鑫仓库"
+        for item in items:
+            item["transfer_number"] = item.get("qty", item.get("transfer_number", 1))
 
         try:
             result = self.caller.call("inventory_transfer",

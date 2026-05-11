@@ -116,6 +116,23 @@ class ERPSystemClient:
             logger.error(f"HTTP 请求异常: {e}")
             raise APIError(f"网络请求失败: {e}")
 
+    def _get_raw(self, action: str, params: dict = None) -> tuple[str, str]:
+        """GET a non-JSON response such as a printable HTML page."""
+        url = self._build_url(action)
+        if params:
+            for k, v in params.items():
+                url += f"&{quote(str(k))}={quote(str(v))}"
+
+        logger.info(f"API GET RAW: {action}")
+
+        try:
+            response = self._client.get(url)
+            response.raise_for_status()
+            return response.text, response.headers.get("content-type", "text/html; charset=utf-8")
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP 请求异常: {e}")
+            raise APIError(f"网络请求失败: {e}")
+
     # ==================== 库存操作（4个）====================
 
     @retry_on_api_error(max_retries=3)
@@ -392,6 +409,11 @@ class ERPSystemClient:
     def sales_print_html(self, sales_id: int) -> dict:
         """销售单打印页面（HTML）"""
         return self._get("SalesPrintHtml", {"id": sales_id})
+
+    @retry_on_api_error(max_retries=3)
+    def sales_print_html_raw(self, sales_id: int) -> tuple[str, str]:
+        """销售单打印页面原始 HTML。"""
+        return self._get_raw("SalesPrintHtml", {"id": sales_id})
 
     @retry_on_api_error(max_retries=3)
     def sales_print_task(self, sales_id: int) -> dict:

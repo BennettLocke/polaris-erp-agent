@@ -4,7 +4,7 @@ setlocal
 title 肆计包装-北极星订单管理机器人
 
 set "APP_DIR=C:\Users\chuji\Downloads\sjagent\sjagent"
-set "WEB_URL=http://127.0.0.1:8080/web"
+set "WEB_URL=http://127.0.0.1:8081/web"
 set "LOG_FILE=%APP_DIR%\logs\webui_startup.log"
 
 cd /d "%APP_DIR%"
@@ -50,7 +50,7 @@ echo 正在打开浏览器，请稍等几秒...
 start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 4; Start-Process '%WEB_URL%'"
 
 echo [%date% %time%] start webui > "%LOG_FILE%"
-%PYTHON_CMD% main.py --mode http --http-port 8080 >> "%LOG_FILE%" 2>&1
+%PYTHON_CMD% main.py --mode http --http-port 8081 >> "%LOG_FILE%" 2>&1
 
 echo.
 echo 服务已停止或启动失败。

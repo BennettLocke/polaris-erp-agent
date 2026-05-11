@@ -126,6 +126,19 @@ class PurchaseWorkflow(BaseWorkflow):
         items = state.get("items") or []
         if not items:
             return self._reply("进货商品信息丢失，请重新操作。")
+        warehouse_id = int(state.get("warehouse_id") or 2)
+        state["warehouse_id"] = warehouse_id
+        state["warehouse_name"] = "自己店里" if warehouse_id == 1 else "百鑫仓库"
+        for item in items:
+            try:
+                purchase_qty = int(float(item.get("purchase_qty") or item.get("qty") or 1))
+            except (TypeError, ValueError):
+                purchase_qty = 1
+            item["purchase_qty"] = max(1, purchase_qty)
+            if item.get("purchase_unit") == "件" and item.get("purchase_per_piece"):
+                item["buy_number"] = item["purchase_qty"] * int(item.get("purchase_per_piece") or 1)
+            else:
+                item["buy_number"] = item["purchase_qty"]
         payload = [
             {"product_id": item["product_id"], "unit_id": item.get("unit_id", 1), "buy_number": item.get("buy_number", item.get("qty", 1))}
             for item in items

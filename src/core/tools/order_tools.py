@@ -9,6 +9,94 @@ from src.utils import get_logger
 logger = get_logger("sjagent.tools.order")
 
 
+def _list_rows(payload) -> list[dict]:
+    """Extract list rows from common ERP API response shapes."""
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("list", "data", "rows", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+        if isinstance(value, dict):
+            rows = _list_rows(value)
+            if rows:
+                return rows
+    return []
+
+
+def _sales_detail_rows(payload) -> list[dict]:
+    """Extract sales detail product rows from SalesDetail response."""
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data", payload)
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        data = data["data"]
+    if not isinstance(data, dict):
+        return []
+    for key in ("detail", "details", "products", "product", "items", "goods"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+    info = data.get("info")
+    if isinstance(info, dict):
+        for key in ("detail", "details", "products", "items", "goods"):
+            value = info.get(key)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _row_price(row: dict) -> float | None:
+    for key in ("price", "unit_price", "sales_price"):
+        value = row.get(key)
+        if value not in (None, ""):
+            try:
+                price = float(value)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+    return None
+
+
+def _row_customer_id(row: dict) -> int | None:
+    if not isinstance(row, dict):
+        return None
+    for key in ("customer_id", "company_id", "client_id"):
+        value = row.get(key)
+        if value not in (None, ""):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+    customer = row.get("customer")
+    if isinstance(customer, dict):
+        return _row_customer_id(customer)
+    company = row.get("company")
+    if isinstance(company, dict):
+        return _row_customer_id(company)
+    return None
+
+
+def _sales_detail_customer_id(payload) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data", payload)
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        data = data["data"]
+    if not isinstance(data, dict):
+        return None
+    cid = _row_customer_id(data)
+    if cid:
+        return cid
+    info = data.get("info")
+    if isinstance(info, dict):
+        return _row_customer_id(info)
+    return None
+
+
 @tool("workflow_order_save", "保存工作流订单")
 def workflow_order_save(
     customer_name: str,
@@ -172,10 +260,41 @@ def sales_history_price(customer_id: int, product_id: int) -> float | None:
             price = float(rows[0]["price"])
             logger.info(f"历史价格: customer_id={customer_id}, product_id={product_id}, price={price}")
             return price
-        return None
     except Exception as e:
         logger.error(f"历史价格查询失败: {e}")
-        return None
+
+    try:
+        client = ERPSystemClient()
+        sales_result = client.sales_list(customer_id=customer_id, page=1, page_size=30)
+        for sale in _list_rows(sales_result):
+            sale_customer_id = _row_customer_id(sale)
+            if sale_customer_id and sale_customer_id != int(customer_id):
+                continue
+            if sale_customer_id == int(customer_id):
+                for row in _list_rows(sale.get("products") or sale.get("detail") or sale.get("items")):
+                    if str(row.get("product_id") or row.get("id") or "") == str(product_id):
+                        price = _row_price(row)
+                        if price:
+                            logger.info(f"历史价格(API列表): customer_id={customer_id}, product_id={product_id}, price={price}")
+                            return price
+
+            sales_id = sale.get("id") or sale.get("sales_id")
+            if not sales_id:
+                continue
+            detail_result = client.sales_detail(int(sales_id))
+            detail_customer_id = _sales_detail_customer_id(detail_result) or sale_customer_id
+            if detail_customer_id != int(customer_id):
+                continue
+            for row in _sales_detail_rows(detail_result):
+                if str(row.get("product_id") or row.get("id") or "") != str(product_id):
+                    continue
+                price = _row_price(row)
+                if price:
+                    logger.info(f"历史价格(API详情): customer_id={customer_id}, product_id={product_id}, sales_id={sales_id}, price={price}")
+                    return price
+    except Exception as e:
+        logger.error(f"历史价格API兜底失败: {e}")
+    return None
 
 
 @tool("get_product_price", "获取商品价格")

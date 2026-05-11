@@ -36,9 +36,44 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                 {"pending_action": "collect_workflow_order", "partial_params": parsed},
             )
 
-        return self._create(parsed)
+        return self._confirm_create(parsed)
 
     def resume(self, user_input: str, state: dict) -> dict:
+        if state.get("pending_action") == "confirm_create_workflow_order":
+            if not self._is_confirmation(user_input):
+                return self._reply("已取消创建工作流订单。")
+            return self._create(state.get("parsed") or {})
+
+        if state.get("pending_action") == "confirm_image_workflow_orders":
+            if not self._is_confirmation(user_input):
+                return self._reply("已取消创建工作流订单，没有写入系统。")
+            create_result = self._create_many(state.get("parsed_list") or [])
+            order_params = state.get("order_params") or {}
+            if order_params.get("products"):
+                from src.skills.order_flow.workflow import OrderFlowWorkflow
+                order_result = OrderFlowWorkflow().execute("图片识别结果确认开单", params=order_params)
+                if order_result.get("status") == "ask":
+                    order_result["intent"] = "order"
+                    order_result["question"] = create_result.get("reply", "") + "\n\n" + order_result["question"]
+                    return order_result
+                return self._reply(create_result.get("reply", "") + "\n\n" + order_result.get("reply", "开单流程已处理。"))
+            optional_order_params = state.get("optional_order_params") or {}
+            if optional_order_params.get("products"):
+                return {
+                    "status": "ask",
+                    "intent": "order",
+                    "question": (
+                        create_result.get("reply", "")
+                        + "\n\n备注里没有看到「开单」或「下单」，是否需要继续开销售单？\n"
+                        + "确认后会进入销售单确认；取消则只保留工作流订单。"
+                    ),
+                    "state": {
+                        "pending_action": "confirm_image_sales",
+                        "order_params": optional_order_params,
+                    },
+                }
+            return create_result
+
         if state.get("pending_action") == "confirm_workflow_delete" or state.get("delete_type") == "workflow":
             workflow_ids = state.get("workflow_ids", [])
             if not workflow_ids:
@@ -73,7 +108,7 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                 {"pending_action": "collect_workflow_order", "partial_params": merged},
             )
 
-        return self._create(merged)
+        return self._confirm_create(merged)
 
     def _ask_delete_confirm(self, user_input: str, params: dict) -> dict:
         workflow_ids = self._extract_delete_ids(user_input, params)
@@ -139,6 +174,12 @@ class WorkflowOrderWorkflow(BaseWorkflow):
         text = user_input.strip().lower()
         if len(text) <= 8:
             return any(w in text for w in ["确认", "是", "对", "好的", "删", "删除", "yes", "ok"])
+        return False
+
+    def _is_confirmation(self, user_input: str) -> bool:
+        text = user_input.strip().lower()
+        if len(text) <= 8:
+            return any(w in text for w in ["确认", "是", "对", "好的", "可以", "执行", "创建", "删除", "yes", "ok"])
         return False
 
     def _query(self, user_input: str, params: dict) -> dict:
@@ -270,6 +311,66 @@ class WorkflowOrderWorkflow(BaseWorkflow):
         cleaned = re.sub(r'\d+\s*(?:个|条|单)?', " ", cleaned)
         parts = [p for p in re.split(r'[\s，,]+', cleaned.strip()) if p and p not in {"一个", "一条", "一单", "列表", "详情"}]
         return parts[0] if parts else ""
+
+    def _confirm_create(self, parsed: dict) -> dict:
+        question = "\n".join([
+            "请确认是否创建工作流订单：",
+            f"客户：{parsed.get('customer') or '未填写'}",
+            f"商品：{parsed.get('goods_name') or '未填写'}",
+            f"颜色：{parsed.get('color') or '未填写'}",
+            f"数量：{parsed.get('quantity') or 1}",
+            "确认后才会真正写入工作流订单。",
+        ])
+        return self._ask(
+            question,
+            {"pending_action": "confirm_create_workflow_order", "parsed": parsed},
+        )
+
+    def _create_many(self, parsed_list: list[dict]) -> dict:
+        if not parsed_list:
+            return self._reply("没有可创建的工作流订单。")
+
+        ok_lines = []
+        errors = []
+        for idx, parsed in enumerate(parsed_list, 1):
+            try:
+                result = self.caller.call(
+                    "workflow_order_save",
+                    customer_name=parsed.get("customer") or "散客",
+                    goods_name=parsed.get("goods_name", ""),
+                    order_quantity=int(parsed.get("quantity") or 1),
+                    color=parsed.get("color", ""),
+                    order_images=parsed.get("order_images") or [],
+                    is_screen_print=1 if parsed.get("is_screen_print") else 0,
+                    remark=parsed.get("remark", ""),
+                )
+            except Exception as e:
+                errors.append(f"{idx}. {parsed.get('goods_name', '')}：{e}")
+                continue
+
+            if isinstance(result, dict) and result.get("error"):
+                errors.append(f"{idx}. {parsed.get('goods_name', '')}：{result['error']}")
+                continue
+            if isinstance(result, dict) and result.get("code") not in (None, 0):
+                errors.append(f"{idx}. {parsed.get('goods_name', '')}：{result.get('msg', result)}")
+                continue
+
+            order_id = ""
+            if isinstance(result, dict):
+                order_id = result.get("data") or result.get("id") or ""
+                if isinstance(order_id, dict):
+                    order_id = order_id.get("id") or order_id.get("order_id") or ""
+            suffix = f"单号 {order_id}" if order_id else "已提交"
+            ok_lines.append(f"{idx}. {parsed.get('customer') or '散客'} | {parsed.get('goods_name', '')} {parsed.get('color', '')} | {parsed.get('quantity') or 1} | {suffix}")
+
+        lines = []
+        if ok_lines:
+            lines.append(f"已创建 {len(ok_lines)} 个工作流订单：")
+            lines.extend(ok_lines)
+        if errors:
+            lines.append("以下工作流订单创建失败：")
+            lines.extend(errors)
+        return self._reply("\n".join(lines) if lines else "没有成功创建工作流订单。")
 
     def _create(self, parsed: dict) -> dict:
         try:

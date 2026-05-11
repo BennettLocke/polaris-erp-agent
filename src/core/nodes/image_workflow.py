@@ -123,6 +123,11 @@ def process_single_image(image_path: str, caller) -> dict:
 
             result["items"] = child_results
             result["workflow_orders"] = [item["workflow_order"] for item in child_results if item.get("workflow_order")]
+            result["workflow_order_payloads"] = [
+                item["workflow_order_payload"]
+                for item in child_results
+                if item.get("workflow_order_payload")
+            ]
             result["parsed"] = {
                 "full_text": "\n\n".join((item.get("parsed") or {}).get("full_text", "") for item in child_results).strip()
             }
@@ -174,6 +179,7 @@ def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
         "parsed": {},
         "product_warning": [],
         "workflow_order": None,
+        "workflow_order_payload": None,
     }
     oss_url = upload_to_oss(image_path, caller)
     item["image_url"] = oss_url
@@ -209,7 +215,16 @@ def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
     if not goods_name:
         item["error"] = "未识别到礼盒名称，未创建工作流订单"
     else:
-        item["workflow_order"] = create_workflow_order(parsed, oss_url, caller)
+        craft = parsed.get("craft", "")
+        item["workflow_order_payload"] = {
+            "customer": parsed.get("customer_name") or "散客",
+            "goods_name": goods_name,
+            "quantity": parsed.get("quantity", 1),
+            "color": parsed.get("color", ""),
+            "order_images": [oss_url] if oss_url else [],
+            "is_screen_print": any(kw in craft for kw in ["丝印", "印刷"]),
+            "remark": craft,
+        }
     return item
 
 
