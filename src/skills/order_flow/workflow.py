@@ -618,10 +618,9 @@ class OrderFlowWorkflow(BaseWorkflow):
         return re.sub(r"\s+", " ", normalized).strip()
 
     def _search_product_candidates(self, keyword: str, color: str = "") -> list[dict]:
-        candidates = []
-        seen = set()
-        product_rows_found = False
         for kw in self._product_keywords(keyword):
+            candidates = []
+            seen = set()
             try:
                 rows = self.caller.call("product_search", keyword=kw)
             except Exception as e:
@@ -632,26 +631,34 @@ class OrderFlowWorkflow(BaseWorkflow):
                 if key in seen:
                     continue
                 seen.add(key)
-                product_rows_found = True
                 candidates.append(row)
+            if candidates:
+                return candidates
 
-            if color and not product_rows_found:
-                try:
-                    inventory_rows = self.caller.call("inventory_search", keyword=kw, color=color, only_in_stock=False, limit=60)
-                except Exception:
-                    inventory_rows = []
-                for row in inventory_rows or []:
-                    key = (row.get("product_id"), row.get("【颜色】"))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    candidates.append({
-                        "id": row.get("product_id"),
-                        "title": row.get("产品名称"),
-                        "spec": row.get("【颜色】"),
-                        "simple_desc": row.get("simple_desc", ""),
-                        "price": 0,
-                    })
+        if not color:
+            return []
+
+        candidates = []
+        seen = set()
+        for kw in self._product_keywords(keyword):
+            try:
+                inventory_rows = self.caller.call("inventory_search", keyword=kw, color=color, only_in_stock=False, limit=60)
+            except Exception:
+                inventory_rows = []
+            for row in inventory_rows or []:
+                key = (row.get("product_id"), row.get("【颜色】"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append({
+                    "id": row.get("product_id"),
+                    "title": row.get("产品名称"),
+                    "spec": row.get("【颜色】"),
+                    "simple_desc": row.get("simple_desc", ""),
+                    "price": 0,
+                })
+            if candidates:
+                return candidates
         return candidates
 
     def _product_keywords(self, name: str) -> list[str]:
