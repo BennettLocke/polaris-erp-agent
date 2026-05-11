@@ -439,7 +439,7 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _search_product(self, product: dict) -> dict | None:
         """B2: 搜索商品，返回解析后的商品信息"""
         name = product["name"]
-        color = product.get("color", "")
+        color = self._normalize_color(product.get("color", ""))
         qty = product.get("qty") or product.get("quantity") or 1
         unit = product.get("unit", "套")
         price_override = self._parse_price(product.get("price") or product.get("unit_price"))
@@ -549,7 +549,7 @@ class OrderFlowWorkflow(BaseWorkflow):
             p.setdefault("unit", "套")
             if text_color and not p.get("color"):
                 p["color"] = text_color
-            p.setdefault("color", "")
+            p["color"] = self._normalize_color(p.get("color", ""))
             if p.get("name") and p.get("color"):
                 p["name"] = str(p["name"]).replace(str(p["color"]), "").strip()
             p["name"] = self._normalize_product_name(p.get("name", ""))
@@ -620,6 +620,7 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _search_product_candidates(self, keyword: str, color: str = "") -> list[dict]:
         candidates = []
         seen = set()
+        product_rows_found = False
         for kw in self._product_keywords(keyword):
             try:
                 rows = self.caller.call("product_search", keyword=kw)
@@ -631,9 +632,10 @@ class OrderFlowWorkflow(BaseWorkflow):
                 if key in seen:
                     continue
                 seen.add(key)
+                product_rows_found = True
                 candidates.append(row)
 
-            if color:
+            if color and not product_rows_found:
                 try:
                     inventory_rows = self.caller.call("inventory_search", keyword=kw, color=color, only_in_stock=False, limit=60)
                 except Exception:
@@ -756,16 +758,28 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _colors(self) -> list[str]:
         return ["香槟金", "橄榄绿", "深咖色", "古铜色", "红色", "黄色", "金色", "橙色", "蓝色", "绿色", "咖色", "黑色", "白色", "银色", "灰色", "紫色", "粉色"]
 
+
+    def _normalize_color(self, color: str) -> str:
+        value = str(color or "").strip()
+        aliases = {
+            "深咖色": "咖色",
+            "深咖": "咖色",
+            "咖啡色": "咖色",
+            "棕咖色": "咖色",
+        }
+        return aliases.get(value, value)
+
     def _extract_color(self, text: str) -> str:
         for color in self._colors():
             if color in str(text or ""):
-                return color
+                return self._normalize_color(color)
         return ""
 
     def _extract_colors_in_text(self, text: str) -> list[str]:
         value = str(text or "")
         matches = [(value.find(color), color) for color in self._colors() if color in value]
-        return [color for _, color in sorted(matches, key=lambda item: item[0]) if _ >= 0]
+        colors = [self._normalize_color(color) for _, color in sorted(matches, key=lambda item: item[0]) if _ >= 0]
+        return list(dict.fromkeys(colors))
 
     def _lookup_unit_id(self, unit_name: str) -> int | None:
         """Look up unit_id from ERP unit table instead of hardcoding it."""
@@ -796,7 +810,12 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         candidates = results
         if color:
-            color_matches = [r for r in candidates if color in str(r.get("spec", ""))]
+            normalized_color = self._normalize_color(color)
+            color_matches = [
+                r for r in candidates
+                if normalized_color in str(r.get("spec", ""))
+                or self._normalize_color(str(r.get("spec", ""))) == normalized_color
+            ]
             if not color_matches:
                 return None
             candidates = color_matches
