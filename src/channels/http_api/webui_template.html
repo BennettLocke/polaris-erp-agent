@@ -1266,6 +1266,13 @@
           </span>
           <span class="badge">AI</span>
         </button>
+        <button data-view="sale-create">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6z"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h3"/></svg>
+            <span>开单</span>
+          </span>
+          <span class="badge">快</span>
+        </button>
         <button data-view="sales">
           <span class="nav-label">
             <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v5h5"/><path d="M10 12h6"/><path d="M10 16h6"/></svg>
@@ -1375,6 +1382,89 @@
                 <div class="attachment-tray" id="attachmentTray" aria-live="polite"></div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="view" id="sale-create">
+          <div class="section-head">
+            <div>
+              <h1>开单</h1>
+              <p>选择客户和商品，确认数量、价格、仓库后直接生成销售单。</p>
+            </div>
+            <div class="sale-create-actions">
+              <button class="ghost" id="saleClearBtn">清空</button>
+              <button class="primary" id="quickSaleBtn">提交开单</button>
+            </div>
+          </div>
+
+          <div class="sale-create-layout">
+            <section class="sale-panel">
+              <div class="sale-panel-head">
+                <div>
+                  <strong>客户</strong>
+                  <span id="saleSelectedCustomer">未选择客户</span>
+                </div>
+              </div>
+              <div class="sale-search-row">
+                <input id="saleCustomer" placeholder="输入客户名称 / 电话 / 关键词">
+                <button id="saleCustomerSearchBtn">搜索客户</button>
+              </div>
+              <div class="sale-choice-list" id="saleCustomerChoices"></div>
+            </section>
+
+            <section class="sale-panel sale-product-panel">
+              <div class="sale-panel-head">
+                <div>
+                  <strong>商品</strong>
+                  <span>支持名称、规格、颜色组合搜索</span>
+                </div>
+                <select id="saleWarehouse">
+                  <option value="2">百鑫仓库</option>
+                  <option value="1">自己店里</option>
+                </select>
+              </div>
+              <div class="sale-product-entry">
+                <input id="saleProduct" placeholder="输入商品名称 / 规格 / 颜色">
+                <input id="saleQty" type="number" min="1" value="1" aria-label="数量">
+                <button id="saleProductSearchBtn">搜索商品</button>
+                <button class="primary" id="saleAddLineBtn">加入明细</button>
+              </div>
+              <div class="sale-choice-list" id="saleProductChoices"></div>
+            </section>
+
+            <section class="sale-panel sale-lines-panel">
+              <div class="sale-panel-head">
+                <div>
+                  <strong>销售明细</strong>
+                  <span>数量和价格可以直接修改</span>
+                </div>
+                <div class="sale-total-pill" id="saleTotal">¥0.00</div>
+              </div>
+              <div class="sale-lines" id="saleLines"></div>
+            </section>
+
+            <aside class="sale-summary-panel">
+              <div class="sale-summary-card">
+                <span>客户</span>
+                <strong id="saleSummaryCustomer">未选择</strong>
+              </div>
+              <div class="sale-summary-card">
+                <span>商品数</span>
+                <strong id="saleSummaryCount">0</strong>
+              </div>
+              <div class="sale-summary-card">
+                <span>总数量</span>
+                <strong id="saleSummaryQty">0</strong>
+              </div>
+              <div class="sale-summary-card accent">
+                <span>合计金额</span>
+                <strong id="saleSummaryAmount">¥0.00</strong>
+              </div>
+              <div class="sale-result-card" id="saleResultCard">
+                <strong>开单结果</strong>
+                <p>提交后这里会显示销售单号、打印和删除入口。</p>
+              </div>
+            </aside>
           </div>
         </div>
 

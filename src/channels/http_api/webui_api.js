@@ -49,6 +49,7 @@ const state = {
   saleProduct: null,
   saleProductResults: [],
   saleLines: [],
+  lastSaleResult: null,
   moveProduct: null,
   moveProductResults: [],
   currentUser: null,
@@ -2163,18 +2164,22 @@ async function purchaseInventory() {
 }
 
 async function searchSaleCustomers() {
-  if (!$("saleCustomer")) throw new Error("API 操作台已移除");
+  if (!$("saleCustomer")) throw new Error("开单页面未加载");
   const keyword = $("saleCustomer").value.trim();
-  if (!keyword) return toast("请输入客户关键词", true);
+  if (!keyword) throw new Error("请输入客户关键词");
   const list = normalizeList(await api(`/api/customer/list?${query({ keyword })}`));
+  state.saleCustomerResults = list;
   $("saleCustomerChoices").innerHTML = list.length ? list.slice(0, LIST_LIMITS.choice).map((customer) => {
     const name = customer.name || customer.customer_name || customer.company_name || customer.title || "客户";
-    return `<button class="choice" onclick="selectSaleCustomer(${Number(customer.id || 0)}, '${escapeAttr(name)}')"><strong>${escapeHtml(name)}</strong><div class="muted">ID ${escapeHtml(customer.id || "")}</div></button>`;
+    const mobile = customer.mobile || customer.tel || customer.telephone || customer.phone || "";
+    const id = Number(customer.id || customer.customer_id || 0);
+    return `<button class="choice" data-sale-customer-id="${id}" data-sale-customer-name="${escapeAttr(name)}"><strong>${escapeHtml(name)}</strong><div class="muted">${mobile ? escapeHtml(mobile) + " · " : ""}ID ${escapeHtml(id || "")}</div></button>`;
   }).join("") : '<div class="empty">没有客户结果</div>';
   if (list.length === 1) {
     const customer = list[0];
-    selectSaleCustomer(customer.id, customer.name || customer.customer_name || customer.company_name || customer.title || "客户");
+    selectSaleCustomer(customer.id || customer.customer_id, customer.name || customer.customer_name || customer.company_name || customer.title || "客户");
   }
+  return list;
 }
 
 function selectSaleCustomer(id, name) {
@@ -2183,16 +2188,24 @@ function selectSaleCustomer(id, name) {
   $("saleCustomer").value = name;
   $("saleSelectedCustomer").textContent = name;
   $("saleCustomerChoices").innerHTML = "";
+  renderSaleLines();
 }
 
 async function searchSaleProducts() {
-  if (!$("saleProduct")) throw new Error("API 操作台已移除");
+  if (!$("saleProduct")) throw new Error("开单页面未加载");
   const keyword = $("saleProduct").value.trim();
-  if (!keyword) return toast("请输入商品关键词", true);
+  if (!keyword) throw new Error("请输入商品关键词");
   const list = normalizeList(await api(`/api/product/search?${query({ keyword })}`));
   state.saleProductResults = list;
-  $("saleProductChoices").innerHTML = list.length ? list.slice(0, LIST_LIMITS.choice).map((product) => `<button class="choice" onclick="selectSaleProduct(${Number(product.id || product.product_id || 0)})"><strong>${escapeHtml(product.title || product.name || "商品")}</strong><div class="muted">${escapeHtml(product.spec || product.simple_desc || "")} · ID ${escapeHtml(product.id || product.product_id || "")}</div></button>`).join("") : '<div class="empty">没有商品结果</div>';
+  $("saleProductChoices").innerHTML = list.length ? list.slice(0, LIST_LIMITS.choice).map((product) => {
+    const id = Number(product.id || product.product_id || 0);
+    const title = product.title || product.name || "商品";
+    const spec = product.spec || product.simple_desc || product.color || "";
+    const price = product.price || product.min_price || "";
+    return `<button class="choice" data-sale-product-id="${id}"><strong>${escapeHtml(title)}</strong><div class="muted">${escapeHtml(spec)}${price ? ` · ¥${escapeHtml(price)}` : ""} · ID ${escapeHtml(id || "")}</div></button>`;
+  }).join("") : '<div class="empty">没有商品结果</div>';
   if (list.length === 1) await selectSaleProduct(list[0].id || list[0].product_id);
+  return list;
 }
 
 async function selectSaleProduct(id) {
@@ -2205,38 +2218,54 @@ async function selectSaleProduct(id) {
       if (priceRes.data && priceRes.data.price) price = Number(priceRes.data.price);
     } catch {}
   }
-  state.saleProduct = { product_id: product.id || product.product_id, unit_id: product.unit_id || 1, title: product.title || product.name || "商品", spec: product.spec || "", price };
+  state.saleProduct = { product_id: product.id || product.product_id, unit_id: product.unit_id || 1, title: product.title || product.name || "商品", spec: product.spec || product.color || product.simple_desc || "", price };
   if (!$("saleProduct")) return;
   $("saleProduct").value = [state.saleProduct.title, state.saleProduct.spec].filter(Boolean).join(" ");
   $("saleProductChoices").innerHTML = "";
+  $("saleQty").focus();
+  $("saleQty").select();
 }
 
 async function addSaleLine() {
-  if (!$("saleQty")) throw new Error("API 操作台已移除");
+  if (!$("saleQty")) throw new Error("开单页面未加载");
   if (!state.saleProduct) await searchSaleProducts();
   if (!state.saleProduct) throw new Error("请先选择商品");
   const qty = Math.max(1, Number($("saleQty").value || 1));
-  state.saleLines.push({ ...state.saleProduct, buy_number: qty });
+  const existing = state.saleLines.find((line) => Number(line.product_id) === Number(state.saleProduct.product_id));
+  if (existing) {
+    existing.buy_number = Number(existing.buy_number || 0) + qty;
+    existing.price = state.saleProduct.price;
+  } else {
+    state.saleLines.push({ ...state.saleProduct, buy_number: qty });
+  }
   state.saleProduct = null;
   $("saleProduct").value = "";
   $("saleQty").value = 1;
   renderSaleLines();
+  $("saleProduct").focus();
 }
 
 function renderSaleLines() {
   if (!$("saleLines") || !$("saleTotal")) return;
   $("saleLines").innerHTML = state.saleLines.length ? state.saleLines.map((line, index) => `
     <div class="line-card">
-      <strong>${escapeHtml(line.title)}</strong>
-      <div class="muted">${escapeHtml(line.spec || "")} · ID ${escapeHtml(line.product_id)}</div>
+      <div class="line-title">
+        <strong>${escapeHtml(line.title)}</strong>
+        <span>${escapeHtml(line.spec || "")} · ID ${escapeHtml(line.product_id)}</span>
+      </div>
       <div class="line-edit">
-        <div><label>数量</label><input type="number" min="1" value="${escapeAttr(line.buy_number)}" onchange="updateSaleLine(${index}, 'buy_number', this.value)"></div>
-        <div><label>单价</label><input type="number" step="0.01" value="${escapeAttr(line.price)}" onchange="updateSaleLine(${index}, 'price', this.value)"></div>
-        <button onclick="removeSaleLine(${index})">×</button>
+        <div><label>数量</label><input type="number" min="1" value="${escapeAttr(line.buy_number)}" data-sale-line-index="${index}" data-sale-line-field="buy_number"></div>
+        <div><label>单价</label><input type="number" step="0.01" value="${escapeAttr(line.price)}" data-sale-line-index="${index}" data-sale-line-field="price"></div>
+        <button class="remove-line" data-remove-sale-line="${index}" title="删除明细">×</button>
       </div>
     </div>`).join("") : '<div class="empty">还没有销售明细</div>';
   const total = state.saleLines.reduce((sum, line) => sum + Number(line.buy_number || 0) * Number(line.price || 0), 0);
+  const qty = state.saleLines.reduce((sum, line) => sum + Number(line.buy_number || 0), 0);
   $("saleTotal").textContent = `¥${money(total)}`;
+  if ($("saleSummaryCustomer")) $("saleSummaryCustomer").textContent = state.saleCustomer ? state.saleCustomer.name : "未选择";
+  if ($("saleSummaryCount")) $("saleSummaryCount").textContent = String(state.saleLines.length);
+  if ($("saleSummaryQty")) $("saleSummaryQty").textContent = String(qty);
+  if ($("saleSummaryAmount")) $("saleSummaryAmount").textContent = `¥${money(total)}`;
 }
 
 function updateSaleLine(index, field, value) {
@@ -2254,6 +2283,7 @@ function clearSaleForm() {
   state.saleCustomer = null;
   state.saleProduct = null;
   state.saleLines = [];
+  state.lastSaleResult = null;
   if (!$("saleCustomer")) return;
   $("saleCustomer").value = "";
   $("saleProduct").value = "";
@@ -2261,16 +2291,17 @@ function clearSaleForm() {
   $("saleCustomerChoices").innerHTML = "";
   $("saleProductChoices").innerHTML = "";
   $("saleSelectedCustomer").textContent = "未选择客户";
+  if ($("saleResultCard")) $("saleResultCard").innerHTML = "<strong>开单结果</strong><p>提交后这里会显示销售单号、打印和删除入口。</p>";
   renderSaleLines();
 }
 
 async function quickSale() {
-  if (!$("saleCustomer")) throw new Error("API 操作台已移除");
+  if (!$("saleCustomer")) throw new Error("开单页面未加载");
   if (!state.saleCustomer) await searchSaleCustomers();
   if (!state.saleCustomer) throw new Error("请先选择客户");
   if (!state.saleLines.length) await addSaleLine();
   const warehouseId = Number($("saleWarehouse").value || 2);
-  await api("/api/sales/add", {
+  const res = await api("/api/sales/add", {
     method: "POST",
     body: {
       customer_id: state.saleCustomer.id,
@@ -2284,11 +2315,37 @@ async function quickSale() {
       }))
     }
   });
+  state.lastSaleResult = res.data || res;
+  renderSaleResult(state.lastSaleResult);
   toast("销售单已创建");
-  clearSaleForm();
   await loadSales();
   loadDashboardSummary();
-  setView("sales");
+  renderSaleLines();
+}
+
+function salesResultId(result) {
+  if (!result || typeof result !== "object") return "";
+  const direct = result.id || result.sales_id || result.order_id || result.order_no || result.no || result.data_id || "";
+  if (direct) return direct;
+  if (result.data && typeof result.data === "object") return salesResultId(result.data);
+  if (result.result && typeof result.result === "object") return salesResultId(result.result);
+  return "";
+}
+
+function renderSaleResult(result) {
+  if (!$("saleResultCard")) return;
+  const salesId = salesResultId(result);
+  const numericId = Number(salesId);
+  const canAct = Number.isFinite(numericId) && numericId > 0;
+  const numberText = salesId ? `销售单号：${escapeHtml(salesId)}` : "销售单已创建";
+  $("saleResultCard").innerHTML = `
+    <strong>开单成功</strong>
+    <p>${numberText}</p>
+    <div class="sale-result-actions">
+      ${canAct ? `<button type="button" onclick="printSales(${numericId})">打印</button>` : ""}
+      ${canAct ? `<button type="button" class="danger" onclick="deleteSales(${numericId})">删除</button>` : ""}
+      <button type="button" class="primary" onclick="setView('sales')">去销售单</button>
+    </div>`;
 }
 
 async function loadProductCategories() {
@@ -2890,6 +2947,24 @@ function bindEvents() {
     button.addEventListener("click", () => insertCommandPrefix(button.dataset.commandPrefix || ""));
   });
   document.addEventListener("click", (event) => {
+    const saleCustomerButton = event.target.closest("[data-sale-customer-id]");
+    if (saleCustomerButton) {
+      event.preventDefault();
+      selectSaleCustomer(Number(saleCustomerButton.dataset.saleCustomerId), saleCustomerButton.dataset.saleCustomerName || "客户");
+      return;
+    }
+    const saleProductButton = event.target.closest("[data-sale-product-id]");
+    if (saleProductButton) {
+      event.preventDefault();
+      selectSaleProduct(Number(saleProductButton.dataset.saleProductId)).catch((err) => toast(err.message, true));
+      return;
+    }
+    const removeSaleLineButton = event.target.closest("[data-remove-sale-line]");
+    if (removeSaleLineButton) {
+      event.preventDefault();
+      removeSaleLine(Number(removeSaleLineButton.dataset.removeSaleLine));
+      return;
+    }
     const approveButton = event.target.closest("[data-approve-user-id]");
     if (approveButton) {
       event.preventDefault();
@@ -2900,6 +2975,12 @@ function bindEvents() {
     if (rejectButton) {
       event.preventDefault();
       rejectWebUser(Number(rejectButton.dataset.rejectUserId)).catch((err) => toast(err.message, true));
+    }
+  });
+  document.addEventListener("change", (event) => {
+    const lineInput = event.target.closest("[data-sale-line-index][data-sale-line-field]");
+    if (lineInput) {
+      updateSaleLine(Number(lineInput.dataset.saleLineIndex), lineInput.dataset.saleLineField, lineInput.value);
     }
   });
   document.querySelectorAll("[data-workflow-filter]").forEach((button) => {
@@ -2995,7 +3076,7 @@ function bindEvents() {
       sendChat();
     }
   });
-  $("newOrderButton").addEventListener("click", () => openDrawer("workflow"));
+  $("newOrderButton").addEventListener("click", () => setView("sale-create"));
   const newOrderButton2 = $("newOrderButton2");
   if (newOrderButton2) newOrderButton2.addEventListener("click", () => openDrawer("workflow"));
   $("newProductButton").addEventListener("click", async () => {
@@ -3005,7 +3086,7 @@ function bindEvents() {
     setProductDetailImages([]);
   });
   document.querySelector("#inventory .primary").addEventListener("click", () => prepareInventoryAction("", "", "purchase"));
-  document.querySelector("#sales .primary").addEventListener("click", () => setView("workbench"));
+  document.querySelector("#sales .primary").addEventListener("click", () => setView("sale-create"));
   bind("moveKeyword", "input", () => {
     state.moveProduct = null;
     $("moveSelectedHint").textContent = "先搜索并选择商品，再执行。";
@@ -3018,6 +3099,15 @@ function bindEvents() {
   bind("saleAddLineBtn", "click", () => addSaleLine().catch((err) => toast(err.message, true)));
   bind("saleClearBtn", "click", clearSaleForm);
   bind("quickSaleBtn", "click", () => quickSale().catch((err) => toast(err.message, true)));
+  bind("saleCustomer", "keydown", (event) => {
+    if (event.key === "Enter") searchSaleCustomers().catch((err) => toast(err.message, true));
+  });
+  bind("saleProduct", "keydown", (event) => {
+    if (event.key === "Enter") searchSaleProducts().catch((err) => toast(err.message, true));
+  });
+  bind("saleQty", "keydown", (event) => {
+    if (event.key === "Enter") addSaleLine().catch((err) => toast(err.message, true));
+  });
   bind("productImageInput", "change", (event) => {
     const file = event.target.files && event.target.files[0];
     if (file) uploadProductImage(file).catch((err) => toast(err.message, true));
@@ -3045,6 +3135,7 @@ const actions = {
 };
 
 window.printSales = (id) => doPrintSales(id).catch((err) => toast(err.message, true));
+window.setView = setView;
 window.openSalesDetail = actions.openSalesDetail;
 window.deleteSales = (id) => actions.deleteSales(id).catch((err) => toast(err.message, true));
 window.deleteSalesFromHistory = (id, historyCardId = "") => deleteSalesHistoryCard(id, historyCardId).catch((err) => toast(err.message, true));
