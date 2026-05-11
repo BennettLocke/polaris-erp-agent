@@ -237,7 +237,8 @@ EXTRA_CSS = """
   .image-chip img { width: 42px; height: 34px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #f5f3ee; }
   .image-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .admin-only { display: none; }
-  body.is-admin .admin-only { display: inline-flex; }
+  body.is-admin .admin-only { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
+  #accountAdminButton { align-items: center; justify-content: center; text-align: center; }
   .approval-list { display: grid; gap: 10px; }
   .approval-card { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 12px; display: grid; gap: 10px; }
   .approval-card strong { color: var(--text); font-size: 15px; }

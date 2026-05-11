@@ -1087,43 +1087,48 @@ async function initWebUser() {
 }
 
 async function openAccountAdmin() {
-  if (!(state.currentUser && Number(state.currentUser.is_admin) === 1)) return;
   openDrawer("account_admin");
   await loadApprovalUsers();
 }
 
 async function loadApprovalUsers(status = "pending") {
   const body = $("drawerBody");
-  if (body) body.innerHTML = '<div class="empty">正在加载待审批账号...</div>';
-  const res = await api(`/api/web-auth/users?${query({ status })}`);
-  const list = (res.data && res.data.items) || [];
-  if (!body) return;
-  if (!list.length) {
-    body.innerHTML = '<div class="empty">暂无待审批账号</div>';
-    return;
-  }
-  body.innerHTML = `<div class="approval-list">${list.map((user) => `
-    <div class="approval-card">
-      <div><strong>${escapeHtml(user.display_name || user.username || "")}</strong><div class="approval-meta">${escapeHtml(user.username || "")}<br>注册时间：${escapeHtml(formatTime(user.created_at))}</div></div>
-      <div class="approval-actions">
-        <button class="primary" onclick="approveWebUser(${Number(user.id)})">通过</button>
-        <button class="danger" onclick="rejectWebUser(${Number(user.id)})">拒绝</button>
+  if (body) body.innerHTML = '<div class="empty">\u6b63\u5728\u52a0\u8f7d\u5f85\u5ba1\u6279\u8d26\u53f7...</div>';
+  try {
+    const res = await api(`/api/web-auth/users?${query({ status })}`);
+    const list = (res.data && res.data.items) || [];
+    if (!body) return;
+    if (!list.length) {
+      body.innerHTML = '<div class="empty">\u6682\u65e0\u5f85\u5ba1\u6279\u8d26\u53f7</div>';
+      return;
+    }
+    body.innerHTML = `<div class="approval-list">${list.map((user) => `
+      <div class="approval-card">
+        <div><strong>${escapeHtml(user.display_name || user.username || "")}</strong><div class="approval-meta">${escapeHtml(user.username || "")}<br>\u6ce8\u518c\u65f6\u95f4\uff1a${escapeHtml(formatTime(user.created_at))}</div></div>
+        <div class="approval-actions">
+          <button class="primary" onclick="approveWebUser(${Number(user.id)})">\u901a\u8fc7</button>
+          <button class="danger" onclick="rejectWebUser(${Number(user.id)})">\u62d2\u7edd</button>
+        </div>
       </div>
-    </div>
-  `).join("")}</div>`;
+    `).join("")}</div>`;
+  } catch (err) {
+    if (body) body.innerHTML = `<div class="empty">\u52a0\u8f7d\u5931\u8d25\uff1a${escapeHtml(err.message)}</div>`;
+    throw err;
+  }
 }
 
 async function approveWebUser(id) {
   await api(`/api/web-auth/users/${id}/approve`, { method: "POST" });
-  toast("账号已通过");
+  toast("\u8d26\u53f7\u5df2\u901a\u8fc7");
   await loadApprovalUsers();
 }
 
 async function rejectWebUser(id) {
   await api(`/api/web-auth/users/${id}/reject`, { method: "POST" });
-  toast("账号已拒绝");
+  toast("\u8d26\u53f7\u5df2\u62d2\u7edd");
   await loadApprovalUsers();
 }
+
 
 async function confirmBusinessCard() {
   try {
