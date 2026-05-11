@@ -1106,8 +1106,8 @@ async function loadApprovalUsers(status = "pending") {
       <div class="approval-card">
         <div><strong>${escapeHtml(user.display_name || user.username || "")}</strong><div class="approval-meta">${escapeHtml(user.username || "")}<br>\u6ce8\u518c\u65f6\u95f4\uff1a${escapeHtml(formatTime(user.created_at))}</div></div>
         <div class="approval-actions">
-          <button class="primary" onclick="approveWebUser(${Number(user.id)})">\u901a\u8fc7</button>
-          <button class="danger" onclick="rejectWebUser(${Number(user.id)})">\u62d2\u7edd</button>
+          <button type="button" class="primary" data-approve-user-id="${Number(user.id)}">\u901a\u8fc7</button>
+          <button type="button" class="danger" data-reject-user-id="${Number(user.id)}">\u62d2\u7edd</button>
         </div>
       </div>
     `).join("")}</div>`;
@@ -2889,6 +2889,19 @@ function bindEvents() {
   document.querySelectorAll("[data-command-prefix]").forEach((button) => {
     button.addEventListener("click", () => insertCommandPrefix(button.dataset.commandPrefix || ""));
   });
+  document.addEventListener("click", (event) => {
+    const approveButton = event.target.closest("[data-approve-user-id]");
+    if (approveButton) {
+      event.preventDefault();
+      approveWebUser(Number(approveButton.dataset.approveUserId)).catch((err) => toast(err.message, true));
+      return;
+    }
+    const rejectButton = event.target.closest("[data-reject-user-id]");
+    if (rejectButton) {
+      event.preventDefault();
+      rejectWebUser(Number(rejectButton.dataset.rejectUserId)).catch((err) => toast(err.message, true));
+    }
+  });
   document.querySelectorAll("[data-workflow-filter]").forEach((button) => {
     button.addEventListener("click", () => {
       state.workflowFilter = button.dataset.workflowFilter || "active";
@@ -3053,8 +3066,6 @@ window.shelvesProduct = (id, stateValue) => actions.shelvesProduct(id, stateValu
 window.confirmBusinessCard = confirmBusinessCard;
 window.cancelBusinessCard = cancelBusinessCard;
 window.editBusinessCard = editBusinessCard;
-window.approveWebUser = (id) => approveWebUser(id).catch((err) => toast(err.message, true));
-window.rejectWebUser = (id) => rejectWebUser(id).catch((err) => toast(err.message, true));
 
 setupDom();
 restoreBusinessHistory();
