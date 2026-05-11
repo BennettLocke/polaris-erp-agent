@@ -232,7 +232,10 @@ EXTRA_CSS = """
   .thumb-strip { display: flex; gap: 7px; overflow: auto; }
   .thumb { width: 64px; height: 54px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #f5f3ee; }
   .swatch { width: 12px; height: 12px; border-radius: 99px; border: 1px solid rgba(0,0,0,.18); display: inline-block; vertical-align: middle; margin-right: 5px; }
-  .message-image { display: block; max-width: 260px; max-height: 160px; border: 1px solid var(--line); border-radius: 8px; margin-top: 8px; }
+  .message-image { display: block; width: min(260px, 100%); max-height: 180px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; margin-top: 8px; background: #f5f3ee; }
+  .image-chip { display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 5px 8px 5px 5px; }
+  .image-chip img { width: 42px; height: 34px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #f5f3ee; }
+  .image-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .md-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
   .md-table { width: 100%; border-collapse: collapse; }
   .md-table th,

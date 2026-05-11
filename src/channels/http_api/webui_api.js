@@ -336,10 +336,11 @@ function renderMessage(text) {
 }
 
 function linkify(html) {
-  return html.replace(/(https?:\/\/[^\s<]+|\/api\/images\/file\/[^\s<]+)/g, (url) => {
+  return html.replace(/(https?:\/\/[^\s<]+|\/api\/images\/file\/[^\s<]+|blob:[^\s<]+)/g, (url) => {
     const clean = url.replace(/[，。,.]+$/, "");
-    const isImage = /\.(png|jpe?g|webp|bmp|gif)(\?.*)?$/i.test(clean) || clean.includes("/api/images/file/");
-    return `<a href="${clean}" target="_blank" rel="noopener">${clean}</a>${isImage ? `<img class="message-image" src="${clean}">` : ""}`;
+    const isImage = /\.(png|jpe?g|webp|bmp|gif)(\?.*)?$/i.test(clean) || clean.includes("/api/images/file/") || clean.startsWith("blob:");
+    const label = isImage ? "查看图片" : clean;
+    return `<a href="${clean}" target="_blank" rel="noopener">${label}</a>${isImage ? `<img class="message-image" src="${clean}">` : ""}`;
   });
 }
 
@@ -1118,8 +1119,11 @@ async function sendChat(text) {
       const fileToUpload = state.pendingFile;
       state.pendingFile = null;
       clearPreview();
+      const localPreviewUrl = URL.createObjectURL(fileToUpload);
+      const userImageMessage = addMessage("user", `上传图片：${fileToUpload.name || "截图"}
+${localPreviewUrl}`, false);
       pendingMessage = addMessage("assistant", "正在识别图片...");
-      await uploadImage(fileToUpload);
+      await uploadImage(fileToUpload, userImageMessage, localPreviewUrl);
       if (pendingMessage) {
         pendingMessage.remove();
         persistMessages();
@@ -1155,8 +1159,7 @@ async function sendChat(text) {
   }
 }
 
-async function uploadImage(file) {
-  addMessage("user", `上传图片：${file.name || "截图"}`);
+async function uploadImage(file, userImageMessage = null, localPreviewUrl = "") {
   const form = new FormData();
   form.append("image", file, file.name || `paste_${Date.now()}.png`);
   form.append("session_id", state.sessionId);
@@ -1164,6 +1167,15 @@ async function uploadImage(file) {
   const res = await api("/api/images/upload", { method: "POST", body: form });
   const data = res.data || {};
   state.session = data.session || {};
+  const previewUrl = data.result && data.result.preview_url;
+  if (userImageMessage && previewUrl) {
+    updateMessage(userImageMessage, `上传图片：${file.name || "截图"}
+${previewUrl}`);
+  } else if (!userImageMessage) {
+    addMessage("user", `上传图片：${file.name || "截图"}${previewUrl ? `
+${previewUrl}` : ""}`);
+  }
+  if (localPreviewUrl) setTimeout(() => URL.revokeObjectURL(localPreviewUrl), 1000);
   const responseText = data.response || "图片已识别";
   addMessage("assistant", responseText);
   renderBusinessContext();
@@ -1180,14 +1192,23 @@ function setBusy(id, yes) {
 function showPreview(file) {
   const tray = $("attachmentTray");
   const composer = document.querySelector(".composer");
-  if (tray) tray.innerHTML = `<span class="attachment-chip">${escapeHtml(file.name || "截图")}</span>`;
+  if (tray) {
+    if (tray.dataset.previewUrl) URL.revokeObjectURL(tray.dataset.previewUrl);
+    const url = URL.createObjectURL(file);
+    tray.dataset.previewUrl = url;
+    tray.innerHTML = `<span class="attachment-chip image-chip"><img src="${url}" alt=""><span>${escapeHtml(file.name || "截图")}</span></span>`;
+  }
   if (composer) composer.classList.add("has-attachment");
 }
 
 function clearPreview() {
   const tray = $("attachmentTray");
   const composer = document.querySelector(".composer");
-  if (tray) tray.innerHTML = "";
+  if (tray) {
+    if (tray.dataset.previewUrl) URL.revokeObjectURL(tray.dataset.previewUrl);
+    tray.dataset.previewUrl = "";
+    tray.innerHTML = "";
+  }
   if (composer) composer.classList.remove("has-attachment");
   if ($("attachmentInput")) $("attachmentInput").value = "";
 }
