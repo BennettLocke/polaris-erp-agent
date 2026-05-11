@@ -470,6 +470,13 @@ function pendingSummaryHtml(session = state.session) {
     html += `<p><b>动作：</b>${stateData.auto_purchase ? "先进货入库，再创建销售单" : "创建销售单"}</p>`;
     const products = stateData.products || [];
     html += `<ul class="summary-lines">${products.length ? products.map(productLineHtml).join("") : "<li>商品信息未识别</li>"}</ul>`;
+  } else if (action.includes("confirm_product_name")) {
+    const products = stateData.products || [];
+    const index = Number(stateData.product_index || 0);
+    const current = products[index] || products[0] || {};
+    html += `<p><b>客户：</b>${escapeHtml(stateData.customer_name || stateData.customer || "未识别")}</p>`;
+    html += `<p><b>需要确认商品：</b>${escapeHtml([current.name || current.title || current.goods_name || "商品未识别", current.color || current.spec || ""].filter(Boolean).join(" "))}</p>`;
+    html += `<ul class="summary-lines">${products.length ? products.map(productLineHtml).join("") : "<li>商品信息未识别</li>"}</ul>`;
   } else if (action.includes("confirm_image_workflow_orders")) {
     const items = stateData.parsed_list || [];
     html += `<p><b>动作：</b>创建 ${items.length || 0} 个工作流订单</p>`;
@@ -567,6 +574,13 @@ function pendingEditableHtml(session = state.session) {
     const products = params.products || [];
     html += `<p><b>客户：</b>${escapeHtml(customer)}</p>`;
     html += `<ul class="summary-lines">${products.length ? products.map(productLineHtml).join("") : "<li>商品信息未识别</li>"}</ul>`;
+  } else if (action.includes("confirm_product_name")) {
+    const products = stateData.products || [];
+    const index = Number(stateData.product_index || 0);
+    const current = products[index] || products[0] || {};
+    html += editableField(`products.${index}.name`, "商品", current.name || current.title || current.goods_name || current.product_name || "");
+    html += editableField(`products.${index}.color`, "颜色", current.color || current.spec || current.goods_color || "");
+    html += `<p class="summary-note">请把商品名或颜色改准确后确认；如果已经准确，直接确认继续匹配。</p>`;
   } else if (action.includes("confirm_create_order")) {
     html += editableField("customer_name", "客户", stateData.customer_name || stateData.customer || "");
     html += editableWarehouseSelect("warehouse_id", "整单默认仓库", stateData.warehouse_id || 2);
@@ -897,7 +911,7 @@ function showBusinessConfirm(session = state.session) {
     const action = session.pending_action || stateData.pending_action || "";
     ok.textContent = action.includes("confirm_image_workflow_orders")
       ? "提交工作流订单"
-      : (action.includes("confirm_image_sales") ? "继续开单" : "确认执行");
+      : (action.includes("confirm_image_sales") ? "继续开单" : (action.includes("confirm_product_name") ? "继续匹配" : "确认执行"));
   }
   requestAnimationFrame(() => mask.classList.add("open"));
 }
@@ -953,6 +967,7 @@ function pendingTitle(session = state.session) {
   const intent = session.pending_intent || "";
   if (action.includes("confirm_image_workflow_orders")) return "OCR识别结果";
   if (action.includes("confirm_image_sales")) return "是否继续开销售单";
+  if (action.includes("confirm_product_name")) return "商品匹配确认";
   if (action.includes("transfer")) return "调货确认";
   if (action.includes("purchase")) return "进货确认";
   if (action.includes("stocktaking") || intent.includes("stocktaking")) return "盘点确认";
