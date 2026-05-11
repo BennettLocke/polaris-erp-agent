@@ -9,19 +9,26 @@ import uuid
 import time
 from pathlib import Path
 from urllib.parse import urlencode
-from flask import Flask, request, jsonify, Response, send_from_directory
+from flask import Flask, request, jsonify, Response, send_from_directory, session, redirect
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 from src.core.agent import Agent
 from src.utils import get_logger
 
 logger = get_logger("sjagent.http_api")
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SJAGENT_SECRET_KEY") or "sjagent-webui-auth-secret"
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 _agent: Agent | None = None
 UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "data" / "uploads"
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
 SHOPXO_AUTH_CACHE: dict[str, tuple[float, dict]] = {}
 SHOPXO_AUTH_CACHE_TTL = 86400 * 30
+WEB_AUTH_TABLE = "sjagent_web_users"
 
 
 def _api_exception_response(e: Exception):
@@ -29,6 +36,64 @@ def _api_exception_response(e: Exception):
     if isinstance(response, dict) and response:
         return jsonify(response)
     return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+def _web_auth_db():
+    from src.engine.db_client import get_db_client
+    return get_db_client()
+
+
+def _ensure_web_auth_table():
+    db = _web_auth_db()
+    db.execute(f"""
+        CREATE TABLE IF NOT EXISTS `{WEB_AUTH_TABLE}` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `username` VARCHAR(64) NOT NULL,
+            `password_hash` VARCHAR(255) NOT NULL,
+            `display_name` VARCHAR(80) NOT NULL DEFAULT '',
+            `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+            `created_at` INT UNSIGNED NOT NULL DEFAULT 0,
+            `updated_at` INT UNSIGNED NOT NULL DEFAULT 0,
+            `last_login_at` INT UNSIGNED NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_username` (`username`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+
+def _web_auth_user_by_username(username: str) -> dict | None:
+    _ensure_web_auth_table()
+    rows = _web_auth_db().query(
+        f"SELECT id, username, password_hash, display_name, is_active FROM `{WEB_AUTH_TABLE}` WHERE username=%s LIMIT 1",
+        (username,),
+    )
+    return rows[0] if rows else None
+
+
+def _web_auth_user_by_id(user_id: int) -> dict | None:
+    _ensure_web_auth_table()
+    rows = _web_auth_db().query(
+        f"SELECT id, username, display_name, is_active, last_login_at FROM `{WEB_AUTH_TABLE}` WHERE id=%s LIMIT 1",
+        (int(user_id),),
+    )
+    return rows[0] if rows else None
+
+
+def _current_web_user() -> dict | None:
+    user_id = session.get("web_user_id")
+    if not user_id:
+        return None
+    user = _web_auth_user_by_id(int(user_id))
+    if not user or int(user.get("is_active") or 0) != 1:
+        session.pop("web_user_id", None)
+        return None
+    return user
+
+
+def _web_auth_required_response():
+    if request.path == "/web" or request.accept_mimetypes.accept_html:
+        return redirect("/login")
+    return jsonify({"code": 401, "msg": "请先登录北极星"}), 401
 
 
 def _shopxo_base_url() -> str:
@@ -263,7 +328,32 @@ def _miniapp_auth_guard():
     return None
 
 
+@app.before_request
+def _webui_auth_guard():
+    if request.method == "OPTIONS":
+        return None
+    path = request.path or ""
+    if request.headers.get("X-SJ-Client") == "miniapp":
+        return None
+    public_paths = {
+        "/login",
+        "/api/web-auth/login",
+        "/api/web-auth/register",
+        "/api/web-auth/me",
+        "/api/web-auth/logout",
+    }
+    if path in public_paths or path.startswith("/api/auth/"):
+        return None
+    if path == "/web" or path.startswith("/api/"):
+        if not _current_web_user():
+            return _web_auth_required_response()
+    return None
+
+
 def _request_user_id(default: str = "http_user") -> str:
+    web_user = _current_web_user()
+    if isinstance(web_user, dict) and web_user.get("id"):
+        return f"web_{web_user.get('id')}"
     user = getattr(request, "shopxo_user", None)
     if isinstance(user, dict) and user.get("id"):
         return f"shopxo_{user.get('id')}"
@@ -1553,6 +1643,107 @@ def init_api(agent: Agent):
             logger.info("阿里云 ASR 热词每日同步任务已启动")
     except Exception as e:
         logger.warning(f"阿里云 ASR 热词同步任务未启动: {e}")
+
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return redirect("/web" if _current_web_user() else "/login")
+
+
+@app.route("/login", methods=["GET"])
+def web_login_page():
+    if _current_web_user():
+        return redirect("/web")
+    from src.channels.http_api.webui import get_login_html
+    return Response(get_login_html(), content_type="text/html; charset=utf-8")
+
+
+@app.route("/api/web-auth/register", methods=["POST"])
+def web_auth_register():
+    body = request.get_json(silent=True) or request.form.to_dict() or {}
+    username = (body.get("username") or body.get("account") or "").strip()
+    password = body.get("password") or ""
+    display_name = (body.get("display_name") or body.get("displayName") or username).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_@.\-]{3,64}", username or ""):
+        return jsonify({"code": 400, "msg": "账号需为 3-64 位，可用字母、数字、下划线、邮箱符号"}), 400
+    if len(password) < 6:
+        return jsonify({"code": 400, "msg": "密码至少 6 位"}), 400
+    try:
+        _ensure_web_auth_table()
+        if _web_auth_user_by_username(username):
+            return jsonify({"code": 409, "msg": "账号已存在，请直接登录"}), 409
+        now = int(time.time())
+        affected = _web_auth_db().execute(
+            f"""
+            INSERT INTO `{WEB_AUTH_TABLE}`
+                (username, password_hash, display_name, is_active, created_at, updated_at, last_login_at)
+            VALUES (%s, %s, %s, 1, %s, %s, %s)
+            """,
+            (username, generate_password_hash(password), display_name[:80], now, now, now),
+        )
+        if affected != 1:
+            return jsonify({"code": 500, "msg": "注册失败，请稍后重试"}), 500
+        user = _web_auth_user_by_username(username)
+        session["web_user_id"] = int(user["id"])
+        session.permanent = True
+        return jsonify({"code": 0, "data": {"user": {
+            "id": user.get("id"),
+            "username": user.get("username"),
+            "display_name": user.get("display_name") or user.get("username"),
+        }}})
+    except Exception as e:
+        logger.error(f"WebUI 注册异常: {e}")
+        return jsonify({"code": 500, "msg": f"注册异常: {e}"}), 500
+
+
+@app.route("/api/web-auth/login", methods=["POST"])
+def web_auth_login():
+    body = request.get_json(silent=True) or request.form.to_dict() or {}
+    username = (body.get("username") or body.get("account") or "").strip()
+    password = body.get("password") or ""
+    if not username or not password:
+        return jsonify({"code": 400, "msg": "请输入账号和密码"}), 400
+    try:
+        user = _web_auth_user_by_username(username)
+        if not user or int(user.get("is_active") or 0) != 1 or not check_password_hash(user.get("password_hash") or "", password):
+            return jsonify({"code": 401, "msg": "账号或密码不正确"}), 401
+        now = int(time.time())
+        _web_auth_db().execute(
+            f"UPDATE `{WEB_AUTH_TABLE}` SET last_login_at=%s, updated_at=%s WHERE id=%s",
+            (now, now, int(user["id"])),
+        )
+        session["web_user_id"] = int(user["id"])
+        session.permanent = True
+        return jsonify({"code": 0, "data": {"user": {
+            "id": user.get("id"),
+            "username": user.get("username"),
+            "display_name": user.get("display_name") or user.get("username"),
+        }}})
+    except Exception as e:
+        logger.error(f"WebUI 登录异常: {e}")
+        return jsonify({"code": 500, "msg": f"登录异常: {e}"}), 500
+
+
+@app.route("/api/web-auth/logout", methods=["POST", "GET"])
+def web_auth_logout():
+    session.pop("web_user_id", None)
+    if request.method == "GET":
+        return redirect("/login")
+    return jsonify({"code": 0, "data": {}})
+
+
+@app.route("/api/web-auth/me", methods=["GET"])
+def web_auth_me():
+    user = _current_web_user()
+    if not user:
+        return jsonify({"code": 401, "msg": "未登录"}), 401
+    return jsonify({"code": 0, "data": {"user": {
+        "id": user.get("id"),
+        "username": user.get("username"),
+        "display_name": user.get("display_name") or user.get("username"),
+        "last_login_at": user.get("last_login_at"),
+    }}})
 
 
 @app.route("/web", methods=["GET"])

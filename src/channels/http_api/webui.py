@@ -320,6 +320,226 @@ EXTRA_CSS = """
 """
 
 
+LOGIN_HTML = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>北极星登录</title>
+  <style>
+    :root {
+      --bg: #f6f3ed;
+      --surface: #fff;
+      --surface-2: #f8fafc;
+      --text: #20242a;
+      --muted: #77808d;
+      --line: #dfe5ea;
+      --accent: #0f8f78;
+      --gold: #c89f5d;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.82), rgba(255,255,255,0) 42%),
+        radial-gradient(circle at 18% 18%, rgba(200,159,93,.18), transparent 30%),
+        var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+    .shell {
+      width: min(980px, 100%);
+      display: grid;
+      grid-template-columns: .92fr 1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+    .brand, .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.94);
+      box-shadow: 0 24px 70px rgba(35, 32, 28, .12);
+    }
+    .brand {
+      padding: 28px;
+      display: grid;
+      align-content: space-between;
+      min-height: 540px;
+      overflow: hidden;
+      position: relative;
+    }
+    .brand::after {
+      content: "";
+      position: absolute;
+      inset: auto -80px -120px auto;
+      width: 320px;
+      height: 320px;
+      background: linear-gradient(135deg, rgba(15,143,120,.2), rgba(200,159,93,.18));
+      transform: rotate(18deg);
+    }
+    .logo { display: flex; gap: 12px; align-items: center; position: relative; z-index: 1; }
+    .mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #111;
+      color: #f6d48a;
+      font-weight: 850;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+    }
+    .logo strong { display: block; font-size: 18px; }
+    .logo span { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .brand-main { position: relative; z-index: 1; }
+    .brand-main h1 { margin: 0 0 14px; font-size: 36px; line-height: 1.12; }
+    .brand-main p { margin: 0; color: var(--muted); line-height: 1.8; font-size: 14px; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; position: relative; z-index: 1; }
+    .chips span {
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: #39424e;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .panel { padding: 28px; display: grid; align-content: center; }
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 22px; }
+    .tabs button, .actions button {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      min-height: 42px;
+      font-size: 14px;
+      font-weight: 760;
+      cursor: pointer;
+    }
+    .tabs button.active { background: #111; border-color: #111; color: #fff; }
+    .form { display: grid; gap: 14px; }
+    label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    input {
+      width: 100%;
+      min-height: 46px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0 13px;
+      outline: none;
+      color: var(--text);
+      background: #fff;
+      font-size: 15px;
+    }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15,143,120,.12); }
+    .actions { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 6px; }
+    .actions .primary { background: #111; border-color: #111; color: #fff; }
+    .hint { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 6px 0 0; }
+    .msg { min-height: 20px; color: #d3544a; font-size: 13px; line-height: 1.5; }
+    .msg.ok { color: var(--accent); }
+    .register-only { display: none; }
+    .is-register .register-only { display: grid; }
+    @media (max-width: 760px) {
+      body { padding: 14px; place-items: stretch; }
+      .shell { grid-template-columns: 1fr; }
+      .brand { min-height: 260px; padding: 22px; }
+      .brand-main h1 { font-size: 28px; }
+      .panel { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="brand">
+      <div class="logo">
+        <div class="mark">北</div>
+        <div><strong>肆计包装</strong><span>北极星订单管理机器人</span></div>
+      </div>
+      <div class="brand-main">
+        <h1>登录北极星工作台</h1>
+        <p>开单、库存、工作流订单和商品资料都在这里处理。每个账号独立进入系统，减少误操作和会话混用。</p>
+      </div>
+      <div class="chips"><span>订单管理</span><span>库存查询</span><span>工作流</span><span>商品维护</span></div>
+    </section>
+    <section class="panel" id="authPanel">
+      <div class="tabs">
+        <button id="loginTab" class="active" type="button">登录</button>
+        <button id="registerTab" type="button">注册</button>
+      </div>
+      <form class="form" id="authForm">
+        <label>账号<input id="username" autocomplete="username" placeholder="请输入账号"></label>
+        <label>密码<input id="password" type="password" autocomplete="current-password" placeholder="请输入密码"></label>
+        <label class="register-only">显示名称<input id="displayName" placeholder="例如：杉"></label>
+        <label class="register-only">确认密码<input id="password2" type="password" autocomplete="new-password" placeholder="再次输入密码"></label>
+        <div class="msg" id="message"></div>
+        <div class="actions"><button class="primary" id="submitButton" type="submit">登录进入</button></div>
+        <p class="hint">注册后可直接登录。密码只保存加密摘要，不保存明文。</p>
+      </form>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let mode = "login";
+    function setMode(next) {
+      mode = next;
+      $("authPanel").classList.toggle("is-register", mode === "register");
+      $("loginTab").classList.toggle("active", mode === "login");
+      $("registerTab").classList.toggle("active", mode === "register");
+      $("submitButton").textContent = mode === "login" ? "登录进入" : "注册并进入";
+      $("message").textContent = "";
+      $("message").className = "msg";
+    }
+    async function post(url, body) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || (data.code && Number(data.code) !== 0)) throw new Error(data.msg || "操作失败");
+      return data;
+    }
+    $("loginTab").onclick = () => setMode("login");
+    $("registerTab").onclick = () => setMode("register");
+    $("authForm").onsubmit = async (event) => {
+      event.preventDefault();
+      const message = $("message");
+      message.className = "msg";
+      message.textContent = "";
+      const username = $("username").value.trim();
+      const password = $("password").value;
+      const displayName = $("displayName").value.trim();
+      const password2 = $("password2").value;
+      if (!username || !password) {
+        message.textContent = "请输入账号和密码";
+        return;
+      }
+      if (mode === "register" && password !== password2) {
+        message.textContent = "两次密码不一致";
+        return;
+      }
+      $("submitButton").disabled = true;
+      try {
+        await post(mode === "login" ? "/api/web-auth/login" : "/api/web-auth/register", { username, password, display_name: displayName });
+        message.className = "msg ok";
+        message.textContent = "已登录，正在进入系统...";
+        location.href = "/web";
+      } catch (err) {
+        message.textContent = err.message;
+      } finally {
+        $("submitButton").disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>"""
+
+
 TOOLS_HTML = """
       <div class="side-card api-tools" id="apiTools">
         <h3>API 操作台</h3>
@@ -410,6 +630,11 @@ def get_webui_html():
     html = html.replace("<strong>订单工作台</strong>", "<strong>肆计包装</strong>", 1)
     html = html.replace("<span>对话驱动的订单库存</span>", "<span>北极星订单管理机器人</span>", 1)
     html = html.replace("<button class=\"ghost\" id=\"newChatButton\">新建对话</button>", "<button class=\"ghost\" id=\"newChatButton\">新会话</button>", 1)
+    html = html.replace(
+        '<button class="primary" id="newOrderButton">新建开单</button>',
+        '<button class="primary" id="newOrderButton">新建开单</button><button class="ghost" id="logoutButton">退出</button>',
+        1,
+    )
     html = html.replace("<h1>AI 业务工作台</h1>", "<h1>业务工作台</h1>", 1)
     html = html.replace("<p>开单、查库存、改订单、上下架商品，都从这里开始。</p>", "<p>开单、查库存、改订单、上下架商品。</p>", 1)
     html = html.replace("</style>", EXTRA_CSS + "\n</style>", 1)
@@ -417,3 +642,7 @@ def get_webui_html():
     if 'id="toast"' not in html:
         html = html.replace("</body>", HIDDEN_HTML + "\n</body>", 1)
     return _replace_last_script(html, script)
+
+
+def get_login_html():
+    return LOGIN_HTML

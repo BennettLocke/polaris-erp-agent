@@ -127,6 +127,9 @@ function api(path, options = {}) {
       data = { code: res.status, msg: text };
     }
     if (!res.ok || (data.code && Number(data.code) !== 0)) {
+      if (res.status === 401 || Number(data.code) === 401) {
+        window.location.href = "/login";
+      }
       throw new Error(data.msg || `HTTP ${res.status}`);
     }
     return data;
@@ -2846,6 +2849,13 @@ function bindEvents() {
     setView("workbench");
   });
   $("contextButton").addEventListener("click", () => openDrawer("ai"));
+  bind("logoutButton", "click", async () => {
+    try {
+      await api("/api/web-auth/logout", { method: "POST" });
+    } finally {
+      window.location.href = "/login";
+    }
+  });
   $("closeDrawer").addEventListener("click", closeDrawer);
   $("cancelDrawer").addEventListener("click", closeDrawer);
   $("saveDrawer").addEventListener("click", () => saveDrawer().catch((err) => toast(err.message, true)));
