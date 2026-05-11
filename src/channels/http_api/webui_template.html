@@ -484,6 +484,30 @@
       box-shadow: 0 14px 36px rgba(30, 38, 48, 0.06);
     }
 
+    .command-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 10px;
+    }
+
+    .command-strip button {
+      height: 40px;
+      min-height: 40px;
+      padding: 0 12px;
+      border-radius: 7px;
+      background: rgba(255,255,255,0.68);
+      color: var(--text);
+      font-size: 14px;
+      box-shadow: none;
+    }
+
+    .command-strip button:hover {
+      background: var(--accent-soft);
+      border-color: #cbe9dd;
+      color: var(--accent);
+    }
+
     .composer input {
       height: 42px;
       border: 0;
@@ -1312,10 +1336,18 @@
             </div>
 
             <div>
+              <div class="command-strip" aria-label="快捷指令">
+                <button type="button" data-command-prefix="开单">开单</button>
+                <button type="button" data-command-prefix="盘点">盘点</button>
+                <button type="button" data-command-prefix="调货">调货</button>
+                <button type="button" data-command-prefix="进货">进货</button>
+                <button type="button" data-command-prefix="工作流">工作流</button>
+                <button type="button" data-command-prefix="查库存">查库存</button>
+              </div>
               <div class="composer">
                 <button class="attach-button" id="attachButton" aria-label="添加附件" title="添加附件">+</button>
                 <input class="attachment-input" id="attachmentInput" type="file" multiple />
-                <input id="chatInput" placeholder="输入业务指令，例如：把蓝色礼盒下架，原因是图片要重拍" />
+                <input id="chatInput" placeholder="" />
                 <button class="primary" id="sendButton">发送</button>
                 <div class="attachment-tray" id="attachmentTray" aria-live="polite"></div>
               </div>

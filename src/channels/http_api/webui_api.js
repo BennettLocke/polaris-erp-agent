@@ -12,6 +12,7 @@ const LIST_LIMITS = {
 const state = {
   sessionId: localStorage.getItem("sj_web_session_id") || newSessionId(),
   pendingFile: null,
+  isSending: false,
   session: {},
   lastSalesCards: [],
   salesPage: 1,
@@ -453,7 +454,7 @@ function productLineHtml(product = {}) {
 
 function pendingSummaryHtml(session = state.session) {
   const stateData = session.state || {};
-  const action = session.pending_action || "";
+  const action = session.pending_action || stateData.pending_action || "";
   const intent = session.pending_intent || "";
   const title = pendingTitle(session);
   let html = `<div class="business-summary"><h4>${escapeHtml(title)}</h4>`;
@@ -556,7 +557,7 @@ function editablePurchaseProductFields(basePath, product = {}, index = 0) {
 
 function pendingEditableHtml(session = state.session) {
   const stateData = session.state || {};
-  const action = session.pending_action || "";
+  const action = session.pending_action || stateData.pending_action || "";
   const intent = session.pending_intent || "";
   let html = `<div class="business-summary confirm-edit-form">`;
 
@@ -795,6 +796,10 @@ function parseWorkflowItemsFromText(response = "") {
   }];
 }
 
+function workflowIdsFromItems(items = []) {
+  return [...new Set((items || []).map((item) => item && item.id).filter(Boolean).map(String))];
+}
+
 function orderItemsHtml(items = []) {
   if (!items.length) return "";
   return `<div class="history-items">${items.slice(0, 4).map((item) => {
@@ -829,7 +834,9 @@ function addOrderHistory(session = state.session, response = "") {
   const type = order.type || (response.includes("工作流") ? "workflow" : (response.includes("销售单") || response.includes("开单") ? "sales" : ""));
   if (!type) return;
   const workflowItems = type === "workflow" ? parseWorkflowItemsFromText(response) : [];
-  const id = order.id || (workflowItems[0] && workflowItems[0].id) || parseOrderIdFromText(response, type);
+  const workflowIds = type === "workflow" ? workflowIdsFromItems(workflowItems) : [];
+  const id = order.id || workflowIds[0] || parseOrderIdFromText(response, type);
+  const actionId = type === "workflow" && workflowIds.length > 1 ? workflowIds.join(",") : id;
   const historyId = `biz_${type}_${id || Date.now()}_${Math.random().toString(16).slice(2)}`;
   const title = type === "sales" ? "销售单" : "工作流订单";
   const customer = order.customer || (workflowItems[0] && workflowItems[0].customer) || parseCustomerFromText(response);
@@ -837,7 +844,7 @@ function addOrderHistory(session = state.session, response = "") {
   const goods = order.goods_name || order.product_name || (!items.length && workflowItems[0] ? workflowItems[0].name : "");
   const total = order.total ?? "";
   const html = `
-    ${id ? `<p class="muted">单号：${escapeHtml(id)}</p>` : ""}
+    ${workflowIds.length > 1 ? `<p class="muted">单号：${escapeHtml(workflowIds.join("、"))}</p>` : (id ? `<p class="muted">单号：${escapeHtml(id)}</p>` : "")}
     ${customer ? `<p>客户：${escapeHtml(customer)}</p>` : ""}
     ${goods ? `<p>商品：${escapeHtml(goods)}</p>` : ""}
     ${orderItemsHtml(items)}
@@ -847,9 +854,9 @@ function addOrderHistory(session = state.session, response = "") {
   const actions = id
     ? (type === "sales"
       ? `<button class="danger" onclick="deleteSalesFromHistory('${escapeAttr(id)}', '${escapeAttr(historyId)}')">删除</button>`
-      : `<button class="danger" onclick="deleteWorkflowFromHistory('${escapeAttr(id)}', '${escapeAttr(historyId)}')">删除</button>`)
+      : `<button class="danger" onclick="deleteWorkflowFromHistory('${escapeAttr(actionId)}', '${escapeAttr(historyId)}')">删除</button>`)
     : "";
-  pushBusinessHistory({ id: historyId, businessKey: id ? `${type}:${id}` : "", orderId: id, type, title, label: "已创建", html, actions });
+  pushBusinessHistory({ id: historyId, businessKey: actionId ? `${type}:${actionId}` : "", orderId: actionId, type, title, label: "已创建", html, actions });
 }
 
 function closeBusinessConfirm() {
@@ -886,7 +893,8 @@ function showBusinessConfirm(session = state.session) {
   if (title) title.textContent = pendingTitle(session);
   if (body) body.innerHTML = pendingEditableHtml(session);
   if (ok) {
-    const action = session.pending_action || "";
+    const stateData = session.state || {};
+    const action = session.pending_action || stateData.pending_action || "";
     ok.textContent = action.includes("confirm_image_workflow_orders")
       ? "提交工作流订单"
       : (action.includes("confirm_image_sales") ? "继续开单" : "确认执行");
@@ -940,7 +948,8 @@ function showInventoryPopup(keyword, list) {
 }
 
 function pendingTitle(session = state.session) {
-  const action = session.pending_action || "";
+  const stateData = session.state || {};
+  const action = session.pending_action || stateData.pending_action || "";
   const intent = session.pending_intent || "";
   if (action.includes("confirm_image_workflow_orders")) return "OCR识别结果";
   if (action.includes("confirm_image_sales")) return "是否继续开销售单";
@@ -1069,11 +1078,13 @@ function inventoryKeywordFromMessage(message) {
 }
 
 async function sendChat(text) {
+  if (state.isSending) return;
   const input = $("chatInput");
   const message = (text || input.value || "").trim();
   if (!message && !state.pendingFile) return;
   if (message) addMessage("user", message);
   input.value = "";
+  state.isSending = true;
   setBusy("sendButton", true);
   let pendingMessage = null;
   try {
@@ -1089,15 +1100,16 @@ async function sendChat(text) {
       return;
     }
     if (state.pendingFile) {
+      const fileToUpload = state.pendingFile;
+      state.pendingFile = null;
+      clearPreview();
       pendingMessage = addMessage("assistant", "正在识别图片...");
-      await uploadImage(state.pendingFile);
+      await uploadImage(fileToUpload);
       if (pendingMessage) {
         pendingMessage.remove();
         persistMessages();
       }
       pendingMessage = null;
-      state.pendingFile = null;
-      clearPreview();
     }
     if (message) {
       setStatus("北极星思考中");
@@ -1123,6 +1135,7 @@ async function sendChat(text) {
     toast(err.message, true);
     setStatus("处理失败");
   } finally {
+    state.isSending = false;
     setBusy("sendButton", false);
   }
 }
@@ -1162,6 +1175,18 @@ function clearPreview() {
   if (tray) tray.innerHTML = "";
   if (composer) composer.classList.remove("has-attachment");
   if ($("attachmentInput")) $("attachmentInput").value = "";
+}
+
+function insertCommandPrefix(command) {
+  const input = $("chatInput");
+  if (!input) return;
+  const value = input.value.trim();
+  const prefixPattern = /^(开单|盘点|调货|进货|工作流|查库存)\b/;
+  input.value = value
+    ? (prefixPattern.test(value) ? value.replace(prefixPattern, command) : `${command} ${value}`)
+    : `${command} `;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 const SALES_CARD_HEIGHT_FALLBACK = 352;
@@ -1790,8 +1815,36 @@ async function deleteWorkflowOrder(id) {
 }
 
 async function deleteWorkflowHistoryCard(id, historyCardId = "") {
-  const deleted = await deleteWorkflowOrder(id);
-  if (deleted) removeBusinessHistoryCard(historyCardId, "deleteWorkflowFromHistory", id);
+  const ids = String(id || "").split(",").map((item) => item.trim()).filter(Boolean);
+  if (ids.length <= 1) {
+    const deleted = await deleteWorkflowOrder(ids[0] || id);
+    if (deleted) removeBusinessHistoryCard(historyCardId, "deleteWorkflowFromHistory", id);
+    return;
+  }
+  const ok = await confirmDialog({
+    title: "删除工作流订单",
+    message: `确认删除这 ${ids.length} 个工作流订单吗？\n${ids.join("、")}`,
+    confirmText: "删除"
+  });
+  if (!ok) return;
+  const results = [];
+  for (const workflowId of ids) {
+    try {
+      await api(`/api/workflow/orders/${encodeURIComponent(workflowId)}`, { method: "DELETE" });
+      results.push({ id: workflowId, ok: true });
+    } catch (err) {
+      results.push({ id: workflowId, ok: false, error: err.message });
+    }
+  }
+  const successIds = results.filter((item) => item.ok).map((item) => item.id);
+  state.lastWorkflowCards = state.lastWorkflowCards.filter((item) => !successIds.includes(String(item.id || item.order_id)));
+  state.workflowTotal = Math.max(0, Number(state.workflowTotal || 0) - successIds.length);
+  if (successIds.length) removeBusinessHistoryCard(historyCardId, "deleteWorkflowFromHistory", id);
+  loadDashboardSummary();
+  loadWorkflow();
+  const failed = results.filter((item) => !item.ok);
+  if (failed.length) toast(`已删除 ${successIds.length} 个，失败 ${failed.length} 个`, true);
+  else toast("工作流订单已删除");
 }
 
 async function loadInventory(keywordOverride, page) {
@@ -2727,6 +2780,9 @@ function bindEvents() {
   });
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleQuickAction(button.dataset.action).catch((err) => toast(err.message, true)));
+  });
+  document.querySelectorAll("[data-command-prefix]").forEach((button) => {
+    button.addEventListener("click", () => insertCommandPrefix(button.dataset.commandPrefix || ""));
   });
   document.querySelectorAll("[data-workflow-filter]").forEach((button) => {
     button.addEventListener("click", () => {
