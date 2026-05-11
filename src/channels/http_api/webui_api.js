@@ -51,6 +51,7 @@ const state = {
   saleLines: [],
   moveProduct: null,
   moveProductResults: [],
+  currentUser: null,
   drawerMode: null,
   lightboxImages: [],
   lightboxIndex: 0
@@ -1048,6 +1049,11 @@ function openDrawer(mode = "ai", row = {}) {
     if (subtitle) subtitle.textContent = "";
     if (save) save.style.display = "none";
     body.innerHTML = salesDetailHtml(row);
+  } else if (mode === "account_admin") {
+    if (title) title.textContent = "账号审批";
+    if (subtitle) subtitle.textContent = "新注册账号通过后才能进入系统。";
+    if (save) save.style.display = "none";
+    body.innerHTML = '<div class="empty">正在加载待审批账号...</div>';
   }
   document.body.classList.add("modal-open");
   drawer.classList.add("open");
@@ -1062,6 +1068,61 @@ function closeDrawer() {
   const save = $("saveDrawer");
   if (save) save.textContent = "保存";
   document.body.classList.remove("modal-open");
+}
+
+function formatTime(ts) {
+  const num = Number(ts || 0);
+  if (!num) return "-";
+  return new Date(num * 1000).toLocaleString();
+}
+
+async function initWebUser() {
+  try {
+    const res = await api("/api/web-auth/me");
+    state.currentUser = res.data && res.data.user;
+    document.body.classList.toggle("is-admin", !!(state.currentUser && Number(state.currentUser.is_admin) === 1));
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+async function openAccountAdmin() {
+  if (!(state.currentUser && Number(state.currentUser.is_admin) === 1)) return;
+  openDrawer("account_admin");
+  await loadApprovalUsers();
+}
+
+async function loadApprovalUsers(status = "pending") {
+  const body = $("drawerBody");
+  if (body) body.innerHTML = '<div class="empty">正在加载待审批账号...</div>';
+  const res = await api(`/api/web-auth/users?${query({ status })}`);
+  const list = (res.data && res.data.items) || [];
+  if (!body) return;
+  if (!list.length) {
+    body.innerHTML = '<div class="empty">暂无待审批账号</div>';
+    return;
+  }
+  body.innerHTML = `<div class="approval-list">${list.map((user) => `
+    <div class="approval-card">
+      <div><strong>${escapeHtml(user.display_name || user.username || "")}</strong><div class="approval-meta">${escapeHtml(user.username || "")}<br>注册时间：${escapeHtml(formatTime(user.created_at))}</div></div>
+      <div class="approval-actions">
+        <button class="primary" onclick="approveWebUser(${Number(user.id)})">通过</button>
+        <button class="danger" onclick="rejectWebUser(${Number(user.id)})">拒绝</button>
+      </div>
+    </div>
+  `).join("")}</div>`;
+}
+
+async function approveWebUser(id) {
+  await api(`/api/web-auth/users/${id}/approve`, { method: "POST" });
+  toast("账号已通过");
+  await loadApprovalUsers();
+}
+
+async function rejectWebUser(id) {
+  await api(`/api/web-auth/users/${id}/reject`, { method: "POST" });
+  toast("账号已拒绝");
+  await loadApprovalUsers();
 }
 
 async function confirmBusinessCard() {
@@ -2856,6 +2917,7 @@ function bindEvents() {
       window.location.href = "/login";
     }
   });
+  bind("accountAdminButton", "click", () => openAccountAdmin().catch((err) => toast(err.message, true)));
   $("closeDrawer").addEventListener("click", closeDrawer);
   $("cancelDrawer").addEventListener("click", closeDrawer);
   $("saveDrawer").addEventListener("click", () => saveDrawer().catch((err) => toast(err.message, true)));
@@ -2986,6 +3048,8 @@ window.shelvesProduct = (id, stateValue) => actions.shelvesProduct(id, stateValu
 window.confirmBusinessCard = confirmBusinessCard;
 window.cancelBusinessCard = cancelBusinessCard;
 window.editBusinessCard = editBusinessCard;
+window.approveWebUser = (id) => approveWebUser(id).catch((err) => toast(err.message, true));
+window.rejectWebUser = (id) => rejectWebUser(id).catch((err) => toast(err.message, true));
 
 setupDom();
 restoreBusinessHistory();
@@ -2993,5 +3057,5 @@ restoreMessages();
 bindEvents();
 renderSaleLines();
 renderBusinessContext();
-refreshAll();
+initWebUser().finally(() => refreshAll());
 setInterval(loadDashboardSummary, DASHBOARD_REFRESH_MS);

@@ -236,6 +236,14 @@ EXTRA_CSS = """
   .image-chip { display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 5px 8px 5px 5px; }
   .image-chip img { width: 42px; height: 34px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #f5f3ee; }
   .image-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .admin-only { display: none; }
+  body.is-admin .admin-only { display: inline-flex; }
+  .approval-list { display: grid; gap: 10px; }
+  .approval-card { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 12px; display: grid; gap: 10px; }
+  .approval-card strong { color: var(--text); font-size: 15px; }
+  .approval-meta { color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .approval-actions button { min-height: 34px; padding: 0 12px; }
   .md-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
   .md-table { width: 100%; border-collapse: collapse; }
   .md-table th,
@@ -525,10 +533,15 @@ LOGIN_HTML = """<!doctype html>
       }
       $("submitButton").disabled = true;
       try {
-        await post(mode === "login" ? "/api/web-auth/login" : "/api/web-auth/register", { username, password, display_name: displayName });
+        const result = await post(mode === "login" ? "/api/web-auth/login" : "/api/web-auth/register", { username, password, display_name: displayName });
         message.className = "msg ok";
-        message.textContent = "已登录，正在进入系统...";
-        location.href = "/web";
+        if (result.data && result.data.pending) {
+          message.textContent = "已提交注册，等待管理员审批后才能登录。";
+          setMode("login");
+        } else {
+          message.textContent = "已登录，正在进入系统...";
+          location.href = "/web";
+        }
       } catch (err) {
         message.textContent = err.message;
       } finally {
@@ -632,7 +645,7 @@ def get_webui_html():
     html = html.replace("<button class=\"ghost\" id=\"newChatButton\">新建对话</button>", "<button class=\"ghost\" id=\"newChatButton\">新会话</button>", 1)
     html = html.replace(
         '<button class="primary" id="newOrderButton">新建开单</button>',
-        '<button class="primary" id="newOrderButton">新建开单</button><button class="ghost" id="logoutButton">退出</button>',
+        '<button class="primary" id="newOrderButton">新建开单</button><button class="ghost admin-only" id="accountAdminButton">账号</button><button class="ghost" id="logoutButton">退出</button>',
         1,
     )
     html = html.replace("<h1>AI 业务工作台</h1>", "<h1>业务工作台</h1>", 1)

@@ -51,20 +51,37 @@ def _ensure_web_auth_table():
             `username` VARCHAR(64) NOT NULL,
             `password_hash` VARCHAR(255) NOT NULL,
             `display_name` VARCHAR(80) NOT NULL DEFAULT '',
+            `approval_status` VARCHAR(16) NOT NULL DEFAULT 'approved',
+            `is_admin` TINYINT(1) NOT NULL DEFAULT 0,
             `is_active` TINYINT(1) NOT NULL DEFAULT 1,
             `created_at` INT UNSIGNED NOT NULL DEFAULT 0,
             `updated_at` INT UNSIGNED NOT NULL DEFAULT 0,
             `last_login_at` INT UNSIGNED NOT NULL DEFAULT 0,
+            `approved_at` INT UNSIGNED NOT NULL DEFAULT 0,
+            `approved_by` INT UNSIGNED NOT NULL DEFAULT 0,
             PRIMARY KEY (`id`),
             UNIQUE KEY `uk_username` (`username`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
+    columns = {
+        str(row.get("Field"))
+        for row in db.query(f"SHOW COLUMNS FROM `{WEB_AUTH_TABLE}`")
+    }
+    additions = {
+        "approval_status": "ALTER TABLE `{table}` ADD COLUMN `approval_status` VARCHAR(16) NOT NULL DEFAULT 'approved' AFTER `display_name`",
+        "is_admin": "ALTER TABLE `{table}` ADD COLUMN `is_admin` TINYINT(1) NOT NULL DEFAULT 0 AFTER `approval_status`",
+        "approved_at": "ALTER TABLE `{table}` ADD COLUMN `approved_at` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `last_login_at`",
+        "approved_by": "ALTER TABLE `{table}` ADD COLUMN `approved_by` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `approved_at`",
+    }
+    for column, sql in additions.items():
+        if column not in columns:
+            db.execute(sql.format(table=WEB_AUTH_TABLE))
 
 
 def _web_auth_user_by_username(username: str) -> dict | None:
     _ensure_web_auth_table()
     rows = _web_auth_db().query(
-        f"SELECT id, username, password_hash, display_name, is_active FROM `{WEB_AUTH_TABLE}` WHERE username=%s LIMIT 1",
+        f"SELECT id, username, password_hash, display_name, approval_status, is_admin, is_active FROM `{WEB_AUTH_TABLE}` WHERE username=%s LIMIT 1",
         (username,),
     )
     return rows[0] if rows else None
@@ -73,7 +90,7 @@ def _web_auth_user_by_username(username: str) -> dict | None:
 def _web_auth_user_by_id(user_id: int) -> dict | None:
     _ensure_web_auth_table()
     rows = _web_auth_db().query(
-        f"SELECT id, username, display_name, is_active, last_login_at FROM `{WEB_AUTH_TABLE}` WHERE id=%s LIMIT 1",
+        f"SELECT id, username, display_name, approval_status, is_admin, is_active, last_login_at FROM `{WEB_AUTH_TABLE}` WHERE id=%s LIMIT 1",
         (int(user_id),),
     )
     return rows[0] if rows else None
@@ -84,10 +101,15 @@ def _current_web_user() -> dict | None:
     if not user_id:
         return None
     user = _web_auth_user_by_id(int(user_id))
-    if not user or int(user.get("is_active") or 0) != 1:
+    if not user or int(user.get("is_active") or 0) != 1 or str(user.get("approval_status") or "") != "approved":
         session.pop("web_user_id", None)
         return None
     return user
+
+
+def _current_web_user_is_admin() -> bool:
+    user = _current_web_user()
+    return bool(user and int(user.get("is_admin") or 0) == 1)
 
 
 def _web_auth_required_response():
@@ -1674,24 +1696,32 @@ def web_auth_register():
         if _web_auth_user_by_username(username):
             return jsonify({"code": 409, "msg": "账号已存在，请直接登录"}), 409
         now = int(time.time())
+        user_count = _web_auth_db().query(f"SELECT COUNT(*) AS total FROM `{WEB_AUTH_TABLE}`")
+        is_first_user = not user_count or int(user_count[0].get("total") or 0) == 0
+        approval_status = "approved" if is_first_user else "pending"
+        is_active = 1 if is_first_user else 0
+        is_admin = 1 if is_first_user else 0
         affected = _web_auth_db().execute(
             f"""
             INSERT INTO `{WEB_AUTH_TABLE}`
-                (username, password_hash, display_name, is_active, created_at, updated_at, last_login_at)
-            VALUES (%s, %s, %s, 1, %s, %s, %s)
+                (username, password_hash, display_name, approval_status, is_admin, is_active, created_at, updated_at, last_login_at, approved_at, approved_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
             """,
-            (username, generate_password_hash(password), display_name[:80], now, now, now),
+            (username, generate_password_hash(password), display_name[:80], approval_status, is_admin, is_active, now, now, now if is_first_user else 0, now if is_first_user else 0),
         )
         if affected != 1:
             return jsonify({"code": 500, "msg": "注册失败，请稍后重试"}), 500
         user = _web_auth_user_by_username(username)
-        session["web_user_id"] = int(user["id"])
-        session.permanent = True
+        if is_first_user:
+            session["web_user_id"] = int(user["id"])
+            session.permanent = True
         return jsonify({"code": 0, "data": {"user": {
             "id": user.get("id"),
             "username": user.get("username"),
             "display_name": user.get("display_name") or user.get("username"),
-        }}})
+            "approval_status": user.get("approval_status"),
+            "is_admin": int(user.get("is_admin") or 0),
+        }, "pending": not is_first_user}})
     except Exception as e:
         logger.error(f"WebUI 注册异常: {e}")
         return jsonify({"code": 500, "msg": f"注册异常: {e}"}), 500
@@ -1706,8 +1736,10 @@ def web_auth_login():
         return jsonify({"code": 400, "msg": "请输入账号和密码"}), 400
     try:
         user = _web_auth_user_by_username(username)
-        if not user or int(user.get("is_active") or 0) != 1 or not check_password_hash(user.get("password_hash") or "", password):
+        if not user or not check_password_hash(user.get("password_hash") or "", password):
             return jsonify({"code": 401, "msg": "账号或密码不正确"}), 401
+        if str(user.get("approval_status") or "") != "approved" or int(user.get("is_active") or 0) != 1:
+            return jsonify({"code": 403, "msg": "账号还在审批中，请联系管理员通过后再登录"}), 403
         now = int(time.time())
         _web_auth_db().execute(
             f"UPDATE `{WEB_AUTH_TABLE}` SET last_login_at=%s, updated_at=%s WHERE id=%s",
@@ -1719,6 +1751,8 @@ def web_auth_login():
             "id": user.get("id"),
             "username": user.get("username"),
             "display_name": user.get("display_name") or user.get("username"),
+            "approval_status": user.get("approval_status"),
+            "is_admin": int(user.get("is_admin") or 0),
         }}})
     except Exception as e:
         logger.error(f"WebUI 登录异常: {e}")
@@ -1742,8 +1776,68 @@ def web_auth_me():
         "id": user.get("id"),
         "username": user.get("username"),
         "display_name": user.get("display_name") or user.get("username"),
+        "approval_status": user.get("approval_status"),
+        "is_admin": int(user.get("is_admin") or 0),
         "last_login_at": user.get("last_login_at"),
     }}})
+
+
+@app.route("/api/web-auth/users", methods=["GET"])
+def web_auth_users():
+    if not _current_web_user_is_admin():
+        return jsonify({"code": 403, "msg": "只有管理员可以审批账号"}), 403
+    status = (request.args.get("status") or "pending").strip()
+    allowed = {"pending", "approved", "rejected", "all"}
+    if status not in allowed:
+        status = "pending"
+    _ensure_web_auth_table()
+    sql = f"""
+        SELECT id, username, display_name, approval_status, is_admin, is_active, created_at, last_login_at, approved_at, approved_by
+        FROM `{WEB_AUTH_TABLE}`
+    """
+    params = ()
+    if status != "all":
+        sql += " WHERE approval_status=%s"
+        params = (status,)
+    sql += " ORDER BY id DESC LIMIT 100"
+    rows = _web_auth_db().query(sql, params)
+    return jsonify({"code": 0, "data": {"items": rows}})
+
+
+@app.route("/api/web-auth/users/<int:user_id>/approve", methods=["POST"])
+def web_auth_user_approve(user_id: int):
+    admin = _current_web_user()
+    if not admin or int(admin.get("is_admin") or 0) != 1:
+        return jsonify({"code": 403, "msg": "只有管理员可以审批账号"}), 403
+    now = int(time.time())
+    affected = _web_auth_db().execute(
+        f"""
+        UPDATE `{WEB_AUTH_TABLE}`
+        SET approval_status='approved', is_active=1, approved_at=%s, approved_by=%s, updated_at=%s
+        WHERE id=%s
+        """,
+        (now, int(admin["id"]), now, int(user_id)),
+    )
+    return jsonify({"code": 0, "data": {"affected": affected}})
+
+
+@app.route("/api/web-auth/users/<int:user_id>/reject", methods=["POST"])
+def web_auth_user_reject(user_id: int):
+    admin = _current_web_user()
+    if not admin or int(admin.get("is_admin") or 0) != 1:
+        return jsonify({"code": 403, "msg": "只有管理员可以审批账号"}), 403
+    if int(admin["id"]) == int(user_id):
+        return jsonify({"code": 400, "msg": "不能拒绝自己的账号"}), 400
+    now = int(time.time())
+    affected = _web_auth_db().execute(
+        f"""
+        UPDATE `{WEB_AUTH_TABLE}`
+        SET approval_status='rejected', is_active=0, approved_at=%s, approved_by=%s, updated_at=%s
+        WHERE id=%s
+        """,
+        (now, int(admin["id"]), now, int(user_id)),
+    )
+    return jsonify({"code": 0, "data": {"affected": affected}})
 
 
 @app.route("/web", methods=["GET"])
