@@ -236,7 +236,7 @@
 
     .mini-stats {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr;
       gap: 8px;
       margin-top: auto;
     }
@@ -248,6 +248,14 @@
       padding: 9px;
       color: var(--text);
       text-align: left;
+    }
+    #accountAdminButton {
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      white-space: nowrap;
     }
     button.mini-stat { cursor: pointer; font: inherit; }
     button.mini-stat:hover { border-color: var(--accent); background: rgba(255,255,255,0.86); }
@@ -298,7 +306,7 @@
     .content {
       flex: 1;
       min-height: 0;
-      padding: 22px;
+      padding: 92px 22px 22px;
       overflow: auto;
       overscroll-behavior: contain;
     }
