@@ -5,6 +5,7 @@ ERP 工具 - 数据库直查 + API 调用
 from typing import Any, Optional
 from src.engine.db_client import get_db_client
 from src.engine.api_client import ERPSystemClient
+from src.core.customer_name import normalize_customer_name
 from src.core.tools.registry import tool
 from src.utils import get_logger
 
@@ -211,6 +212,9 @@ def customer_create(
         contacts_tel: 联系电话（选填）
     """
     client = _get_erp_client()
+    name = normalize_customer_name(name)
+    if not name:
+        return {"error": "客户名称为空，无法创建客户"}
     try:
         result = client.company_add(
             name=name,

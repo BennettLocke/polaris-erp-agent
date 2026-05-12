@@ -13,6 +13,7 @@ import re
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
 from src.core.config import get_config
+from src.core.customer_name import has_customer_name_craft_noise, normalize_customer_name
 from src.utils import get_logger
 from scripts.common.unit_converter import calculate_purchase_quantity, is_one_piece_order
 
@@ -55,7 +56,7 @@ class OrderFlowWorkflow(BaseWorkflow):
             params["products"] = inline_products
         params["products"] = self._enrich_order_products(params.get("products", []), user_input)
         customer_defaulted = bool(params.get("customer_defaulted")) or not bool(str(params.get("customer") or "").strip())
-        customer_name = str(params.get("customer") or "散客").strip()
+        customer_name = normalize_customer_name(params.get("customer") or "散客") or "散客"
         products = params.get("products", [])
         warehouse_hint = params.get("warehouse") or self._extract_warehouse_hint(user_input)
         skip_inventory = bool(params.get("skip_inventory")) or self._skip_inventory_check(user_input)
@@ -409,19 +410,32 @@ class OrderFlowWorkflow(BaseWorkflow):
 
     def _search_customer(self, name: str) -> int | None:
         """B2: 搜索客户，返回 customer_id"""
+        name = normalize_customer_name(name)
         if not name:
             return None
         try:
             results = self.caller.call("customer_query", keyword=name)
-            if results:
-                cid = results[0].get("id")
-                logger.info(f"[OrderFlow] 客户找到: {name} → id={cid}")
+            exact_rows = []
+            fuzzy_rows = []
+            for row in results or []:
+                row_name = str(row.get("name") or row.get("customer_name") or row.get("company_name") or "").strip()
+                if row_name == name:
+                    exact_rows.append(row)
+                elif name in row_name and not has_customer_name_craft_noise(row_name):
+                    fuzzy_rows.append(row)
+            picked = exact_rows or (fuzzy_rows[:1] if len(fuzzy_rows) == 1 else [])
+            if picked:
+                cid = picked[0].get("id")
+                logger.info(f"[OrderFlow] 客户找到: {name} → id={cid}, name={picked[0].get('name')}")
                 return int(cid) if cid else None
+            if results:
+                logger.info(f"[OrderFlow] 客户模糊结果未采用: keyword={name}, rows={len(results)}")
         except Exception as e:
             logger.warning(f"[OrderFlow] 客户查询失败: {e}")
         return None
 
     def _create_customer(self, name: str) -> int | None:
+        name = normalize_customer_name(name)
         if not name:
             return None
         try:

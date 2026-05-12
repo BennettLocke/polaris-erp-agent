@@ -427,6 +427,76 @@ def _pending_price(value, default=0):
 
 def _sanitize_pending_state(intent: str | None, new_state: dict, old_state: dict | None) -> dict:
     """Keep edited confirmation forms from corrupting resolved ERP ids."""
+    pending_action = new_state.get("pending_action") or (old_state or {}).get("pending_action")
+
+    if intent == "workflow" and pending_action == "confirm_image_workflow_orders":
+        from src.core.customer_name import normalize_customer_name
+
+        parsed_list = new_state.get("parsed_list") or []
+        if isinstance(parsed_list, list):
+            cleaned_rows = []
+            customers = []
+            products = []
+            old_rows = (old_state or {}).get("parsed_list") or []
+            for index, row in enumerate(parsed_list):
+                if not isinstance(row, dict):
+                    continue
+                old_row = old_rows[index] if index < len(old_rows) and isinstance(old_rows[index], dict) else {}
+                cleaned = dict(old_row)
+                cleaned.update(row)
+                customer = normalize_customer_name(cleaned.get("customer") or cleaned.get("customer_name") or "")
+                cleaned["customer"] = customer or "散客"
+                cleaned["goods_name"] = str(cleaned.get("goods_name") or "").strip()
+                cleaned["color"] = str(cleaned.get("color") or "").strip()
+                cleaned["quantity"] = max(1, _pending_number(cleaned.get("quantity"), 1))
+                cleaned_rows.append(cleaned)
+                if cleaned["customer"] and cleaned["customer"] not in customers:
+                    customers.append(cleaned["customer"])
+                if cleaned["goods_name"]:
+                    products.append({
+                        "name": cleaned["goods_name"],
+                        "qty": cleaned["quantity"],
+                        "quantity": cleaned["quantity"],
+                        "unit": cleaned.get("unit") or "套",
+                        "color": cleaned["color"],
+                    })
+            new_state["parsed_list"] = cleaned_rows
+            rebuilt_order_params = {
+                "customer": customers[0] if customers else "",
+                "customers": customers,
+                "products": products,
+            }
+            if new_state.get("order_params") is not None or (old_state or {}).get("order_params") is not None:
+                new_state["order_params"] = rebuilt_order_params
+            if new_state.get("optional_order_params") is not None or (old_state or {}).get("optional_order_params") is not None:
+                new_state["optional_order_params"] = rebuilt_order_params
+        return new_state
+
+    if intent == "order" and pending_action == "confirm_image_sales":
+        from src.core.customer_name import normalize_customer_name
+
+        params = new_state.get("order_params") or {}
+        if isinstance(params, dict):
+            customer = normalize_customer_name(params.get("customer") or params.get("customer_name") or "")
+            products = []
+            for product in params.get("products") or []:
+                if not isinstance(product, dict):
+                    continue
+                cleaned = dict(product)
+                name = str(cleaned.get("name") or cleaned.get("goods_name") or cleaned.get("product_name") or "").strip()
+                cleaned["name"] = name
+                cleaned["qty"] = max(1, _pending_number(cleaned.get("qty", cleaned.get("quantity")), 1))
+                cleaned["quantity"] = cleaned["qty"]
+                cleaned["color"] = str(cleaned.get("color") or cleaned.get("spec") or "").strip()
+                cleaned["unit"] = cleaned.get("unit") or "套"
+                if name:
+                    products.append(cleaned)
+            params["customer"] = customer
+            params["customers"] = [customer] if customer else []
+            params["products"] = products
+            new_state["order_params"] = params
+        return new_state
+
     if intent != "order" or new_state.get("pending_action") != "confirm_create_order":
         return new_state
 
@@ -439,7 +509,8 @@ def _sanitize_pending_state(intent: str | None, new_state: dict, old_state: dict
     from src.skills.order_flow.workflow import OrderFlowWorkflow
     workflow = OrderFlowWorkflow()
     old_customer_name = str(old_state.get("customer_name") or old_state.get("customer") or "").strip()
-    customer_name = str(new_state.get("customer_name") or new_state.get("customer") or old_customer_name or "散客").strip()
+    from src.core.customer_name import normalize_customer_name
+    customer_name = normalize_customer_name(new_state.get("customer_name") or new_state.get("customer") or old_customer_name or "散客") or "散客"
     customer_id = new_state.get("customer_id") or old_state.get("customer_id")
     customer_changed = bool(customer_name and customer_name != old_customer_name)
     if customer_changed:
@@ -2021,6 +2092,31 @@ def image_upload():
     file.save(save_path)
 
     try:
+        session = SessionManager(session_id)
+        if session.has_pending() and session.get_pending_intent() == "bag_upload":
+            if _agent is None:
+                return jsonify({"code": 500, "msg": "Agent not initialized"}), 500
+            preview_url = f"/api/images/file/{save_name}"
+            response_text = _agent.run(
+                user_input=f"图片: {save_path} 预览: {preview_url}",
+                user_id=_request_user_id("http_user"),
+                session_id=session_id,
+            )
+            return jsonify({
+                "code": 0,
+                "data": {
+                    "response": response_text,
+                    "session_id": session_id,
+                    "session": _session_snapshot(session_id),
+                    "image_path": str(save_path),
+                    "result": {
+                        "preview_url": preview_url,
+                        "image_path": str(save_path),
+                        "mode": "bag_upload",
+                    },
+                }
+            })
+
         caller = get_tool_caller()
         result = process_single_image(str(save_path), caller)
         result["preview_url"] = f"/api/images/file/{save_name}"

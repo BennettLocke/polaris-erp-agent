@@ -516,6 +516,16 @@ function pendingSummaryHtml(session = state.session) {
     const products = params.products || stateData.products || [params];
     html += `<p><b>动作：</b>盘点/校准库存</p>`;
     html += `<ul class="summary-lines">${products.map(productLineHtml).join("")}</ul>`;
+  } else if (intent.includes("bag_upload") || action.includes("bag_")) {
+    const rows = [
+      ["模板", stateData.template_name || stateData.bag_type || "待选择"],
+      ["商品名", stateData.product_name || "待填写"],
+      ["分类", stateData.category_name || "待识别"],
+      ["编号预览", stateData.coding_preview || "ERP自动生成"],
+      ["标题", stateData.title || "待生成"],
+    ];
+    html += kvRows(rows);
+    if (stateData.image_path) html += `<p><b>图片：</b>${escapeHtml(String(stateData.image_path).split(/[\\\\/]/).pop())}</p>`;
   } else {
     const rows = flattenRows(stateData).slice(0, 12);
     html += rows.length ? kvRows(rows) : '<div class="empty">这次确认没有结构化字段，按聊天内容核对即可。</div>';
@@ -584,8 +594,10 @@ function pendingEditableHtml(session = state.session) {
     const params = stateData.order_params || {};
     const customer = params.customer || params.customer_name || (params.customers || []).join("、") || "未识别";
     const products = params.products || [];
-    html += `<p><b>客户：</b>${escapeHtml(customer)}</p>`;
-    html += `<ul class="summary-lines">${products.length ? products.map(productLineHtml).join("") : "<li>商品信息未识别</li>"}</ul>`;
+    html += editableField("order_params.customer", "客户", customer === "未识别" ? "" : customer);
+    html += products.length
+      ? products.map((p, i) => editableProductFields(`order_params.products.${i}`, p, i, { includeWarehouse: false, includePrice: false })).join("")
+      : "<div class=\"empty\">商品信息未识别</div>";
   } else if (action.includes("confirm_product_name")) {
     const products = stateData.products || [];
     const index = Number(stateData.product_index || 0);
@@ -977,6 +989,7 @@ function pendingTitle(session = state.session) {
   const stateData = session.state || {};
   const action = session.pending_action || stateData.pending_action || "";
   const intent = session.pending_intent || "";
+  if (action.includes("bag_") || intent.includes("bag_upload")) return "泡袋新品确认";
   if (action.includes("confirm_image_workflow_orders")) return "OCR识别结果";
   if (action.includes("confirm_image_sales")) return "是否继续开销售单";
   if (action.includes("confirm_product_name")) return "商品匹配确认";

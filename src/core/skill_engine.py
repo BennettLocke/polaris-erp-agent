@@ -43,10 +43,12 @@ class SkillEngine:
         from src.skills.series_manage.workflow import SeriesManageWorkflow
         from src.skills.customer_manage.workflow import CustomerManageWorkflow
         from src.skills.print_sales.workflow import PrintSalesWorkflow
+        from src.skills.bag_upload.workflow import BagUploadWorkflow
 
         self.workflows = {
             "order": OrderFlowWorkflow(),
             "workflow": WorkflowOrderWorkflow(),
+            "bag_upload": BagUploadWorkflow(),
             "inventory": InventoryWorkflow(),
             "stocktaking": StocktakingWorkflow(),
             "purchase": PurchaseWorkflow(),
@@ -263,6 +265,8 @@ class SkillEngine:
             return self._extract_print_params(text)
         if self._is_series_manage_request(text):
             return self._extract_series_manage_params(text)
+        if self._is_bag_upload_request(text):
+            return self._extract_bag_upload_params(text)
         if self._is_workflow_delete_request(text):
             return self._extract_workflow_delete_params(text)
         if self._is_workflow_query_request(text):
@@ -296,6 +300,8 @@ class SkillEngine:
         if intent == "print":
             return True
         if intent == "series_manage":
+            return True
+        if intent == "bag_upload":
             return True
         if intent == "workflow" and fast_extracted.get("action") in {"query", "delete"}:
             return True
@@ -354,6 +360,23 @@ class SkillEngine:
             and any(w in text for w in self_words)
             and any(w in text for w in ask_words)
         )
+
+    def _is_bag_upload_request(self, user_input: str) -> bool:
+        text = user_input.strip()
+        if not text:
+            return False
+        start_words = ["开始上传泡袋", "上传泡袋", "新增泡袋", "新建泡袋", "创建泡袋"]
+        return any(w in text for w in start_words) and not any(w in text for w in ["烫金", "下单", "开单"])
+
+    def _extract_bag_upload_params(self, user_input: str) -> dict:
+        result = {"intent": "bag_upload"}
+        if "宽版" in user_input:
+            result["bag_type"] = "宽版"
+        elif any(w in user_input for w in ["红茶", "金骏眉", "小种"]):
+            result["bag_type"] = "红茶"
+        elif any(w in user_input for w in ["岩茶", "肉桂", "水仙", "大红袍"]):
+            result["bag_type"] = "岩茶"
+        return result
 
     def _extract_contextual_sales_cancel(self, user_input: str, session: SessionManager, history: list[dict]) -> dict | None:
         """After a successful order, understand short cancel-like utterances as a request to undo that sales order."""
@@ -1034,6 +1057,8 @@ class SkillEngine:
 
     def _looks_like_pending_answer(self, text: str, intent: str, state: dict) -> bool:
         partial = state.get("partial_params", {})
+        if intent == "bag_upload":
+            return bool(text)
         if len(text) <= 8 and text in {"是", "对", "确认", "好的", "可以", "行", "不", "不要", "不删"}:
             return True
         if intent == "sales_query":

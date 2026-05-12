@@ -18,6 +18,7 @@ from src.core.state import AgentState
 from src.core.tools.caller import get_tool_caller
 from src.core.llm import llm_json
 from src.utils import get_logger
+from src.core.customer_name import has_customer_name_craft_noise, normalize_customer_name
 from scripts.common.unit_converter import (
     calculate_order_quantity,
     is_one_piece_order,
@@ -229,6 +230,7 @@ def resolve_customer(customer_name: str, caller) -> dict:
     1. 客户已存在 → 返回已有客户信息
     2. 客户不存在 → 自动创建并返回新客户信息
     """
+    customer_name = normalize_customer_name(customer_name)
     if not customer_name:
         # 无客户名 → 散客
         return {"name": "散客", "customer_id": 1}
@@ -236,9 +238,19 @@ def resolve_customer(customer_name: str, caller) -> dict:
     # 查询客户
     customers = caller.call("customer_query", keyword=customer_name)
 
-    if customers:
+    exact_customers = []
+    fuzzy_customers = []
+    for row in customers or []:
+        row_name = str(row.get("name") or row.get("customer_name") or row.get("company_name") or "").strip()
+        if row_name == customer_name:
+            exact_customers.append(row)
+        elif customer_name in row_name and not has_customer_name_craft_noise(row_name):
+            fuzzy_customers.append(row)
+
+    picked_customers = exact_customers or (fuzzy_customers[:1] if len(fuzzy_customers) == 1 else [])
+    if picked_customers:
         # 客户已存在
-        c = customers[0]
+        c = picked_customers[0]
         return {
             "name": customer_name,
             "customer_id": c.get("id"),

@@ -1,19 +1,19 @@
 {
   "vocab_id": "149e5b9124704792abec894f3e466cec",
-  "md5": "7414cc3c62a058f22b675259ef3738bc",
+  "md5": "040c74be7f9fb234db76d9cc7e269416",
   "word_count": 416,
   "source_counts": {
     "business": 25,
-    "products": 250,
-    "recent_sales": 75,
+    "products": 247,
+    "recent_sales": 78,
     "colors": 23,
     "warehouses": 0,
     "customers": 43
   },
-  "synced_at": 1778485698,
-  "synced_at_text": "2026-05-11 15:48:18",
+  "synced_at": 1778558428,
+  "synced_at_text": "2026-05-12 12:00:28",
   "last_action": "UpdateAsrVocab",
-  "request_id": "8AD3843D-80D9-5CC6-978D-20AAEEC1F4D0",
+  "request_id": "49192A63-2801-54F5-8A32-FBC0D29980A1",
   "sample_words": [
     "三小盒",
     "肉桂长泡袋",
@@ -30,8 +30,12 @@
     "黑檀木盒18泡短泡袋",
     "喜悦二三两",
     "岩味二三两",
+    "烫膜入盒",
+    "纸箱快递打包盒半斤10盒装",
+    "星禾三小盒",
     "岩味三小盒",
     "喜物三小盒",
+    "茶派三小盒",
     "见喜六小盒",
     "云岭半斤",
     "极致二三两",
@@ -40,10 +44,6 @@
     "喜物六小盒",
     "见喜三小盒",
     "多韵小盒子2泡盒",
-    "墨香二三两",
-    "锦程二三两",
-    "顶呱呱六小盒",
-    "艺半斤",
-    "茶客两泡装小盒"
+    "墨香二三两"
   ]
 }
