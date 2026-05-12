@@ -26,6 +26,7 @@ app.config.update(
 )
 _agent: Agent | None = None
 UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "data" / "uploads"
+PRICE_MEMORY_FILE = Path(__file__).parent.parent.parent.parent / "data" / "customer_price_memory.json"
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
 SHOPXO_AUTH_CACHE: dict[str, tuple[float, dict]] = {}
 SHOPXO_AUTH_CACHE_TTL = 86400 * 30
@@ -2897,6 +2898,76 @@ def warehouse_list():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+def _read_customer_price_memory() -> dict:
+    try:
+        if PRICE_MEMORY_FILE.exists():
+            with PRICE_MEMORY_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.warning(f"读取客户价格记忆失败: {e}")
+    return {}
+
+
+def _write_customer_price_memory(data: dict):
+    try:
+        PRICE_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with PRICE_MEMORY_FILE.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"写入客户价格记忆失败: {e}")
+
+
+def _memory_price(customer_id: int, product_id: int, unit_id: int | None = None) -> float | None:
+    data = _read_customer_price_memory()
+    keys = []
+    if unit_id:
+        keys.append(f"{int(customer_id)}:{int(product_id)}:{int(unit_id)}")
+    prefix = f"{int(customer_id)}:{int(product_id)}:"
+    keys.extend([key for key in data.keys() if str(key).startswith(prefix)])
+    for key in keys:
+        item = data.get(key)
+        if not isinstance(item, dict):
+            continue
+        try:
+            price = float(item.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            return price
+    return None
+
+
+def _remember_customer_prices(customer_id: int, customer_name: str, products: list[dict]):
+    if not customer_id:
+        return
+    data = _read_customer_price_memory()
+    changed = False
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        try:
+            product_id = int(product.get("product_id") or product.get("id") or 0)
+            unit_id = int(product.get("unit_id") or 0)
+            price = float(product.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not product_id or not unit_id or price <= 0:
+            continue
+        data[f"{int(customer_id)}:{product_id}:{unit_id}"] = {
+            "customer_id": int(customer_id),
+            "customer_name": customer_name or "",
+            "product_id": product_id,
+            "product_name": product.get("title") or product.get("name") or "",
+            "unit_id": unit_id,
+            "unit": product.get("unit") or "",
+            "price": price,
+        }
+        changed = True
+    if changed:
+        _write_customer_price_memory(data)
+
+
 @app.route("/api/customer/price", methods=["GET"])
 def customer_price():
     """
@@ -2908,11 +2979,15 @@ def customer_price():
 
     customer_id = request.args.get("customer_id", type=int)
     product_id = request.args.get("product_id", type=int)
+    unit_id = request.args.get("unit_id", type=int)
 
     if not customer_id or not product_id:
         return jsonify({"code": 400, "msg": "customer_id and product_id are required"}), 400
 
     try:
+        remembered = _memory_price(customer_id, product_id, unit_id)
+        if remembered:
+            return jsonify({"code": 0, "data": {"price": remembered, "source": "memory"}})
         price = caller.call("sales_history_price", customer_id=customer_id, product_id=product_id)
         return jsonify({"code": 0, "data": {"price": price}})
     except Exception as e:
@@ -3026,6 +3101,8 @@ def sales_add():
         )
         if isinstance(result, dict) and result.get("error"):
             return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        customer_name = body.get("customer_name") or ""
+        _remember_customer_prices(int(customer_id), customer_name, products)
         return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"开单异常: {e}")

@@ -2246,7 +2246,8 @@ async function selectSaleProductVariant(product, variant) {
   let price = Number(variant.price || variant.min_price || product.price || product.min_price || 0);
   if (state.saleCustomer) {
     try {
-      const priceRes = await api(`/api/customer/price?${query({ customer_id: state.saleCustomer.id, product_id: productId })}`);
+      const unitId = variant.unit_id || product.unit_id || 1;
+      const priceRes = await api(`/api/customer/price?${query({ customer_id: state.saleCustomer.id, product_id: productId, unit_id: unitId })}`);
       if (priceRes.data && priceRes.data.price) price = Number(priceRes.data.price);
     } catch {}
   }
@@ -2423,6 +2424,7 @@ async function quickSale() {
       method: 'POST',
       body: {
         customer_id: state.saleCustomer.id,
+        customer_name: state.saleCustomer.name,
         warehouse_id: warehouseId,
         create_time: createTime,
         products: state.saleLines.map((line) => ({

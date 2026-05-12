@@ -1,12 +1,16 @@
 """
 订单工具 - 工作流订单、销售单、打印相关操作
 """
+import json
+from pathlib import Path
+
 from src.engine.api_client import ERPSystemClient
 from src.engine.db_client import get_db_client
 from src.core.tools.registry import tool
 from src.utils import get_logger
 
 logger = get_logger("sjagent.tools.order")
+PRICE_MEMORY_FILE = Path(__file__).parent.parent.parent.parent / "data" / "customer_price_memory.json"
 
 
 def _list_rows(payload) -> list[dict]:
@@ -58,6 +62,26 @@ def _row_price(row: dict) -> float | None:
                 continue
             if price > 0:
                 return price
+    return None
+
+
+def _remembered_customer_price(customer_id: int, product_id: int) -> float | None:
+    try:
+        if not PRICE_MEMORY_FILE.exists():
+            return None
+        with PRICE_MEMORY_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        prefix = f"{int(customer_id)}:{int(product_id)}:"
+        for key, item in data.items():
+            if not str(key).startswith(prefix) or not isinstance(item, dict):
+                continue
+            price = float(item.get("price") or 0)
+            if price > 0:
+                return price
+    except Exception as e:
+        logger.warning(f"读取客户价格记忆失败: {e}")
     return None
 
 
@@ -244,6 +268,11 @@ def sales_history_price(customer_id: int, product_id: int) -> float | None:
     Returns:
         历史成交价，未查到返回 None
     """
+    remembered = _remembered_customer_price(customer_id, product_id)
+    if remembered:
+        logger.info(f"客户记忆价格: customer_id={customer_id}, product_id={product_id}, price={remembered}")
+        return remembered
+
     db = get_db_client()
     try:
         # 查数据库获取历史价格

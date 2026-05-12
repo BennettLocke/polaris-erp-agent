@@ -67,11 +67,19 @@ def compact_extraction(extracted: dict) -> dict:
     allowed = {
         "intent", "action", "customer", "keyword", "product_name", "color",
         "sales_id", "count", "from", "to", "warehouse", "goods_name",
-        "quantity", "qty", "unit", "target",
+        "unit", "target",
     }
     compact = {k: v for k, v in extracted.items() if k in allowed and v not in (None, "", [])}
     if extracted.get("products"):
-        compact["products"] = extracted["products"]
+        compact["products"] = [
+            {
+                k: v for k, v in product.items()
+                if k not in {"quantity", "qty", "number", "buy_number", "order_quantity", "purchase_quantity"}
+                and v not in (None, "", [])
+            }
+            for product in extracted["products"]
+            if isinstance(product, dict)
+        ]
     return compact
 
 
@@ -131,7 +139,7 @@ def match_learned(text: str) -> dict | None:
     data = _load()
     for example in reversed(data.get("examples", [])):
         if example.get("key") == key:
-            extracted = example.get("extracted") or {}
+            extracted = compact_extraction(example.get("extracted") or {})
             if extracted.get("intent"):
                 logger.info(f"命中学习记忆: {text[:50]} -> {extracted.get('intent')}")
                 return dict(extracted)
@@ -150,7 +158,7 @@ def get_prompt_examples(limit: int = 12) -> str:
         return ""
     lines = ["\n已学习的本店说法示例（优先参考，但仍要结合当前上下文）："]
     for ex in examples:
-        extracted = ex.get("extracted", {})
+        extracted = compact_extraction(ex.get("extracted", {}))
         lines.append(f"- 用户说：{ex.get('text')} => {json.dumps(extracted, ensure_ascii=False)}")
     return "\n".join(lines)
 
