@@ -10,7 +10,6 @@ B5. 开销售单
 """
 import json
 import re
-from pathlib import Path
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
 from src.core.config import get_config
@@ -24,7 +23,6 @@ NON_CHECK_CATEGORIES = ["泡袋", "包茶", "内衬", "PVC", "标签", "纸箱",
 
 # 单位映射
 UNIT_MAP = {"套": 1, "捆": 2, "个": 3, "斤": 4, "张": 5, "件": 1}
-PRICE_MEMORY_FILE = Path("data/customer_price_memory.json")
 
 
 class OrderFlowWorkflow(BaseWorkflow):
@@ -860,12 +858,6 @@ class OrderFlowWorkflow(BaseWorkflow):
             logger.info(f"[OrderFlow] 用户指定价格: {product['name']} = {product['price']}")
             return
 
-        remembered = self._remembered_price(customer_id, product)
-        if remembered:
-            product["price"] = remembered
-            logger.info(f"[OrderFlow] 本地记忆价: {product['name']} = {remembered}")
-            return
-
         # 查历史成交价
         try:
             history = self.caller.call("sales_history_price",
@@ -886,53 +878,6 @@ class OrderFlowWorkflow(BaseWorkflow):
         # 用零售价（search_product 已返回 price）
         # 如果还是 0，用 0（开单时 API 会用默认价）
         logger.info(f"[OrderFlow] 价格: {product['name']} = {product['price']}（零售价）")
-
-    def _price_memory_key(self, customer_id: int, product: dict) -> str:
-        return f"{int(customer_id)}:{int(product.get('product_id') or 0)}:{int(product.get('unit_id') or 0)}"
-
-    def _read_price_memory(self) -> dict:
-        try:
-            if PRICE_MEMORY_FILE.exists():
-                with PRICE_MEMORY_FILE.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception as e:
-            logger.warning(f"[OrderFlow] 读取价格记忆失败: {e}")
-        return {}
-
-    def _write_price_memory(self, data: dict):
-        try:
-            PRICE_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with PRICE_MEMORY_FILE.open("w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.warning(f"[OrderFlow] 写入价格记忆失败: {e}")
-
-    def _remembered_price(self, customer_id: int, product: dict) -> float | None:
-        data = self._read_price_memory()
-        item = data.get(self._price_memory_key(customer_id, product))
-        if not isinstance(item, dict):
-            return None
-        try:
-            price = float(item.get("price") or 0)
-        except (TypeError, ValueError):
-            return None
-        return price if price > 0 else None
-
-    def _remember_price(self, customer_id: int, customer_name: str, product: dict, price: float):
-        if not customer_id or not product.get("product_id") or not product.get("unit_id") or price <= 0:
-            return
-        data = self._read_price_memory()
-        data[self._price_memory_key(customer_id, product)] = {
-            "customer_id": int(customer_id),
-            "customer_name": customer_name,
-            "product_id": int(product.get("product_id")),
-            "product_name": product.get("name", ""),
-            "unit_id": int(product.get("unit_id")),
-            "unit": product.get("unit", ""),
-            "price": float(price),
-        }
-        self._write_price_memory(data)
 
     def _inventory_decision(self, products: list[dict], warehouse_hint: str | None) -> dict:
         """
@@ -1334,7 +1279,6 @@ class OrderFlowWorkflow(BaseWorkflow):
                         "subtotal": subtotal,
                         "warehouse": wh,
                     })
-                    self._remember_price(customer_id, customer_name, p, price)
                     lines.append(f"  {p['name']}{(' ' + p['color']) if p.get('color') else ''}: {qty}{p.get('unit','套')} × {price}元 = {subtotal}元（{wh}发货）")
                 lines.append(f"\n合计：{total}元")
                 from src.core.session import SessionManager, get_current_session_id
