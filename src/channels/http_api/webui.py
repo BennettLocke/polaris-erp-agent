@@ -48,7 +48,7 @@ EXTRA_CSS = """
   .inventory-popup-summary span { padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 760; }
   .inventory-popup-list { display: grid; gap: 10px; }
   .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
-  #workbench.view.active { height: calc(100vh - 182px); min-height: 0; }
+  #workbench.view.active { height: calc(100vh - 112px); min-height: 0; }
   #workbench .workspace { height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
   #workbench .chat { height: 100%; min-height: 0; overflow: hidden; grid-template-rows: auto minmax(0, 1fr); }
   #workbench .messages { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
