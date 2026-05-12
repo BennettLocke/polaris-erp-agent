@@ -743,16 +743,17 @@ def _db_product_list_flat(keyword: str, page: int, page_size: int, status=None, 
         f"""
         SELECT p.id, p.title, p.spec, p.coding, p.simple_desc, p.images, p.main_images, p.price, p.min_price, p.max_price,
                p.inventory, p.status, p.group_key, p.content, p.cost_price, p.add_time, p.upd_time,
-               g.id AS system_goods_id, g.is_shelves AS system_goods_is_shelves,
+               g.id AS system_goods_id, g.is_shelves AS system_goods_is_shelves, sg.unit_id AS unit_id,
                GROUP_CONCAT(DISTINCT pcj2.product_category_id ORDER BY pcj2.product_category_id) AS product_category_ids,
                GROUP_CONCAT(DISTINCT pc.name ORDER BY pc.sort DESC, pc.id ASC SEPARATOR ' / ') AS product_category_text
         FROM sxo_plugins_erp_product p
         {join_category}
-        LEFT JOIN (
-            SELECT product_id, MAX(goods_id) AS goods_id
-            FROM sxo_plugins_erp_system_goods_sync_product_log
-            GROUP BY product_id
-        ) sg ON sg.product_id = p.id
+        LEFT JOIN sxo_plugins_erp_system_goods_sync_product_log sg
+          ON sg.id = (
+            SELECT MAX(sg2.id)
+            FROM sxo_plugins_erp_system_goods_sync_product_log sg2
+            WHERE sg2.product_id = p.id
+          )
         LEFT JOIN sxo_goods g ON g.id = sg.goods_id
         LEFT JOIN sxo_plugins_erp_product_category_join pcj2 ON pcj2.product_id = p.id
         LEFT JOIN sxo_plugins_erp_product_category pc ON pc.id = pcj2.product_category_id
@@ -791,6 +792,7 @@ def _db_product_list_flat(keyword: str, page: int, page_size: int, status=None, 
             "product_category_text": row.get("product_category_text") or "",
             "system_goods_id": row.get("system_goods_id") or 0,
             "system_goods_is_shelves": int(row.get("system_goods_is_shelves") or 0),
+            "unit_id": int(row.get("unit_id") or 1),
         })
     return items, total
 
@@ -847,15 +849,16 @@ def _db_product_grouped_list(keyword: str, page: int, page_size: int, status=Non
         f"""
         SELECT p.id, p.title, p.spec, p.coding, p.simple_desc, p.images, p.main_images, p.price, p.min_price, p.max_price,
                p.inventory, p.status, p.group_key, p.content, p.cost_price, p.add_time, p.upd_time,
-               g.id AS system_goods_id, g.is_shelves AS system_goods_is_shelves,
+               g.id AS system_goods_id, g.is_shelves AS system_goods_is_shelves, sg.unit_id AS unit_id,
                GROUP_CONCAT(DISTINCT pcj2.product_category_id ORDER BY pcj2.product_category_id) AS product_category_ids,
                GROUP_CONCAT(DISTINCT pc.name ORDER BY pc.sort DESC, pc.id ASC SEPARATOR ' / ') AS product_category_text
         FROM sxo_plugins_erp_product p
-        LEFT JOIN (
-            SELECT product_id, MAX(goods_id) AS goods_id
-            FROM sxo_plugins_erp_system_goods_sync_product_log
-            GROUP BY product_id
-        ) sg ON sg.product_id = p.id
+        LEFT JOIN sxo_plugins_erp_system_goods_sync_product_log sg
+          ON sg.id = (
+            SELECT MAX(sg2.id)
+            FROM sxo_plugins_erp_system_goods_sync_product_log sg2
+            WHERE sg2.product_id = p.id
+          )
         LEFT JOIN sxo_goods g ON g.id = sg.goods_id
         LEFT JOIN sxo_plugins_erp_product_category_join pcj2 ON pcj2.product_id = p.id
         LEFT JOIN sxo_plugins_erp_product_category pc ON pc.id = pcj2.product_category_id
@@ -895,6 +898,7 @@ def _db_product_grouped_list(keyword: str, page: int, page_size: int, status=Non
             "product_category_text": row.get("product_category_text") or "",
             "system_goods_id": row.get("system_goods_id") or 0,
             "system_goods_is_shelves": int(row.get("system_goods_is_shelves") or 0),
+            "unit_id": int(row.get("unit_id") or 1),
         }
         grouped.setdefault(key, []).append(item)
 
@@ -2937,6 +2941,55 @@ def product_retail_price():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+def _normalize_sales_add_products(products: list[dict]) -> list[dict]:
+    """Fill the ERP product base unit before SalesAdd."""
+    from src.engine.api_client import ERPSystemClient
+
+    client = ERPSystemClient()
+    normalized = []
+    detail_cache: dict[int, dict] = {}
+    for item in products:
+        if not isinstance(item, dict):
+            continue
+        product_id = item.get("product_id") or item.get("id")
+        if not product_id:
+            normalized.append(item)
+            continue
+        try:
+            pid = int(product_id)
+        except (TypeError, ValueError):
+            normalized.append(item)
+            continue
+        detail = detail_cache.get(pid)
+        if detail is None:
+            try:
+                raw = client.product_detail(pid)
+                data = raw.get("data") if isinstance(raw, dict) else {}
+                detail = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+            except Exception as e:
+                logger.warning(f"开单商品单位兜底查询失败: product_id={pid}, error={e}")
+                detail = {}
+            detail_cache[pid] = detail if isinstance(detail, dict) else {}
+        base_rows = detail_cache[pid].get("base") if isinstance(detail_cache[pid].get("base"), list) else []
+        selected_base = None
+        current_unit_id = item.get("unit_id")
+        for base in base_rows:
+            try:
+                if current_unit_id and int(base.get("unit_id") or 0) == int(current_unit_id):
+                    selected_base = base
+                    break
+            except (TypeError, ValueError):
+                continue
+        selected_base = selected_base or (base_rows[0] if base_rows else None)
+        next_item = dict(item)
+        if selected_base and selected_base.get("unit_id"):
+            next_item["unit_id"] = int(selected_base["unit_id"])
+        elif not next_item.get("unit_id"):
+            next_item["unit_id"] = 1
+        normalized.append(next_item)
+    return normalized
+
+
 @app.route("/api/sales/add", methods=["POST"])
 def sales_add():
     """
@@ -2963,6 +3016,7 @@ def sales_add():
         return jsonify({"code": 400, "msg": "customer_id and products are required"}), 400
 
     try:
+        products = _normalize_sales_add_products(products)
         result = caller.call(
             "sales_add",
             customer_id=customer_id,
@@ -2970,6 +3024,8 @@ def sales_add():
             products=products,
             create_time=create_time,
         )
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
         return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"开单异常: {e}")
