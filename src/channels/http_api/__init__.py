@@ -1858,7 +1858,11 @@ def web_auth_user_reject(user_id: int):
 def webui():
     """WebUI 聊天界面"""
     from src.channels.http_api.webui import get_webui_html
-    return Response(get_webui_html(), content_type="text/html; charset=utf-8")
+    response = Response(get_webui_html(), content_type="text/html; charset=utf-8")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/api/images/file/<path:filename>", methods=["GET"])
