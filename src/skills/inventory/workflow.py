@@ -40,9 +40,19 @@ class InventoryWorkflow(BaseWorkflow):
         """预处理用户输入，数字量词转中文"""
         import re
         # 数字+两/斤 → 中文
-        num_map = {"1": "一", "2": "二", "3": "三", "4": "四", "5": "五", "0.5": "半", "半": "半"}
-        for num, cn in num_map.items():
-            text = text.replace(f"{num}两", f"{cn}两").replace(f"{num}斤", f"{cn}斤")
+        replacements = {
+            "0.5斤": "半斤",
+            "1两": "一两",
+            "2两": "二两",
+            "3两": "三两",
+            "4两": "四两",
+            "5两": "五两",
+            "3小盒": "三小盒",
+            "6小盒": "六小盒",
+            "10小盒": "十小盒",
+        }
+        for raw, normalized in replacements.items():
+            text = text.replace(raw, normalized)
         return text
 
     def execute(self, user_input: str, params: dict = None) -> dict:
@@ -181,6 +191,9 @@ class InventoryWorkflow(BaseWorkflow):
         keyword = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", keyword)
         keyword = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", keyword)
         keyword = re.sub(r"(?:1\s*两|一\s*两)", "一两", keyword)
+        keyword = re.sub(r"3\s*小盒", "三小盒", keyword)
+        keyword = re.sub(r"6\s*小盒", "六小盒", keyword)
+        keyword = re.sub(r"10\s*小盒", "十小盒", keyword)
 
         specs = ["二三两", "半斤", "一两", "三小盒", "六小盒", "十小盒", "长半斤"]
         for spec in specs:

@@ -605,6 +605,9 @@ def _normalize_inventory_keyword(keyword: str) -> str:
     text = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", text)
     text = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", text)
     text = re.sub(r"(?:1\s*两|一\s*两)", "一两", text)
+    text = re.sub(r"3\s*小盒", "三小盒", text)
+    text = re.sub(r"6\s*小盒", "六小盒", text)
+    text = re.sub(r"10\s*小盒", "十小盒", text)
     specs = ["二三两", "半斤", "一两", "三小盒", "六小盒", "十小盒", "长半斤"]
     for spec in specs:
         text = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", text)
@@ -2437,7 +2440,7 @@ def inventory_cards():
     Inventory cards for the UniApp mini-program.
     GET /api/inventory/cards?keyword=岩味&only_in_stock=1&limit=30
     """
-    keyword = (request.args.get("keyword", "") or "").strip()
+    keyword = _normalize_inventory_keyword((request.args.get("keyword", "") or "").strip())
     only_in_stock = request.args.get("only_in_stock", "1") not in ("0", "false", "False")
     limit = request.args.get("limit", 30, type=int)
     limit = max(1, min(limit, 200))
