@@ -3136,7 +3136,7 @@ function bindEvents() {
   $("chatInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") sendChat();
   });
-  $("newChatButton").addEventListener("click", () => {
+  bind("newChatButton", "click", () => {
     state.sessionId = newSessionId();
     state.session = {};
     state.contextInventory = null;
@@ -3148,7 +3148,7 @@ function bindEvents() {
     renderBusinessContext();
     setView("workbench");
   });
-  $("contextButton").addEventListener("click", () => openDrawer("ai"));
+  bind("contextButton", "click", () => openDrawer("ai"));
   bind("logoutButton", "click", async () => {
     try {
       await api("/api/web-auth/logout", { method: "POST" });

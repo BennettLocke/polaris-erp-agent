@@ -246,7 +246,11 @@
       border-radius: 7px;
       background: rgba(255,255,255,0.62);
       padding: 9px;
+      color: var(--text);
+      text-align: left;
     }
+    button.mini-stat { cursor: pointer; font: inherit; }
+    button.mini-stat:hover { border-color: var(--accent); background: rgba(255,255,255,0.86); }
 
     .mini-stat strong {
       display: block;
@@ -1274,17 +1278,12 @@
       </nav>
 
       <div class="mini-stats">
-        <div class="mini-stat"><strong>管理员</strong><span>当前账号</span></div>
+        <button class="mini-stat admin-only" id="accountAdminButton" type="button"><strong>管理员</strong><span>账号审核</span></button>
         <div class="mini-stat"><strong>在线</strong><span>登录状态</span></div>
       </div>
     </aside>
 
     <main class="main">
-      <header class="topbar">
-        <button class="ghost mobile-context-toggle" id="contextButton">业务卡片</button>
-        <button class="ghost" id="newChatButton">新建对话</button>
-      </header>
-
       <section class="content">
         <div class="view active" id="workbench">
           <div class="workspace">
@@ -1312,7 +1311,10 @@
                   <h1>AI 业务工作台</h1>
                   <p>开单、查库存、改订单、上下架商品，都从这里开始。</p>
                 </div>
-                <span class="status-dot">智能体在线</span>
+                <div class="chat-head-actions">
+                  <span class="status-dot">智能体在线</span>
+                  <button class="ghost" id="newChatButton" type="button">新会话</button>
+                </div>
               </div>
               <div class="messages" id="messages">
                 <div class="message assistant">

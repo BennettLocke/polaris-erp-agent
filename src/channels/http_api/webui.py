@@ -321,8 +321,9 @@ EXTRA_CSS = """
   .image-chip img { width: 42px; height: 34px; object-fit: cover; border-radius: 7px; border: 1px solid var(--line); background: #f5f3ee; }
   .image-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .admin-only { display: none; }
-  body.is-admin .admin-only { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
-  #accountAdminButton { align-items: center; justify-content: center; text-align: center; }
+  body.is-admin .admin-only { display: block; }
+  #accountAdminButton strong, #accountAdminButton span { pointer-events: none; }
+  .chat-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
   .approval-list { display: grid; gap: 10px; }
   .approval-card { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 12px; display: grid; gap: 10px; }
   .approval-card strong { color: var(--text); font-size: 15px; }
@@ -728,11 +729,6 @@ def get_webui_html():
     html = html.replace("<strong>订单工作台</strong>", "<strong>肆计包装</strong>", 1)
     html = html.replace("<span>对话驱动的订单库存</span>", "<span>北极星订单管理机器人</span>", 1)
     html = html.replace("<button class=\"ghost\" id=\"newChatButton\">新建对话</button>", "<button class=\"ghost\" id=\"newChatButton\">新会话</button>", 1)
-    html = html.replace(
-        '<button class="ghost" id="newChatButton">新会话</button>',
-        '<button class="ghost" id="newChatButton">新会话</button><button class="ghost admin-only" id="accountAdminButton">审核</button><button class="ghost" id="logoutButton">退出</button>',
-        1,
-    )
     html = html.replace("<h1>AI 业务工作台</h1>", "<h1>业务工作台</h1>", 1)
     html = html.replace("<p>开单、查库存、改订单、上下架商品，都从这里开始。</p>", "<p>开单、查库存、改订单、上下架商品。</p>", 1)
     html = html.replace("</style>", EXTRA_CSS + "\n</style>", 1)
