@@ -346,6 +346,7 @@ class ERPSystemClient:
         products: list[dict],
         pay_type: int = 1,
         note: str = "",
+        create_time: str = "",
     ) -> dict:
         """
         开销售单（自动扣库存）
@@ -359,6 +360,8 @@ class ERPSystemClient:
             "pay_type": pay_type,
             "note": note,
         }
+        if create_time:
+            data["create_time"] = create_time
         for i, p in enumerate(products):
             data[f"products[{i}][product_id]"] = p["product_id"]
             data[f"products[{i}][unit_id]"] = p.get("unit_id", 1)

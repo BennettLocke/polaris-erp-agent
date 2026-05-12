@@ -47,9 +47,11 @@ const state = {
   productUploadTarget: null,
   saleCustomer: null,
   saleProduct: null,
+  saleProductGroups: [],
   saleProductResults: [],
   saleLines: [],
   lastSaleResult: null,
+  saleSubmitting: false,
   moveProduct: null,
   moveProductResults: [],
   currentUser: null,
@@ -313,6 +315,10 @@ function setView(name) {
   document.querySelectorAll(".nav button").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === name);
   });
+  if (name === "sale-create") {
+    setDefaultSaleCreateTime();
+    renderSaleLines();
+  }
   if (name === "sales" && !state.lastSalesCards.length) loadSales();
   if (name === "orders" && !state.lastWorkflowCards.length) loadWorkflow();
   if (name === "inventory" && !state.lastInventoryCards.length) loadInventory();
@@ -2195,35 +2201,132 @@ async function searchSaleProducts() {
   if (!$("saleProduct")) throw new Error("开单页面未加载");
   const keyword = $("saleProduct").value.trim();
   if (!keyword) throw new Error("请输入商品关键词");
-  const list = normalizeList(await api(`/api/product/search?${query({ keyword })}`));
+  const list = normalizeList(await api(`/api/product/list?${query({ keyword, page: 1, page_size: LIST_LIMITS.choice, group: 1 })}`));
+  state.saleProductGroups = list;
   state.saleProductResults = list;
   $("saleProductChoices").innerHTML = list.length ? list.slice(0, LIST_LIMITS.choice).map((product) => {
     const id = Number(product.id || product.product_id || 0);
     const title = product.title || product.name || "商品";
-    const spec = product.spec || product.simple_desc || product.color || "";
-    const price = product.price || product.min_price || "";
-    return `<button class="choice" data-sale-product-id="${id}"><strong>${escapeHtml(title)}</strong><div class="muted">${escapeHtml(spec)}${price ? ` · ¥${escapeHtml(price)}` : ""} · ID ${escapeHtml(id || "")}</div></button>`;
+    const specs = Number(product.spec_count || productVariants(product).length || 1);
+    const stock = product.inventory ?? 0;
+    const category = product.product_category_text || product.simple_desc || "";
+    return `<button class="choice" data-sale-product-id="${id}"><strong>${escapeHtml(title)}</strong><div class="muted">${escapeHtml(category)} · ${specs} 个颜色/规格 · 库存 ${escapeHtml(stock)} · ${productPriceText(product)}</div></button>`;
   }).join("") : '<div class="empty">没有商品结果</div>';
-  if (list.length === 1) await selectSaleProduct(list[0].id || list[0].product_id);
+  if (list.length === 1) await openSaleProductVariants(list[0].id || list[0].product_id);
   return list;
 }
 
-async function selectSaleProduct(id) {
+function saleWarehouseOptions(selected) {
+  const value = String(selected || $("saleWarehouse")?.value || 2);
+  return [
+    { id: 2, name: "百鑫仓库" },
+    { id: 1, name: "自己店里" }
+  ].map((item) => `<option value="${item.id}" ${String(item.id) === value ? "selected" : ""}>${item.name}</option>`).join("");
+}
+
+function saleVariantStockText(variant) {
+  if (variant.inventory !== undefined && variant.inventory !== null && variant.inventory !== "") return `库存 ${variant.inventory}`;
+  return "库存 -";
+}
+
+async function openSaleProductVariants(id) {
   const product = state.saleProductResults.find((item) => Number(item.id || item.product_id) === Number(id));
   if (!product) return;
-  let price = Number(product.price || product.min_price || 0);
+  const variants = productVariants(product);
+  if (!variants.length) throw new Error("这个商品没有可选颜色/规格");
+  if (variants.length === 1) {
+    await selectSaleProductVariant(product, variants[0]);
+    return;
+  }
+  await showSaleVariantPicker(product, variants);
+}
+
+async function selectSaleProductVariant(product, variant) {
+  const productId = variant.id || variant.product_id || product.id || product.product_id;
+  let price = Number(variant.price || variant.min_price || product.price || product.min_price || 0);
   if (state.saleCustomer) {
     try {
-      const priceRes = await api(`/api/customer/price?${query({ customer_id: state.saleCustomer.id, product_id: id })}`);
+      const priceRes = await api(`/api/customer/price?${query({ customer_id: state.saleCustomer.id, product_id: productId })}`);
       if (priceRes.data && priceRes.data.price) price = Number(priceRes.data.price);
     } catch {}
   }
-  state.saleProduct = { product_id: product.id || product.product_id, unit_id: product.unit_id || 1, title: product.title || product.name || "商品", spec: product.spec || product.color || product.simple_desc || "", price };
+  const line = {
+    product_id: productId,
+    unit_id: variant.unit_id || product.unit_id || 1,
+    title: product.title || product.name || variant.title || variant.name || "商品",
+    spec: variant.spec || variant.color || product.spec || "",
+    coding: variant.coding || product.coding || "",
+    price,
+    warehouse_id: Number($("saleWarehouse")?.value || 2),
+    image: productImage(variant) || productImage(product),
+    inventory: variant.inventory ?? product.inventory ?? ""
+  };
+  state.saleProduct = line;
   if (!$("saleProduct")) return;
   $("saleProduct").value = [state.saleProduct.title, state.saleProduct.spec].filter(Boolean).join(" ");
   $("saleProductChoices").innerHTML = "";
-  $("saleQty").focus();
-  $("saleQty").select();
+  await addSaleLine();
+}
+
+function showSaleVariantPicker(product, variants) {
+  return new Promise((resolve) => {
+    let mask = $("saleVariantMask");
+    if (!mask) {
+      mask = document.createElement("div");
+      mask.id = "saleVariantMask";
+      mask.className = "confirm-mask";
+      mask.innerHTML = `
+        <div class="confirm-box inventory-popup-box" role="dialog" aria-modal="true">
+          <h3 class="confirm-title" id="saleVariantTitle"></h3>
+          <p class="confirm-message" id="saleVariantMessage"></p>
+          <div class="sale-variant-list" id="saleVariantList"></div>
+          <div class="confirm-actions inventory-popup-actions">
+            <button id="saleVariantCancel">取消</button>
+          </div>
+        </div>`;
+      document.body.appendChild(mask);
+    }
+    $("saleVariantTitle").textContent = product.title || product.name || "选择颜色";
+    $("saleVariantMessage").textContent = "选择一个颜色/规格后会加入销售明细。";
+    $("saleVariantList").innerHTML = variants.map((variant, index) => {
+      const color = variant.spec || variant.color || "默认";
+      const price = Number(variant.price || variant.min_price || product.price || 0);
+      const code = variant.coding || product.coding || "";
+      return `<button type="button" class="sale-variant-card" data-sale-variant-index="${index}">
+        <strong>${escapeHtml(color)}</strong>
+        <div class="sale-variant-meta">
+          <span>${escapeHtml(saleVariantStockText(variant))}</span>
+          <span>¥${money(price)}</span>
+          ${code ? `<span>${escapeHtml(code)}</span>` : ""}
+        </div>
+      </button>`;
+    }).join("");
+    const cleanup = (variant = null) => {
+      mask.classList.remove("open");
+      $("saleVariantCancel").onclick = null;
+      $("saleVariantList").onclick = null;
+      mask.onclick = null;
+      document.removeEventListener("keydown", onKey);
+      resolve(variant);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") cleanup(null);
+    };
+    $("saleVariantCancel").onclick = () => cleanup(null);
+    $("saleVariantList").onclick = (event) => {
+      const button = event.target.closest("[data-sale-variant-index]");
+      if (!button) return;
+      const variant = variants[Number(button.dataset.saleVariantIndex)];
+      cleanup(variant || null);
+    };
+    mask.onclick = (event) => {
+      if (event.target === mask) cleanup(null);
+    };
+    document.addEventListener("keydown", onKey);
+    requestAnimationFrame(() => mask.classList.add("open"));
+  }).then(async (variant) => {
+    if (variant) await selectSaleProductVariant(product, variant);
+  });
 }
 
 async function addSaleLine() {
@@ -2231,12 +2334,12 @@ async function addSaleLine() {
   if (!state.saleProduct) await searchSaleProducts();
   if (!state.saleProduct) throw new Error("请先选择商品");
   const qty = Math.max(1, Number($("saleQty").value || 1));
-  const existing = state.saleLines.find((line) => Number(line.product_id) === Number(state.saleProduct.product_id));
+  const existing = state.saleLines.find((line) => Number(line.product_id) === Number(state.saleProduct.product_id) && Number(line.warehouse_id || 0) === Number(state.saleProduct.warehouse_id || 0));
   if (existing) {
     existing.buy_number = Number(existing.buy_number || 0) + qty;
     existing.price = state.saleProduct.price;
   } else {
-    state.saleLines.push({ ...state.saleProduct, buy_number: qty });
+    state.saleLines.push({ ...state.saleProduct, buy_number: qty, warehouse_id: Number(state.saleProduct.warehouse_id || $("saleWarehouse")?.value || 2) });
   }
   state.saleProduct = null;
   $("saleProduct").value = "";
@@ -2248,17 +2351,18 @@ async function addSaleLine() {
 function renderSaleLines() {
   if (!$("saleLines") || !$("saleTotal")) return;
   $("saleLines").innerHTML = state.saleLines.length ? state.saleLines.map((line, index) => `
-    <div class="line-card">
-      <div class="line-title">
-        <strong>${escapeHtml(line.title)}</strong>
-        <span>${escapeHtml(line.spec || "")} · ID ${escapeHtml(line.product_id)}</span>
-      </div>
-      <div class="line-edit">
-        <div><label>数量</label><input type="number" min="1" value="${escapeAttr(line.buy_number)}" data-sale-line-index="${index}" data-sale-line-field="buy_number"></div>
-        <div><label>单价</label><input type="number" step="0.01" value="${escapeAttr(line.price)}" data-sale-line-index="${index}" data-sale-line-field="price"></div>
-        <button class="remove-line" data-remove-sale-line="${index}" title="删除明细">×</button>
-      </div>
-    </div>`).join("") : '<div class="empty">还没有销售明细</div>';
+    <tr>
+      <td>
+        <div class="sale-product-name">${escapeHtml(line.title)}</div>
+        <div class="sale-product-sub">ID ${escapeHtml(line.product_id)}${line.coding ? ` · ${escapeHtml(line.coding)}` : ""}</div>
+      </td>
+      <td>${escapeHtml(line.spec || "默认")}</td>
+      <td class="qty-cell"><input type="number" min="1" value="${escapeAttr(line.buy_number)}" data-sale-line-index="${index}" data-sale-line-field="buy_number"></td>
+      <td class="warehouse-cell"><select data-sale-line-index="${index}" data-sale-line-field="warehouse_id">${saleWarehouseOptions(line.warehouse_id)}</select></td>
+      <td class="price-cell"><input type="number" min="0" step="0.01" value="${escapeAttr(line.price)}" data-sale-line-index="${index}" data-sale-line-field="price"></td>
+      <td class="amount-cell">¥${money(Number(line.buy_number || 0) * Number(line.price || 0))}</td>
+      <td class="operate-cell"><button class="remove-line" data-remove-sale-line="${index}" title="删除明细">删除</button></td>
+    </tr>`).join("") : '<tr><td class="sale-table-empty" colspan="7">还没有销售明细，先搜索礼盒并选择颜色。</td></tr>';
   const total = state.saleLines.reduce((sum, line) => sum + Number(line.buy_number || 0) * Number(line.price || 0), 0);
   const qty = state.saleLines.reduce((sum, line) => sum + Number(line.buy_number || 0), 0);
   $("saleTotal").textContent = `¥${money(total)}`;
@@ -2266,11 +2370,13 @@ function renderSaleLines() {
   if ($("saleSummaryCount")) $("saleSummaryCount").textContent = String(state.saleLines.length);
   if ($("saleSummaryQty")) $("saleSummaryQty").textContent = String(qty);
   if ($("saleSummaryAmount")) $("saleSummaryAmount").textContent = `¥${money(total)}`;
+  if ($("saleSubmitAmount")) $("saleSubmitAmount").textContent = `¥${money(total)}`;
 }
 
 function updateSaleLine(index, field, value) {
   if (!state.saleLines[index]) return;
-  state.saleLines[index][field] = Number(value || 0);
+  if (field === "warehouse_id") state.saleLines[index][field] = Number(value || 0);
+  else state.saleLines[index][field] = Number(value || 0);
   renderSaleLines();
 }
 
@@ -2282,6 +2388,8 @@ function removeSaleLine(index) {
 function clearSaleForm() {
   state.saleCustomer = null;
   state.saleProduct = null;
+  state.saleProductGroups = [];
+  state.saleProductResults = [];
   state.saleLines = [];
   state.lastSaleResult = null;
   if (!$("saleCustomer")) return;
@@ -2292,35 +2400,65 @@ function clearSaleForm() {
   $("saleProductChoices").innerHTML = "";
   $("saleSelectedCustomer").textContent = "未选择客户";
   if ($("saleResultCard")) $("saleResultCard").innerHTML = "<strong>开单结果</strong><p>提交后这里会显示销售单号、打印和删除入口。</p>";
+  setDefaultSaleCreateTime(true);
   renderSaleLines();
 }
 
 async function quickSale() {
-  if (!$("saleCustomer")) throw new Error("开单页面未加载");
+  if (state.saleSubmitting) return;
+  if (!$('saleCustomer')) throw new Error('开单页面未加载');
   if (!state.saleCustomer) await searchSaleCustomers();
-  if (!state.saleCustomer) throw new Error("请先选择客户");
+  if (!state.saleCustomer) throw new Error('请先选择客户');
   if (!state.saleLines.length) await addSaleLine();
-  const warehouseId = Number($("saleWarehouse").value || 2);
-  const res = await api("/api/sales/add", {
-    method: "POST",
-    body: {
-      customer_id: state.saleCustomer.id,
-      warehouse_id: warehouseId,
-      products: state.saleLines.map((line) => ({
-        product_id: line.product_id,
-        unit_id: line.unit_id || 1,
+  const warehouseId = Number($('saleWarehouse').value || 2);
+  const createTime = saleCreateTimeText();
+  if (!createTime) throw new Error('请选择创建时间');
+  const invalid = state.saleLines.find((line) => Number(line.buy_number || 0) <= 0 || Number(line.price || 0) < 0 || !Number(line.warehouse_id || 0));
+  if (invalid) throw new Error('请检查商品数量、单价和仓库');
+  const buttons = [$('quickSaleBtn'), $('quickSaleBtnBottom')].filter(Boolean);
+  state.saleSubmitting = true;
+  buttons.forEach((button) => { button.disabled = true; button.classList.add('loading'); });
+  try {
+    const res = await api('/api/sales/add', {
+      method: 'POST',
+      body: {
+        customer_id: state.saleCustomer.id,
         warehouse_id: warehouseId,
-        buy_number: line.buy_number,
-        price: line.price
-      }))
-    }
-  });
-  state.lastSaleResult = res.data || res;
-  renderSaleResult(state.lastSaleResult);
-  toast("销售单已创建");
-  await loadSales();
-  loadDashboardSummary();
-  renderSaleLines();
+        create_time: createTime,
+        products: state.saleLines.map((line) => ({
+          product_id: line.product_id,
+          unit_id: line.unit_id || 1,
+          warehouse_id: Number(line.warehouse_id || warehouseId),
+          buy_number: line.buy_number,
+          price: line.price
+        }))
+      }
+    });
+    state.lastSaleResult = res.data || res;
+    renderSaleResult(state.lastSaleResult);
+    toast('销售单已创建');
+    await loadSales();
+    loadDashboardSummary();
+    renderSaleLines();
+  } finally {
+    state.saleSubmitting = false;
+    buttons.forEach((button) => { button.disabled = false; button.classList.remove('loading'); });
+  }
+}
+
+function setDefaultSaleCreateTime(force = false) {
+  const input = $("saleCreateTime");
+  if (!input || (input.value && !force)) return;
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  input.value = now.toISOString().slice(0, 16);
+}
+
+function saleCreateTimeText() {
+  const input = $("saleCreateTime");
+  if (!input) return "";
+  if (!input.value) return "";
+  return input.value.replace("T", " ") + ":00";
 }
 
 function salesResultId(result) {
@@ -2956,7 +3094,7 @@ function bindEvents() {
     const saleProductButton = event.target.closest("[data-sale-product-id]");
     if (saleProductButton) {
       event.preventDefault();
-      selectSaleProduct(Number(saleProductButton.dataset.saleProductId)).catch((err) => toast(err.message, true));
+      openSaleProductVariants(Number(saleProductButton.dataset.saleProductId)).catch((err) => toast(err.message, true));
       return;
     }
     const removeSaleLineButton = event.target.closest("[data-remove-sale-line]");
@@ -3099,6 +3237,8 @@ function bindEvents() {
   bind("saleAddLineBtn", "click", () => addSaleLine().catch((err) => toast(err.message, true)));
   bind("saleClearBtn", "click", clearSaleForm);
   bind("quickSaleBtn", "click", () => quickSale().catch((err) => toast(err.message, true)));
+  bind("saleClearBtnBottom", "click", clearSaleForm);
+  bind("quickSaleBtnBottom", "click", () => quickSale().catch((err) => toast(err.message, true)));
   bind("saleCustomer", "keydown", (event) => {
     if (event.key === "Enter") searchSaleCustomers().catch((err) => toast(err.message, true));
   });
@@ -3126,7 +3266,7 @@ const actions = {
   prepareInventoryAction,
   selectMoveProduct,
   selectSaleCustomer,
-  selectSaleProduct,
+  selectSaleProduct: openSaleProductVariants,
   updateSaleLine,
   removeSaleLine,
   editProduct,

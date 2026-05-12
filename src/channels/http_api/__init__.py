@@ -2957,6 +2957,7 @@ def sales_add():
     customer_id = body.get("customer_id")
     warehouse_id = body.get("warehouse_id", 2)
     products = body.get("products", [])
+    create_time = body.get("create_time") or ""
 
     if not customer_id or not products:
         return jsonify({"code": 400, "msg": "customer_id and products are required"}), 400
@@ -2967,6 +2968,7 @@ def sales_add():
             customer_id=customer_id,
             warehouse_id=warehouse_id,
             products=products,
+            create_time=create_time,
         )
         return jsonify({"code": 0, "data": result})
     except Exception as e:

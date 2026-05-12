@@ -229,6 +229,7 @@ def sales_add(
     customer_id: int,
     warehouse_id: int,
     products: list[dict],
+    create_time: str = "",
 ) -> dict:
     """
     开销售单（一次性包含所有商品，自动扣库存）
@@ -245,6 +246,7 @@ def sales_add(
             customer_id=customer_id,
             warehouse_id=warehouse_id,
             products=products,
+            create_time=create_time,
         )
         logger.info(f"销售单创建成功: {result}")
         return result

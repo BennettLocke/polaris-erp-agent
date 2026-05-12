@@ -1389,7 +1389,7 @@
           <div class="section-head">
             <div>
               <h1>开单</h1>
-              <p>选择客户和商品，确认数量、价格、仓库后直接生成销售单。</p>
+              <p>先选客户和日期，再按系列选礼盒颜色，最后提交销售单。</p>
             </div>
             <div class="sale-create-actions">
               <button class="ghost" id="saleClearBtn">清空</button>
@@ -1397,26 +1397,39 @@
             </div>
           </div>
 
-          <div class="sale-create-layout">
-            <section class="sale-panel">
+          <div class="sale-create-shell">
+            <section class="sale-panel sale-basic-panel">
               <div class="sale-panel-head">
                 <div>
-                  <strong>客户</strong>
-                  <span id="saleSelectedCustomer">未选择客户</span>
+                  <strong>基础信息</strong>
+                  <span>客户和创建时间是开单前先确认的内容。</span>
                 </div>
               </div>
-              <div class="sale-search-row">
-                <input id="saleCustomer" placeholder="输入客户名称 / 电话 / 关键词">
-                <button id="saleCustomerSearchBtn">搜索客户</button>
+              <div class="sale-basic-grid">
+                <div class="sale-field">
+                  <label>客户</label>
+                  <div class="sale-search-row">
+                    <input id="saleCustomer" placeholder="输入客户名称 / 电话 / 关键词">
+                    <button id="saleCustomerSearchBtn">搜索客户</button>
+                  </div>
+                  <div class="sale-choice-list" id="saleCustomerChoices"></div>
+                </div>
+                <div class="sale-field">
+                  <label>创建时间</label>
+                  <input id="saleCreateTime" type="datetime-local">
+                </div>
+                <div class="sale-field">
+                  <label>当前客户</label>
+                  <div class="sale-readonly" id="saleSelectedCustomer">未选择客户</div>
+                </div>
               </div>
-              <div class="sale-choice-list" id="saleCustomerChoices"></div>
             </section>
 
             <section class="sale-panel sale-product-panel">
               <div class="sale-panel-head">
                 <div>
-                  <strong>商品</strong>
-                  <span>支持名称、规格、颜色组合搜索</span>
+                  <strong>选择商品</strong>
+                  <span>输入礼盒名称后按回车搜索，先选系列，再选颜色。</span>
                 </div>
                 <select id="saleWarehouse">
                   <option value="2">百鑫仓库</option>
@@ -1424,10 +1437,9 @@
                 </select>
               </div>
               <div class="sale-product-entry">
-                <input id="saleProduct" placeholder="输入商品名称 / 规格 / 颜色">
+                <input id="saleProduct" placeholder="输入礼盒名称，回车搜索">
                 <input id="saleQty" type="number" min="1" value="1" aria-label="数量">
                 <button id="saleProductSearchBtn">搜索商品</button>
-                <button class="primary" id="saleAddLineBtn">加入明细</button>
               </div>
               <div class="sale-choice-list" id="saleProductChoices"></div>
             </section>
@@ -1436,35 +1448,51 @@
               <div class="sale-panel-head">
                 <div>
                   <strong>销售明细</strong>
-                  <span>数量和价格可以直接修改</span>
+                  <span>每行都可以改数量、单价和发货仓库。</span>
                 </div>
                 <div class="sale-total-pill" id="saleTotal">¥0.00</div>
               </div>
-              <div class="sale-lines" id="saleLines"></div>
+              <div class="sale-lines-table-wrap">
+                <table class="sale-lines-table">
+                  <thead>
+                    <tr>
+                      <th>商品</th>
+                      <th>颜色/规格</th>
+                      <th>数量</th>
+                      <th>仓库</th>
+                      <th>单价</th>
+                      <th>金额</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="saleLines"></tbody>
+                </table>
+              </div>
+              <div class="sale-table-footer">
+                <span>商品 <strong id="saleSummaryCount">0</strong> 行</span>
+                <span>总数量 <strong id="saleSummaryQty">0</strong></span>
+                <span>合计 <strong id="saleSummaryAmount">¥0.00</strong></span>
+              </div>
             </section>
 
-            <aside class="sale-summary-panel">
-              <div class="sale-summary-card">
+            <section class="sale-submit-bar">
+              <div>
                 <span>客户</span>
                 <strong id="saleSummaryCustomer">未选择</strong>
               </div>
-              <div class="sale-summary-card">
-                <span>商品数</span>
-                <strong id="saleSummaryCount">0</strong>
+              <div>
+                <span>金额</span>
+                <strong id="saleSubmitAmount">¥0.00</strong>
               </div>
-              <div class="sale-summary-card">
-                <span>总数量</span>
-                <strong id="saleSummaryQty">0</strong>
-              </div>
-              <div class="sale-summary-card accent">
-                <span>合计金额</span>
-                <strong id="saleSummaryAmount">¥0.00</strong>
+              <div class="sale-submit-actions">
+                <button class="ghost" id="saleClearBtnBottom">清空</button>
+                <button class="primary" id="quickSaleBtnBottom">提交开单</button>
               </div>
               <div class="sale-result-card" id="saleResultCard">
                 <strong>开单结果</strong>
                 <p>提交后这里会显示销售单号、打印和删除入口。</p>
               </div>
-            </aside>
+            </section>
           </div>
         </div>
 
