@@ -729,8 +729,8 @@ def get_webui_html():
     html = html.replace("<span>对话驱动的订单库存</span>", "<span>北极星订单管理机器人</span>", 1)
     html = html.replace("<button class=\"ghost\" id=\"newChatButton\">新建对话</button>", "<button class=\"ghost\" id=\"newChatButton\">新会话</button>", 1)
     html = html.replace(
-        '<button class="primary" id="newOrderButton">新建开单</button>',
-        '<button class="primary" id="newOrderButton">新建开单</button><button class="ghost admin-only" id="accountAdminButton">账号</button><button class="ghost" id="logoutButton">退出</button>',
+        '<button class="ghost" id="newChatButton">新会话</button>',
+        '<button class="ghost" id="newChatButton">新会话</button><button class="ghost admin-only" id="accountAdminButton">审核</button><button class="ghost" id="logoutButton">退出</button>',
         1,
     )
     html = html.replace("<h1>AI 业务工作台</h1>", "<h1>业务工作台</h1>", 1)
