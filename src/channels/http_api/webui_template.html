@@ -271,34 +271,9 @@
       display: flex;
       align-items: center;
       gap: 14px;
+      justify-content: flex-end;
       background: rgba(255,255,255,0.48);
       backdrop-filter: blur(16px);
-    }
-
-    .search {
-      min-width: 240px;
-      flex: 1;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      border-radius: 7px;
-      padding: 0 12px;
-      height: 42px;
-    }
-
-    .search span {
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .search input {
-      width: 100%;
-      border: 0;
-      outline: 0;
-      background: transparent;
-      color: var(--text);
     }
 
     .primary {
@@ -1212,11 +1187,6 @@
         flex-wrap: wrap;
       }
 
-      .search {
-        order: 3;
-        min-width: 100%;
-      }
-
       .content {
         padding: 12px;
       }
@@ -1311,13 +1281,8 @@
 
     <main class="main">
       <header class="topbar">
-        <div class="search">
-          <span>搜索</span>
-          <input placeholder="客户、订单、商品、规格" />
-        </div>
         <button class="ghost mobile-context-toggle" id="contextButton">业务卡片</button>
         <button class="ghost" id="newChatButton">新建对话</button>
-        <button class="primary" id="newOrderButton">新建开单</button>
       </header>
 
       <section class="content">
@@ -1772,7 +1737,8 @@
       setView("workbench");
     });
 
-    document.getElementById("newOrderButton").addEventListener("click", () => openDrawer("order"));
+    const newOrderButton = document.getElementById("newOrderButton");
+    if (newOrderButton) newOrderButton.addEventListener("click", () => openDrawer("order"));
     document.getElementById("newOrderButton2").addEventListener("click", () => openDrawer("order"));
     document.getElementById("editOrderFromContext").addEventListener("click", () => openDrawer("order"));
     document.getElementById("editProductFromContext").addEventListener("click", () => openDrawer("product"));

@@ -3195,28 +3195,6 @@ function bindEvents() {
   bind("salesSearchBtn", "click", () => loadSales(1));
   bind("workflowSearchBtn", "click", () => loadWorkflow(1));
   bind("productSearchBtn", "click", () => loadProducts(1));
-  document.querySelector(".search input").addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    const value = event.target.value.trim();
-    const active = document.querySelector(".view.active").id;
-    if (active === "sales") {
-      $("salesKeyword").value = value;
-      loadSales(1);
-    } else if (active === "orders") {
-      $("workflowKeyword").value = value;
-      loadWorkflow(1);
-    } else if (active === "inventory") {
-      $("inventoryKeyword").value = value;
-      loadInventory(undefined, 1);
-    } else if (active === "products") {
-      $("productKeyword").value = value;
-      loadProducts();
-    } else {
-      $("chatInput").value = value;
-      sendChat();
-    }
-  });
-  $("newOrderButton").addEventListener("click", () => setView("sale-create"));
   const newOrderButton2 = $("newOrderButton2");
   if (newOrderButton2) newOrderButton2.addEventListener("click", () => openDrawer("workflow"));
   $("newProductButton").addEventListener("click", async () => {
