@@ -1398,57 +1398,39 @@
           </div>
 
           <div class="sale-create-shell">
-            <section class="sale-panel sale-basic-panel">
-              <div class="sale-panel-head">
-                <div>
-                  <strong>基础信息</strong>
-                  <span>客户和创建时间是开单前先确认的内容。</span>
-                </div>
-              </div>
-              <div class="sale-basic-grid">
-                <div class="sale-field">
-                  <label>客户</label>
-                  <div class="sale-search-row">
-                    <input id="saleCustomer" placeholder="输入客户名称 / 电话 / 关键词">
-                    <button id="saleCustomerSearchBtn">搜索客户</button>
+            <section class="sale-order-card">
+              <div class="sale-panel sale-basic-panel">
+                <div class="sale-panel-head">
+                  <div>
+                    <strong>基础信息</strong>
+                    <span>客户和创建时间是开单前先确认的内容。</span>
                   </div>
-                  <div class="sale-choice-list" id="saleCustomerChoices"></div>
                 </div>
-                <div class="sale-field">
-                  <label>创建时间</label>
-                  <input id="saleCreateTime" type="datetime-local">
-                </div>
-                <div class="sale-field">
-                  <label>当前客户</label>
-                  <div class="sale-readonly" id="saleSelectedCustomer">未选择客户</div>
+                <div class="sale-basic-grid">
+                  <div class="sale-field">
+                    <label>客户</label>
+                    <div class="sale-search-row">
+                      <input id="saleCustomer" placeholder="输入客户名称 / 电话 / 关键词">
+                      <button id="saleCustomerSearchBtn">搜索客户</button>
+                    </div>
+                    <div class="sale-choice-list" id="saleCustomerChoices"></div>
+                  </div>
+                  <div class="sale-field">
+                    <label>创建时间</label>
+                    <input id="saleCreateTime" type="datetime-local">
+                  </div>
+                  <div class="sale-field">
+                    <label>当前客户</label>
+                    <div class="sale-readonly" id="saleSelectedCustomer">未选择客户</div>
+                  </div>
                 </div>
               </div>
-            </section>
 
-            <section class="sale-panel sale-product-panel">
-              <div class="sale-panel-head">
-                <div>
-                  <strong>选择商品</strong>
-                  <span>输入礼盒名称后按回车搜索，先选系列，再选颜色。</span>
-                </div>
-                <select id="saleWarehouse">
-                  <option value="2">百鑫仓库</option>
-                  <option value="1">自己店里</option>
-                </select>
-              </div>
-              <div class="sale-product-entry">
-                <input id="saleProduct" placeholder="输入礼盒名称，回车搜索">
-                <input id="saleQty" type="number" min="1" value="1" aria-label="数量">
-                <button id="saleProductSearchBtn">搜索商品</button>
-              </div>
-              <div class="sale-choice-list" id="saleProductChoices"></div>
-            </section>
-
-            <section class="sale-panel sale-lines-panel">
+              <div class="sale-panel sale-lines-panel">
               <div class="sale-panel-head">
                 <div>
                   <strong>销售明细</strong>
-                  <span>每行都可以改数量、单价和发货仓库。</span>
+                  <span>在表格里搜索商品，选好颜色后会加入明细。</span>
                 </div>
                 <div class="sale-total-pill" id="saleTotal">¥0.00</div>
               </div>
@@ -1466,6 +1448,28 @@
                     </tr>
                   </thead>
                   <tbody id="saleLines"></tbody>
+                  <tfoot>
+                    <tr class="sale-search-table-row">
+                      <td colspan="2">
+                        <div class="sale-product-search-cell">
+                          <input id="saleProduct" placeholder="输入礼盒名称，回车搜索">
+                          <div class="sale-choice-list" id="saleProductChoices"></div>
+                        </div>
+                      </td>
+                      <td class="qty-cell">
+                        <input id="saleQty" type="number" min="1" value="1" aria-label="数量">
+                      </td>
+                      <td class="warehouse-cell">
+                        <select id="saleWarehouse">
+                          <option value="2">百鑫仓库</option>
+                          <option value="1">自己店里</option>
+                        </select>
+                      </td>
+                      <td colspan="3">
+                        <button id="saleProductSearchBtn" class="sale-search-table-btn">搜索商品</button>
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
               <div class="sale-table-footer">
@@ -1473,9 +1477,9 @@
                 <span>总数量 <strong id="saleSummaryQty">0</strong></span>
                 <span>合计 <strong id="saleSummaryAmount">¥0.00</strong></span>
               </div>
-            </section>
+              </div>
 
-            <section class="sale-submit-bar">
+              <div class="sale-submit-bar">
               <div>
                 <span>客户</span>
                 <strong id="saleSummaryCustomer">未选择</strong>
@@ -1491,6 +1495,7 @@
               <div class="sale-result-card" id="saleResultCard">
                 <strong>开单结果</strong>
                 <p>提交后这里会显示销售单号、打印和删除入口。</p>
+              </div>
               </div>
             </section>
           </div>
