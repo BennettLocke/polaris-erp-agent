@@ -602,6 +602,7 @@ def _normalize_inventory_keyword(keyword: str) -> str:
         return ""
     for word in ("库存", "有货", "有库存", "查货", "查一下", "查下", "查询", "看看", "帮我", "礼盒", "盒子", "的", "吗", "呢"):
         text = text.replace(word, " ")
+    text = re.sub(r"(^|\s)查(?=\s|[\u4e00-\u9fa5A-Za-z0-9])", " ", text)
     text = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", text)
     text = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", text)
     text = re.sub(r"(?:1\s*两|一\s*两)", "一两", text)
@@ -1370,8 +1371,10 @@ def _product_series_keyword(title: str) -> str:
         "两大盒",
         "三小盒",
         "六小盒",
+        "十小盒",
         "3小盒",
         "6小盒",
+        "10小盒",
         "半斤",
         "三两",
         "二两",
@@ -1412,6 +1415,8 @@ def _is_gift_box_title(title: str) -> bool:
         "三小盒",
         "6小盒",
         "六小盒",
+        "10小盒",
+        "十小盒",
     )
     return any(keyword in text for keyword in keywords)
 

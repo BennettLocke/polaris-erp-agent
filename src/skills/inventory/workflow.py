@@ -180,7 +180,7 @@ class InventoryWorkflow(BaseWorkflow):
     def _normalize_inventory_keyword(self, product_name: str, user_input: str) -> str:
         """修正常见库存查询口语，避免把“礼盒”等泛词当商品名。"""
         text = f"{product_name} {user_input}"
-        generic_words = ("礼盒", "盒子", "茶盒", "有什么", "有货", "库存")
+        generic_words = ("礼盒", "盒子", "茶盒", "有什么", "有货", "库存", "查")
         keyword = product_name
         for word in generic_words:
             keyword = keyword.replace(word, "")
