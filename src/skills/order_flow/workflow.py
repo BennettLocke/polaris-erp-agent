@@ -1050,24 +1050,26 @@ class OrderFlowWorkflow(BaseWorkflow):
         desc = f"{product.get('name', '商品')}{(' ' + product.get('color', '')) if product.get('color') else ''}"
         order_qty = product.get("qty", 1)
         order_unit = product.get("unit", "套")
+        shortage_qty = int(product.get("shortage_qty") or order_qty or 1)
         purchase_qty = plan["purchase_qty"]
         purchase_unit = plan["purchase_unit"]
         if purchase_unit == "件" and plan.get("per_piece"):
-            return f"- {desc}：订单{order_qty}{order_unit}，进货{purchase_qty}件（{plan['per_piece']}套/件）"
-        return f"- {desc}：订单{order_qty}{order_unit}，进货{purchase_qty}{purchase_unit}"
+            return f"- {desc}：订单{order_qty}{order_unit}，缺口{shortage_qty}{order_unit}，进货{purchase_qty}件（{plan['per_piece']}套/件）"
+        return f"- {desc}：订单{order_qty}{order_unit}，缺口{shortage_qty}{order_unit}，进货{purchase_qty}{purchase_unit}"
 
     def _annotate_purchase_plan(self, product: dict) -> dict:
         order_qty = int(product.get("qty") or 1)
         order_unit = product.get("unit") or "套"
+        shortage_qty = int(product.get("shortage_qty") or order_qty or 1)
         per_piece = self._parse_sets_per_case(product.get("simple_desc", "")) or 0
         product_name = f"{product.get('name', '')} {product.get('title', '')}".strip()
 
         should_use_piece = order_unit == "套" and per_piece > 1 and is_one_piece_order(product_name)
         if should_use_piece:
-            purchase_qty = calculate_purchase_quantity(order_qty, per_piece, product_name)
+            purchase_qty = calculate_purchase_quantity(shortage_qty, per_piece, product_name)
             purchase_unit = "件"
         else:
-            purchase_qty = order_qty
+            purchase_qty = shortage_qty
             purchase_unit = order_unit
 
         try:
