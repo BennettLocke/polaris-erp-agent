@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>泡袋主图模板</title>
+  <style>
+    :root {
+      --bg: #f8f8f8;
+      --panel: #ffffff;
+      --ink: #101114;
+      --muted: #6a6e76;
+      --line: #d8dce2;
+      --accent: #0f7f6f;
+      --field: #f7f8fa;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #f8f8f8;
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(280px, 340px) 1fr;
+      min-height: 100vh;
+    }
+
+    aside {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 22px;
+      overflow: auto;
+    }
+
+    main {
+      display: grid;
+      place-items: center;
+      padding: 28px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    .note {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .section {
+      padding: 16px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 12px;
+      color: #2d3138;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    input[type="text"],
+    input[type="file"] {
+      width: 100%;
+      margin-top: 6px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--field);
+      padding: 10px 11px;
+      color: var(--ink);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    input[type="color"] {
+      width: 52px;
+      height: 36px;
+      margin-top: 6px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: transparent;
+      padding: 2px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    button {
+      min-height: 40px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 14px;
+      color: #fff;
+      background: var(--accent);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      color: var(--ink);
+      background: #e5e8ed;
+    }
+
+    .stage {
+      width: min(800px, calc(100vw - 400px));
+      min-width: 420px;
+      aspect-ratio: 1;
+      background: var(--bg);
+      box-shadow: 0 18px 52px rgba(24, 31, 42, 0.18);
+    }
+
+    .preview-stack {
+      display: grid;
+      gap: 28px;
+      justify-items: center;
+    }
+
+    .detail-stage {
+      width: min(420px, calc(100vw - 400px));
+      min-width: 300px;
+      aspect-ratio: 1000 / 3591;
+      background: #f8f8f8;
+      box-shadow: 0 18px 52px rgba(24, 31, 42, 0.18);
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+    }
+
+    @media (max-width: 860px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      main {
+        padding: 16px;
+      }
+
+      .stage {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .detail-stage {
+        width: min(100%, 420px);
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <h1>泡袋主图模板</h1>
+      <p class="note">现在只替换产品图、编号、颜色和规格。袋身中间品牌资料固定，不用每次改。</p>
+
+      <div class="section">
+        <p class="section-title">主信息</p>
+        <label>编号
+          <input id="codeInput" type="text" value="SJ0506" />
+        </label>
+        <label>颜色 / 标题
+          <input id="colorNameInput" type="text" value="九龙窠肉桂" />
+        </label>
+        <label>标题下方文案
+          <input id="subtitleInput" type="text" value="雅致非凡，尽显格调" />
+        </label>
+        <label>品类文案
+          <input id="typeInput" type="text" value="武夷岩茶" />
+        </label>
+      </div>
+
+      <div class="section">
+        <p class="section-title">规格</p>
+        <div class="row">
+          <label>宽度
+            <input id="widthInput" type="text" value="55MM" />
+          </label>
+          <label>高度
+            <input id="heightInput" type="text" value="150MM" />
+          </label>
+        </div>
+        <label>规格标签
+          <input id="specInput" type="text" value="55MMx150MM" />
+        </label>
+      </div>
+
+      <div class="section">
+        <p class="section-title">产品图</p>
+        <label>上传袋子图片
+          <input id="imageInput" type="file" accept="image/*" />
+        </label>
+        <label>无图片时袋身颜色
+          <input id="bagColorInput" type="color" value="#aeb7ba" />
+        </label>
+      </div>
+
+      <div class="section">
+        <p class="section-title">图片嵌入调节</p>
+        <label>统一缩放
+          <input id="embedScaleInput" type="text" value="1.02" />
+        </label>
+        <div class="row">
+          <label>图片 X 偏移
+            <input id="embedXInput" type="text" value="0" />
+          </label>
+          <label>图片 Y 偏移
+            <input id="embedYInput" type="text" value="0" />
+          </label>
+        </div>
+      </div>
+
+      <div class="section">
+        <p class="section-title">主图模板调节</p>
+        <div class="row">
+          <label>左袋 X
+            <input id="mainLeftXInput" type="text" value="68" />
+          </label>
+          <label>左袋 Y
+            <input id="mainLeftYInput" type="text" value="96" />
+          </label>
+        </div>
+        <div class="row">
+          <label>左袋宽度
+            <input id="mainLeftWInput" type="text" value="220" />
+          </label>
+          <label>左袋高度
+            <input id="mainLeftHInput" type="text" value="600" />
+          </label>
+        </div>
+        <div class="row">
+          <label>右袋 X
+            <input id="mainRightXInput" type="text" value="388" />
+          </label>
+          <label>右袋 Y
+            <input id="mainRightYInput" type="text" value="318" />
+          </label>
+        </div>
+        <div class="row">
+          <label>右袋角度
+            <input id="mainRightAngleInput" type="text" value="-22" />
+          </label>
+          <label>右袋宽度
+            <input id="mainRightWInput" type="text" value="258" />
+          </label>
+        </div>
+        <label>右袋高度
+          <input id="mainRightHInput" type="text" value="704" />
+        </label>
+        <div class="row">
+          <label>右侧裁切 X
+            <input id="mainSceneXInput" type="text" value="360" />
+          </label>
+          <label>右侧裁切 Y
+            <input id="mainSceneYInput" type="text" value="205" />
+          </label>
+        </div>
+        <div class="row">
+          <label>右侧裁切宽
+            <input id="mainSceneWInput" type="text" value="440" />
+          </label>
+          <label>右侧裁切高
+            <input id="mainSceneHInput" type="text" value="595" />
+          </label>
+        </div>
+      </div>
+
+      <div class="section">
+        <p class="section-title">详情页小袋调节</p>
+        <div class="row">
+          <label>X位置
+            <input id="cornerXInput" type="text" value="45" />
+          </label>
+          <label>Y位置
+            <input id="cornerYInput" type="text" value="1608" />
+          </label>
+        </div>
+        <div class="row">
+          <label>角度
+            <input id="cornerAngleInput" type="text" value="48" />
+          </label>
+          <label>显示大小
+            <input id="cornerSizeInput" type="text" value="800" />
+          </label>
+        </div>
+        <label>显示高度
+          <input id="cornerHeightInput" type="text" value="1080" />
+        </label>
+        <label>泡袋放大
+          <input id="cornerScaleInput" type="text" value="1.00" />
+        </label>
+      </div>
+
+      <div class="section">
+        <p class="section-title">详情页大袋调节</p>
+        <div class="row">
+          <label>X位置
+            <input id="bigXInput" type="text" value="1200" />
+          </label>
+          <label>Y位置
+            <input id="bigYInput" type="text" value="1800" />
+          </label>
+        </div>
+        <div class="row">
+          <label>角度
+            <input id="bigAngleInput" type="text" value="49" />
+          </label>
+          <label>泡袋宽度
+            <input id="bigWidthInput" type="text" value="800" />
+          </label>
+        </div>
+      </div>
+
+      <div class="section">
+        <p class="section-title">详情页顶部模型调节</p>
+        <div class="row">
+          <label>左袋 X
+            <input id="topLeftXInput" type="text" value="58" />
+          </label>
+          <label>左袋 Y
+            <input id="topLeftYInput" type="text" value="104" />
+          </label>
+        </div>
+        <label>左袋显示大小
+          <input id="topLeftSizeInput" type="text" value="430" />
+        </label>
+        <div class="row">
+          <label>右袋 X
+            <input id="topRightXInput" type="text" value="520" />
+          </label>
+          <label>右袋 Y
+            <input id="topRightYInput" type="text" value="492" />
+          </label>
+        </div>
+        <label>右袋显示大小
+          <input id="topRightSizeInput" type="text" value="430" />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="exportBtn" type="button">导出 2 张 PNG</button>
+        <button id="resetBtn" class="secondary" type="button">恢复默认</button>
+      </div>
+    </aside>
+
+    <main>
+      <div class="preview-stack">
+      <div class="stage">
+        <svg id="poster" viewBox="0 0 800 800" role="img" aria-label="泡袋主图预览" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="bagGradient" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#c9d0d2" />
+              <stop offset="0.44" stop-color="#aeb7ba" />
+              <stop offset="1" stop-color="#879397" />
+            </linearGradient>
+            <filter id="leftBagShadow" x="-30%" y="-25%" width="160%" height="160%">
+              <feDropShadow dx="0" dy="16" stdDeviation="10" flood-color="#111820" flood-opacity="0.16" />
+              <feDropShadow dx="-3" dy="4" stdDeviation="4" flood-color="#111820" flood-opacity="0.12" />
+            </filter>
+            <filter id="rightBagShadow" x="-35%" y="-30%" width="175%" height="175%">
+              <feDropShadow dx="12" dy="18" stdDeviation="13" flood-color="#111820" flood-opacity="0.2" />
+              <feDropShadow dx="2" dy="5" stdDeviation="5" flood-color="#111820" flood-opacity="0.12" />
+            </filter>
+            <clipPath id="leftClip">
+              <rect id="leftClipRect" x="68" y="96" width="220" height="600" rx="18" />
+            </clipPath>
+            <clipPath id="rightClip">
+              <rect id="rightClipRect" x="0" y="0" width="258" height="704" rx="22" />
+            </clipPath>
+            <clipPath id="rightSceneClip">
+              <rect id="rightSceneClipRect" x="360" y="205" width="440" height="595" />
+            </clipPath>
+            <mask id="leftBagMask" maskUnits="userSpaceOnUse">
+              <rect id="leftMaskRect" x="68" y="96" width="220" height="600" rx="18" fill="#fff" />
+              <polygon id="leftMaskNotch" points="0,0 0,0 0,0" fill="#000" />
+            </mask>
+            <mask id="rightBagMask" maskUnits="userSpaceOnUse">
+              <rect id="rightMaskRect" x="0" y="0" width="258" height="704" rx="22" fill="#fff" />
+              <polygon id="rightMaskNotch" points="0,0 0,0 0,0" fill="#000" />
+            </mask>
+          </defs>
+
+          <rect width="800" height="800" fill="#f8f8f8" />
+
+          <g id="measureTop" stroke="#bfc3c8" stroke-width="2" fill="none">
+            <path d="M68 78 H288" />
+            <path d="M68 70 V86 M288 70 V86" />
+          </g>
+          <text id="widthLabel" x="178" y="70" fill="#9a9da3" font-size="16" font-weight="700" text-anchor="middle" letter-spacing="1">55MM</text>
+
+          <g id="measureSide" stroke="#bfc3c8" stroke-width="2" fill="none">
+            <path d="M312 96 V696" />
+            <path d="M304 96 H320 M304 696 H320" />
+          </g>
+          <text id="heightLabel" x="327" y="404" fill="#9a9da3" font-size="16" font-weight="700" text-anchor="middle" transform="rotate(90 327 404)" letter-spacing="1">150MM</text>
+
+          <g id="leftBag" filter="url(#leftBagShadow)">
+            <g mask="url(#leftBagMask)">
+              <image id="leftProductImage" href="SJ0506-raw-standard.png" x="68" y="96" width="220" height="600" preserveAspectRatio="none" opacity="1" />
+            </g>
+          </g>
+
+          <g id="rightLayer" clip-path="url(#rightSceneClip)">
+            <g id="rightBag" transform="translate(388 318) rotate(-22)" filter="url(#rightBagShadow)">
+              <g mask="url(#rightBagMask)">
+                <image id="rightProductImage" href="SJ0506-raw-standard.png" x="0" y="0" width="258" height="704" preserveAspectRatio="none" opacity="1" />
+              </g>
+            </g>
+          </g>
+
+          <g id="headline">
+            <text id="topCodeText" x="376" y="76" font-size="16" font-weight="700" fill="#6d7178">编号：SJ0506</text>
+            <text id="titleText" x="374" y="158" font-size="76" font-weight="900" fill="#080808">九龙窠肉桂</text>
+            <text id="subtitleText" x="376" y="201" font-size="28" font-weight="900" fill="#080808">支持自定义</text>
+            <g>
+              <rect id="specBox" x="610" y="182" width="150" height="20" rx="3" fill="#f8f8f8" stroke="#bfc3c8" />
+              <text id="specText" x="685" y="197" font-size="11" font-weight="700" fill="#62666e" text-anchor="middle">规格：55MMx150MM</text>
+            </g>
+            <text id="typeText" x="376" y="236" font-size="28" font-weight="900" fill="#6a6d73">纯色泡袋</text>
+          </g>
+        </svg>
+      </div>
+      <div class="detail-stage">
+        <svg id="detailPoster" viewBox="0 0 1000 3591" role="img" aria-label="泡袋详情页预览" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="detailBagShadow" x="-28%" y="-18%" width="160%" height="145%">
+              <feDropShadow dx="0" dy="22" stdDeviation="18" flood-color="#111820" flood-opacity="0.18" />
+              <feDropShadow dx="-5" dy="6" stdDeviation="7" flood-color="#111820" flood-opacity="0.1" />
+            </filter>
+            <filter id="detailSliceShadow" x="-20%" y="-20%" width="150%" height="150%">
+              <feDropShadow dx="0" dy="16" stdDeviation="14" flood-color="#111820" flood-opacity="0.16" />
+            </filter>
+            <clipPath id="detailFullClip">
+              <rect x="0" y="0" width="350" height="955" rx="28" />
+            </clipPath>
+            <mask id="detailFullMask" maskUnits="userSpaceOnUse">
+              <rect id="detailFullMaskRect" x="0" y="0" width="350" height="955" rx="28" fill="#fff" />
+              <polygon id="detailFullMaskNotch" points="0,0 0,0 0,0" fill="#000" />
+            </mask>
+            <clipPath id="detailCornerClip">
+              <rect id="detailCornerClipRect" x="0" y="0" width="800" height="1080" rx="60" />
+            </clipPath>
+            <mask id="detailCornerMask" maskUnits="userSpaceOnUse">
+              <rect id="detailCornerMaskRect" x="0" y="0" width="800" height="1080" rx="60" fill="#fff" />
+              <polygon id="detailCornerMaskNotch" points="0,0 0,0 0,0" fill="#000" />
+            </mask>
+            <mask id="detailBigMask" maskUnits="userSpaceOnUse">
+              <rect id="detailBigMaskRect" x="0" y="0" width="800" height="2182" rx="64" fill="#fff" />
+              <polygon id="detailBigMaskNotch" points="0,0 0,0 0,0" fill="#000" />
+            </mask>
+          </defs>
+          <rect width="1000" height="3591" fill="#f8f8f8" />
+
+          <g id="detailTopLeftGroup" transform="translate(58 104) scale(1.2285714285714286)" filter="url(#detailBagShadow)">
+            <image id="detailLeftImage" href="SJ0506-raw-standard.png" x="0" y="0" width="350" height="955" preserveAspectRatio="none" mask="url(#detailFullMask)" />
+          </g>
+
+          <g>
+            <text id="detailTitleA" x="530" y="178" font-size="86" font-weight="900" fill="#050505">雅致非凡</text>
+            <text id="detailTitleB" x="530" y="292" font-size="86" font-weight="900" fill="#050505">尽显格调</text>
+            <text id="detailCodeText" x="530" y="384" font-size="44" font-weight="800" fill="#6d7178">编号：SJ0506</text>
+            <text id="detailTypeText" x="530" y="448" font-size="36" font-weight="900" fill="#6a6d73">纯色泡袋</text>
+            <g>
+              <rect id="detailSpecBox" x="688" y="411" width="168" height="28" rx="3" fill="#f8f8f8" stroke="#9fa4aa" />
+              <text id="detailSpecText" x="772" y="432" font-size="19" font-weight="700" fill="#62666e" text-anchor="middle">规格：55MMx150MM</text>
+            </g>
+          </g>
+
+          <g id="detailTopRightGroup" transform="translate(520 492) scale(1.2285714285714286)" filter="url(#detailBagShadow)">
+            <image id="detailRightImage" href="SJ0506-raw-standard.png" x="0" y="0" width="350" height="955" preserveAspectRatio="none" mask="url(#detailFullMask)" />
+          </g>
+
+          <g id="detailCornerGroup" transform="translate(45 1608) rotate(48)" filter="url(#detailSliceShadow)">
+            <svg id="detailCornerViewport" x="0" y="0" width="800" height="1080" viewBox="0 0 800 1080" overflow="hidden" clip-path="url(#detailCornerClip)">
+              <image id="detailCornerImage" href="SJ0506-raw-standard.png" x="0" y="-22" width="800" height="2182" preserveAspectRatio="none" mask="url(#detailCornerMask)" />
+            </svg>
+          </g>
+
+          <g transform="translate(236 1662) rotate(50)">
+            <text x="0" y="0" font-size="56" font-weight="900" fill="#777d84">易撕拉满！！</text>
+            <text x="-28" y="72" font-size="70" font-weight="900" fill="#050505">边缘开口设计</text>
+          </g>
+
+          <g id="detailBigGroup" transform="translate(1200 1800) rotate(49)" filter="url(#detailSliceShadow)">
+            <image id="detailBigImage" href="SJ0506-raw-standard.png" x="0" y="0" width="800" height="2182" preserveAspectRatio="none" mask="url(#detailBigMask)" />
+          </g>
+        </svg>
+      </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const defaults = {
+      code: "SJ0506",
+      colorName: "九龙窠肉桂",
+      subtitle: "雅致非凡，尽显格调",
+      type: "武夷岩茶",
+      width: "55MM",
+      height: "150MM",
+      spec: "55MMx150MM",
+      bagColor: "#aeb7ba",
+      productImage: "SJ0506-raw-standard.png",
+      embedScale: "1.02",
+      embedX: "0",
+      embedY: "0",
+      mainLeftX: "68",
+      mainLeftY: "96",
+      mainLeftW: "220",
+      mainLeftH: "600",
+      mainRightX: "388",
+      mainRightY: "318",
+      mainRightAngle: "-22",
+      mainRightW: "258",
+      mainRightH: "704",
+      mainSceneX: "360",
+      mainSceneY: "205",
+      mainSceneW: "440",
+      mainSceneH: "595",
+      cornerX: "45",
+      cornerY: "1608",
+      cornerAngle: "48",
+      cornerSize: "800",
+      cornerHeight: "1080",
+      cornerScale: "1.00",
+      bigX: "1200",
+      bigY: "1800",
+      bigAngle: "49",
+      bigWidth: "800",
+      topLeftX: "58",
+      topLeftY: "104",
+      topLeftSize: "430",
+      topRightX: "520",
+      topRightY: "492",
+      topRightSize: "430"
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const fields = {
+      code: $("codeInput"),
+      colorName: $("colorNameInput"),
+      subtitle: $("subtitleInput"),
+      type: $("typeInput"),
+      width: $("widthInput"),
+      height: $("heightInput"),
+      spec: $("specInput"),
+      bagColor: $("bagColorInput"),
+      embedScale: $("embedScaleInput"),
+      embedX: $("embedXInput"),
+      embedY: $("embedYInput"),
+      mainLeftX: $("mainLeftXInput"),
+      mainLeftY: $("mainLeftYInput"),
+      mainLeftW: $("mainLeftWInput"),
+      mainLeftH: $("mainLeftHInput"),
+      mainRightX: $("mainRightXInput"),
+      mainRightY: $("mainRightYInput"),
+      mainRightAngle: $("mainRightAngleInput"),
+      mainRightW: $("mainRightWInput"),
+      mainRightH: $("mainRightHInput"),
+      mainSceneX: $("mainSceneXInput"),
+      mainSceneY: $("mainSceneYInput"),
+      mainSceneW: $("mainSceneWInput"),
+      mainSceneH: $("mainSceneHInput"),
+      cornerX: $("cornerXInput"),
+      cornerY: $("cornerYInput"),
+      cornerAngle: $("cornerAngleInput"),
+      cornerSize: $("cornerSizeInput"),
+      cornerHeight: $("cornerHeightInput"),
+      cornerScale: $("cornerScaleInput"),
+      bigX: $("bigXInput"),
+      bigY: $("bigYInput"),
+      bigAngle: $("bigAngleInput"),
+      bigWidth: $("bigWidthInput"),
+      topLeftX: $("topLeftXInput"),
+      topLeftY: $("topLeftYInput"),
+      topLeftSize: $("topLeftSizeInput"),
+      topRightX: $("topRightXInput"),
+      topRightY: $("topRightYInput"),
+      topRightSize: $("topRightSizeInput")
+    };
+
+    function setText(id, value) {
+      $(id).textContent = value;
+    }
+
+    function shade(hex, amount) {
+      const clean = hex.replace("#", "");
+      const number = parseInt(clean, 16);
+      const clamp = (value) => Math.max(0, Math.min(255, value));
+      const r = clamp((number >> 16) + amount);
+      const g = clamp(((number >> 8) & 255) + amount);
+      const b = clamp((number & 255) + amount);
+      return `#${(b | (g << 8) | (r << 16)).toString(16).padStart(6, "0")}`;
+    }
+
+    function updateGradient(hex) {
+      const stops = document.querySelectorAll("#bagGradient stop");
+      stops[0].setAttribute("stop-color", shade(hex, 28));
+      stops[1].setAttribute("stop-color", hex);
+      stops[2].setAttribute("stop-color", shade(hex, -34));
+    }
+
+    function fitSpecText() {
+      const subtitleText = $("subtitleText");
+      const specText = $("specText");
+      const specBox = $("specBox");
+      const textWidth = specText.getComputedTextLength();
+      const width = Math.max(132, Math.min(178, textWidth + 22));
+      const subtitleEnd = 376 + subtitleText.getComputedTextLength();
+      const boxX = Math.min(760 - width, subtitleEnd + 14);
+      const boxY = 185;
+      const x = boxX + width / 2;
+      specBox.setAttribute("x", boxX);
+      specBox.setAttribute("y", boxY);
+      specBox.setAttribute("width", width);
+      specText.setAttribute("x", x);
+      specText.setAttribute("y", boxY + 15);
+      specText.setAttribute("font-size", textWidth > 150 ? "10" : "11");
+
+      const detailSpecText = $("detailSpecText");
+      const detailSpecBox = $("detailSpecBox");
+      const detailTextWidth = detailSpecText.getComputedTextLength();
+      const detailWidth = Math.max(168, Math.min(230, detailTextWidth + 30));
+      const detailText = $("detailTypeText");
+      const detailBoxX = Math.min(930 - detailWidth, 530 + detailText.getComputedTextLength() + 18);
+      const detailBoxY = 421;
+      const detailX = detailBoxX + detailWidth / 2;
+      detailSpecBox.setAttribute("x", detailBoxX);
+      detailSpecBox.setAttribute("y", detailBoxY);
+      detailSpecBox.setAttribute("width", detailWidth);
+      detailSpecText.setAttribute("x", detailX);
+      detailSpecText.setAttribute("y", detailBoxY + 22);
+      detailSpecText.setAttribute("font-size", detailTextWidth > 205 ? "16" : "18");
+    }
+
+    function splitSubtitle(value) {
+      const text = (value || defaults.subtitle).trim();
+      const parts = text.split(/[?,?;?\s]+/).filter(Boolean);
+      if (parts.length >= 2) return [parts[0], parts.slice(1).join("")];
+      if (text.length > 5) {
+        const midpoint = Math.ceil(text.length / 2);
+        return [text.slice(0, midpoint), text.slice(midpoint)];
+      }
+      return [text, ""];
+    }
+
+    function readNumber(field, fallback, min, max) {
+      const value = Number.parseFloat(String(field.value).replace("，", "."));
+      if (!Number.isFinite(value)) return fallback;
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function setNotch(id, x, y, width) {
+      const cx = x + width * 0.75;
+      const notchW = Math.max(7, width * 0.045);
+      const notchH = Math.max(8, width * 0.055);
+      $(id).setAttribute("points", `${cx - notchW / 2},${y} ${cx + notchW / 2},${y} ${cx},${y + notchH}`);
+    }
+
+    function setEmbeddedImage(id, baseX, baseY, baseW, baseH) {
+      const scale = readNumber(fields.embedScale, Number(defaults.embedScale), 0.82, 1.35);
+      const dx = readNumber(fields.embedX, Number(defaults.embedX), -120, 120);
+      const dy = readNumber(fields.embedY, Number(defaults.embedY), -180, 180);
+      const width = baseW * scale;
+      const height = baseH * scale;
+      const x = baseX + (baseW - width) / 2 + dx;
+      const y = baseY + (baseH - height) / 2 + dy;
+      const image = $(id);
+      image.setAttribute("x", Math.round(x * 100) / 100);
+      image.setAttribute("y", Math.round(y * 100) / 100);
+      image.setAttribute("width", Math.round(width * 100) / 100);
+      image.setAttribute("height", Math.round(height * 100) / 100);
+    }
+
+    function updateSharedImageEmbed() {
+      const leftX = readNumber(fields.mainLeftX, Number(defaults.mainLeftX), -100, 500);
+      const leftY = readNumber(fields.mainLeftY, Number(defaults.mainLeftY), -100, 500);
+      const leftW = readNumber(fields.mainLeftW, Number(defaults.mainLeftW), 80, 420);
+      const leftH = readNumber(fields.mainLeftH, Number(defaults.mainLeftH), 180, 760);
+      const rightW = readNumber(fields.mainRightW, Number(defaults.mainRightW), 80, 520);
+      const rightH = readNumber(fields.mainRightH, Number(defaults.mainRightH), 180, 900);
+      const cornerW = readNumber(fields.cornerSize, Number(defaults.cornerSize), 320, 900);
+      const cornerH = readNumber(fields.cornerHeight, Number(defaults.cornerHeight), 360, 1300);
+      const cornerScale = readNumber(fields.cornerScale, Number(defaults.cornerScale), 0.7, 1.8);
+      const cornerImageW = cornerW * cornerScale;
+      const cornerImageH = cornerImageW * 1500 / 550;
+      const bigW = readNumber(fields.bigWidth, Number(defaults.bigWidth), 180, 980);
+      const bigH = bigW * 1500 / 550;
+
+      setEmbeddedImage("leftProductImage", leftX, leftY, leftW, leftH);
+      setEmbeddedImage("rightProductImage", 0, 0, rightW, rightH);
+      setEmbeddedImage("detailLeftImage", 0, 0, 350, 955);
+      setEmbeddedImage("detailRightImage", 0, 0, 350, 955);
+      setEmbeddedImage("detailCornerImage", (cornerW - cornerImageW) / 2, cornerH * -0.02, cornerImageW, cornerImageH);
+      setEmbeddedImage("detailBigImage", 0, 0, bigW, bigH);
+    }
+
+    function updateMainBags() {
+      const leftX = readNumber(fields.mainLeftX, Number(defaults.mainLeftX), -100, 500);
+      const leftY = readNumber(fields.mainLeftY, Number(defaults.mainLeftY), -100, 500);
+      const leftW = readNumber(fields.mainLeftW, Number(defaults.mainLeftW), 80, 420);
+      const leftH = readNumber(fields.mainLeftH, Number(defaults.mainLeftH), 180, 760);
+      const leftRadius = Math.round(Math.min(leftW, leftH) * 0.08);
+
+      const rightX = readNumber(fields.mainRightX, Number(defaults.mainRightX), -200, 900);
+      const rightY = readNumber(fields.mainRightY, Number(defaults.mainRightY), -200, 900);
+      const rightAngle = readNumber(fields.mainRightAngle, Number(defaults.mainRightAngle), -90, 90);
+      const rightW = readNumber(fields.mainRightW, Number(defaults.mainRightW), 80, 520);
+      const rightH = readNumber(fields.mainRightH, Number(defaults.mainRightH), 180, 900);
+      const rightRadius = Math.round(Math.min(rightW, rightH) * 0.085);
+
+      const sceneX = readNumber(fields.mainSceneX, Number(defaults.mainSceneX), 0, 800);
+      const sceneY = readNumber(fields.mainSceneY, Number(defaults.mainSceneY), 0, 800);
+      const sceneW = readNumber(fields.mainSceneW, Number(defaults.mainSceneW), 80, 800);
+      const sceneH = readNumber(fields.mainSceneH, Number(defaults.mainSceneH), 80, 800);
+
+      ["leftClipRect", "leftMaskRect"].forEach((id) => {
+        const rect = $(id);
+        rect.setAttribute("x", leftX);
+        rect.setAttribute("y", leftY);
+        rect.setAttribute("width", leftW);
+        rect.setAttribute("height", leftH);
+        rect.setAttribute("rx", leftRadius);
+      });
+      setNotch("leftMaskNotch", leftX, leftY, leftW);
+
+      ["rightClipRect", "rightMaskRect"].forEach((id) => {
+        const rect = $(id);
+        rect.setAttribute("width", rightW);
+        rect.setAttribute("height", rightH);
+        rect.setAttribute("rx", rightRadius);
+      });
+      $("rightBag").setAttribute("transform", `translate(${rightX} ${rightY}) rotate(${rightAngle})`);
+      setNotch("rightMaskNotch", 0, 0, rightW);
+
+      const scene = $("rightSceneClipRect");
+      scene.setAttribute("x", sceneX);
+      scene.setAttribute("y", sceneY);
+      scene.setAttribute("width", sceneW);
+      scene.setAttribute("height", sceneH);
+    }
+
+    function updateDetailCornerBag() {
+      const x = readNumber(fields.cornerX, Number(defaults.cornerX), -260, 600);
+      const y = readNumber(fields.cornerY, Number(defaults.cornerY), 1200, 2200);
+      const angle = readNumber(fields.cornerAngle, Number(defaults.cornerAngle), -90, 90);
+      const width = readNumber(fields.cornerSize, Number(defaults.cornerSize), 320, 900);
+      const height = readNumber(fields.cornerHeight, Number(defaults.cornerHeight), 360, 1300);
+      const scale = readNumber(fields.cornerScale, Number(defaults.cornerScale), 0.7, 1.8);
+      const imageWidth = Math.round(width * scale);
+      const imageHeight = Math.round(imageWidth * 1500 / 550);
+
+      $("detailCornerGroup").setAttribute("transform", `translate(${x} ${y}) rotate(${angle})`);
+      $("detailCornerViewport").setAttribute("width", width);
+      $("detailCornerViewport").setAttribute("height", height);
+      $("detailCornerViewport").setAttribute("viewBox", `0 0 ${width} ${height}`);
+      $("detailCornerClipRect").setAttribute("width", width);
+      $("detailCornerClipRect").setAttribute("height", height);
+      $("detailCornerClipRect").setAttribute("rx", Math.round(Math.min(width, height) * 0.075));
+      $("detailCornerMaskRect").setAttribute("width", width);
+      $("detailCornerMaskRect").setAttribute("height", height);
+      $("detailCornerMaskRect").setAttribute("rx", Math.round(Math.min(width, height) * 0.075));
+      setNotch("detailCornerMaskNotch", 0, 0, width);
+    }
+
+    function updateDetailBigBag() {
+      const x = readNumber(fields.bigX, Number(defaults.bigX), -800, 2200);
+      const y = readNumber(fields.bigY, Number(defaults.bigY), 1000, 3300);
+      const angle = readNumber(fields.bigAngle, Number(defaults.bigAngle), -90, 90);
+      const width = readNumber(fields.bigWidth, Number(defaults.bigWidth), 180, 980);
+      const height = Math.round(width * 1500 / 550);
+
+      $("detailBigGroup").setAttribute("transform", `translate(${x} ${y}) rotate(${angle})`);
+      $("detailBigMaskRect").setAttribute("width", width);
+      $("detailBigMaskRect").setAttribute("height", height);
+      $("detailBigMaskRect").setAttribute("rx", Math.round(width * 0.08));
+      setNotch("detailBigMaskNotch", 0, 0, width);
+    }
+
+    function updateDetailTopBags() {
+      const leftX = readNumber(fields.topLeftX, Number(defaults.topLeftX), -300, 1000);
+      const leftY = readNumber(fields.topLeftY, Number(defaults.topLeftY), -200, 1200);
+      const leftSize = readNumber(fields.topLeftSize, Number(defaults.topLeftSize), 120, 620);
+      const rightX = readNumber(fields.topRightX, Number(defaults.topRightX), -300, 1200);
+      const rightY = readNumber(fields.topRightY, Number(defaults.topRightY), -200, 1400);
+      const rightSize = readNumber(fields.topRightSize, Number(defaults.topRightSize), 120, 620);
+      const leftScale = leftSize / 350;
+      const rightScale = rightSize / 350;
+
+      $("detailTopLeftGroup").setAttribute("transform", `translate(${leftX} ${leftY}) scale(${leftScale})`);
+      $("detailTopRightGroup").setAttribute("transform", `translate(${rightX} ${rightY}) scale(${rightScale})`);
+      $("detailFullMaskRect").setAttribute("width", 350);
+      $("detailFullMaskRect").setAttribute("height", 955);
+      $("detailFullMaskRect").setAttribute("rx", 28);
+      setNotch("detailFullMaskNotch", 0, 0, 350);
+    }
+
+    function blobToDataUrl(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function imageSourceToDataUrl(src) {
+      if (!src || src.startsWith("data:")) return src;
+      const response = await fetch(src, { cache: "no-store" });
+      const blob = await response.blob();
+      return blobToDataUrl(blob);
+    }
+
+    function getImageHref(image) {
+      return image.getAttribute("href") || image.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+    }
+
+    async function inlineCurrentImages() {
+      await Promise.all(["leftProductImage", "rightProductImage", "detailLeftImage", "detailRightImage", "detailCornerImage", "detailBigImage"].map(async (id) => {
+        const image = $(id);
+        const href = getImageHref(image);
+        const dataUrl = await imageSourceToDataUrl(href);
+        image.setAttribute("href", dataUrl);
+      }));
+    }
+
+    async function setProductImage(src) {
+      let finalSrc = src;
+      try {
+        finalSrc = await imageSourceToDataUrl(src);
+      } catch (error) {
+        finalSrc = src;
+      }
+      ["leftProductImage", "rightProductImage", "detailLeftImage", "detailRightImage", "detailCornerImage", "detailBigImage"].forEach((id) => {
+        const image = $(id);
+        image.setAttribute("href", finalSrc);
+        image.setAttribute("opacity", "1");
+      });
+    }
+
+    function render() {
+      const code = fields.code.value.trim() || defaults.code;
+      const colorName = fields.colorName.value.trim() || defaults.colorName;
+      const subtitle = fields.subtitle.value.trim() || defaults.subtitle;
+      const type = fields.type.value.trim() || defaults.type;
+      const spec = fields.spec.value.trim() || defaults.spec;
+      const detailTitleParts = splitSubtitle(subtitle);
+
+            setText("topCodeText", `编号：${code}`);
+      setText("titleText", colorName);
+      setText("subtitleText", subtitle);
+      $("subtitleText").setAttribute("font-size", subtitle.length > 7 ? "22" : "28");
+      setText("typeText", type);
+      setText("detailTitleA", detailTitleParts[0]);
+      setText("detailTitleB", detailTitleParts[1]);
+            setText("detailCodeText", `编号：${code}`);
+      setText("detailTypeText", type);
+      setText("widthLabel", fields.width.value.trim() || defaults.width);
+      setText("heightLabel", fields.height.value.trim() || defaults.height);
+            setText("specText", `规格：${spec}`);
+            setText("detailSpecText", `规格：${spec}`);
+      fitSpecText();
+      updateGradient(fields.bagColor.value);
+      updateMainBags();
+      updateDetailTopBags();
+      updateDetailCornerBag();
+      updateDetailBigBag();
+      updateSharedImageEmbed();
+    }
+
+    function reset() {
+      Object.entries(fields).forEach(([key, field]) => {
+        field.value = defaults[key];
+      });
+      $("imageInput").value = "";
+      setProductImage(defaults.productImage);
+      render();
+    }
+
+    function handleImage(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        setProductImage(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function svgToPng(svg, width, height, filename, background = "#f8f8f8") {
+      return new Promise((resolve, reject) => {
+      const serializer = new XMLSerializer();
+      const source = serializer.serializeToString(svg);
+      const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.fillStyle = background;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        const link = document.createElement("a");
+        link.download = filename;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+        resolve();
+      };
+      image.onerror = reject;
+      image.src = url;
+      });
+    }
+
+    async function exportPng() {
+      await inlineCurrentImages();
+      const code = (fields.code.value.trim() || defaults.code).replace(/[\\/:*?"<>|]/g, "-");
+      await svgToPng($("poster"), 1600, 1600, `${code}-泡袋主图.png`, "#f8f8f8");
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await svgToPng($("detailPoster"), 1000, 3591, `${code}-泡袋详情页.png`, "#f8f8f8");
+    }
+
+    Object.values(fields).forEach((field) => {
+      field.addEventListener("input", render);
+      field.addEventListener("change", render);
+    });
+
+    $("imageInput").addEventListener("change", (event) => {
+      handleImage(event.target.files[0]);
+    });
+    $("exportBtn").addEventListener("click", exportPng);
+    $("resetBtn").addEventListener("click", reset);
+
+    render();
+    setProductImage(defaults.productImage);
+  </script>
+</body>
+</html>
