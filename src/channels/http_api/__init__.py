@@ -2555,6 +2555,8 @@ def inventory_transfer_api():
         quantity = 0
     if quantity <= 0:
         return jsonify({"code": 400, "msg": "quantity must be greater than 0"}), 400
+    if out_warehouse_id == enter_warehouse_id:
+        return jsonify({"code": 400, "msg": "调出仓库和调入仓库不能相同"}), 400
     try:
         result = caller.call(
             "inventory_transfer",

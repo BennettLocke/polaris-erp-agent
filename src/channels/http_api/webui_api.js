@@ -1088,8 +1088,8 @@ function openDrawer(mode = "ai", row = {}) {
     setProductDetailImages(htmlToImages(row.content || ""));
   } else if (mode === "inventory_action") {
     const isPurchase = row.type === "purchase";
-    if (title) title.textContent = isPurchase ? "进货入库" : "调货到店里";
-    if (subtitle) subtitle.textContent = isPurchase ? "确认商品、颜色、数量和入库仓库。" : "默认从百鑫仓库调到自己店里。";
+    if (title) title.textContent = isPurchase ? "进货入库" : "调货";
+    if (subtitle) subtitle.textContent = isPurchase ? "确认商品、颜色、数量和入库仓库。" : "确认商品、颜色、数量和仓库方向。";
     if (save) {
       save.style.display = "";
       save.textContent = isPurchase ? "确认进货" : "确认调货";
@@ -1886,9 +1886,12 @@ async function saveInventoryActionFromDrawer() {
     });
     toast("进货已提交");
   } else {
+    const outWarehouseId = Number($("drawerInvOutWarehouse").value || 2);
+    const enterWarehouseId = Number($("drawerInvEnterWarehouse").value || 1);
+    if (outWarehouseId === enterWarehouseId) throw new Error("调出仓库和调入仓库不能相同");
     await api("/api/inventory/transfer", {
       method: "POST",
-      body: { product_id: product.product_id || product.id, unit_id: product.unit_id || 1, quantity: qty, out_warehouse_id: 2, enter_warehouse_id: 1, color }
+      body: { product_id: product.product_id || product.id, unit_id: product.unit_id || 1, quantity: qty, out_warehouse_id: outWarehouseId, enter_warehouse_id: enterWarehouseId, color }
     });
     toast("调货已提交");
   }
@@ -2156,7 +2159,12 @@ function inventoryActionForm(row = {}) {
       <div><label>颜色</label><input id="drawerInvColor" value="${escapeAttr(row.color || "")}"></div>
       <div><label>数量</label><input id="drawerInvQty" type="number" min="1" value="1"></div>
     </div>
-    ${isPurchase ? `<label>入库仓库</label><select id="drawerInvWarehouse"><option value="2">百鑫仓库</option><option value="1">自己店里</option></select>` : `<input id="drawerInvWarehouse" type="hidden" value="1"><p class="muted">调货方向：百鑫仓库 → 自己店里</p>`}
+    ${isPurchase ? `<label>入库仓库</label><select id="drawerInvWarehouse"><option value="2">百鑫仓库</option><option value="1">自己店里</option></select>` : `
+      <div class="two-col">
+        <div><label>调出仓库</label><select id="drawerInvOutWarehouse"><option value="2">百鑫仓库</option><option value="1">自己店里</option></select></div>
+        <div><label>调入仓库</label><select id="drawerInvEnterWarehouse"><option value="1">自己店里</option><option value="2">百鑫仓库</option></select></div>
+      </div>
+    `}
   `;
 }
 
@@ -2202,10 +2210,13 @@ async function ensureMoveProduct() {
 async function transferInventory() {
   const product = await ensureMoveProduct();
   const qty = Number($("moveQty").value || 0);
+  const outWarehouseId = Number($("moveTransferFrom").value || 2);
+  const enterWarehouseId = Number($("moveTransferTo").value || 1);
   if (qty <= 0) throw new Error("数量必须大于0");
+  if (outWarehouseId === enterWarehouseId) throw new Error("调出仓库和调入仓库不能相同");
   await api("/api/inventory/transfer", {
     method: "POST",
-    body: { product_id: product.product_id || product.id, unit_id: product.unit_id || 1, quantity: qty, out_warehouse_id: 2, enter_warehouse_id: 1, color: product.spec || product.color || "" }
+    body: { product_id: product.product_id || product.id, unit_id: product.unit_id || 1, quantity: qty, out_warehouse_id: outWarehouseId, enter_warehouse_id: enterWarehouseId, color: product.spec || product.color || "" }
   });
   toast("调货已提交");
   loadInventory(undefined, state.inventoryPage);

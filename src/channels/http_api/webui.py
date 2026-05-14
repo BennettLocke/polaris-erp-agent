@@ -664,7 +664,11 @@ TOOLS_HTML = """
             <div><label>入库仓库</label><select id="moveWarehouse"><option value="1">自己店里</option><option value="2">百鑫仓库</option></select></div>
           </div>
           <div class="tool-row">
-            <button id="transferBtn">百鑫调到店里</button>
+            <div><label>调出仓库</label><select id="moveTransferFrom"><option value="2">百鑫仓库</option><option value="1">自己店里</option></select></div>
+            <div><label>调入仓库</label><select id="moveTransferTo"><option value="1">自己店里</option><option value="2">百鑫仓库</option></select></div>
+          </div>
+          <div class="tool-row">
+            <button id="transferBtn">确认调货</button>
             <button class="primary" id="purchaseBtn">进货入库</button>
           </div>
           <p class="hint" id="moveSelectedHint">先搜索并选择商品，再执行。</p>
