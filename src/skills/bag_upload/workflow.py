@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ import sys
 import time
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from src.skills.base import BaseWorkflow
@@ -29,6 +31,7 @@ BAG_GENERATE_SCRIPT = BAG_TEMPLATE_DIR / "batch_generate.py"
 BAG_GENERATED_DIR = PROJECT_ROOT / "data" / "generated" / "bag_upload"
 WEB_IMAGE_DIR = PROJECT_ROOT / "data" / "uploads"
 BAG_DEFAULT_PRICE = 18
+BAG_UPLOAD_WORKERS = max(1, min(4, int(os.environ.get("BAG_UPLOAD_WORKERS", "3") or 3)))
 
 
 BAG_TYPES = {
@@ -255,76 +258,50 @@ class BagUploadWorkflow(BaseWorkflow):
         if not source_images:
             raise ValueError("压缩包里没有找到 PNG 图片")
 
-        results = []
-        failures = []
+        tasks = []
         next_number = None
         suffix = BAG_TYPES.get(bag_type, BAG_TYPES["岩茶"])["suffix"]
         price = self._bag_price(bag_type)
         for index, item in enumerate(source_images, start=1):
             raw_title = item["title"]
             title = self._display_title_from_filename(raw_title)
-            image_path = item["path"]
-            try:
-                existing_code = self._extract_sj_code(raw_title)
-                existing_product = None
-                if existing_code:
-                    code = existing_code
-                    existing_product = self._find_existing_product_by_code(code)
-                    if not existing_product:
-                        raise ValueError(f"文件名带编号 {code}，但 ERP 里没有找到对应商品；为避免重复创建，已跳过。")
-                    if title == "泡袋新品":
-                        title = self._display_title_from_filename(
-                            existing_product.get("title") or existing_product.get("name") or existing_product.get("product_name") or ""
-                        )
-                    erp_title = existing_product.get("title") or self._format_erp_title(code, title, suffix)
-                else:
-                    code = self._next_sj_code(next_number or 506)
-                    next_number = int(code[2:]) + 1 if re.match(r"^SJ\d+$", code) else None
-                    erp_title = self._format_erp_title(code, title, suffix)
-                category = self._classify_category(title, bag_type) or self._default_category(bag_type)
-                assets = self._generate_preview_assets(
-                    image_path=str(image_path),
-                    code=code,
-                    title=title,
-                    bag_type=bag_type,
-                )
-                main_oss = self._upload_to_oss(Path(assets["main_path"]))
-                detail_oss = self._upload_to_oss(Path(assets["detail_path"]))
-                if existing_product:
-                    erp_result = self._update_existing_product_images(
-                        existing_product=existing_product,
-                        code=code,
-                        category_id=category["category_id"],
-                        main_url=main_oss["url"],
-                        detail_url=detail_oss["url"],
-                        price=price,
-                    )
-                    action = "更新"
-                else:
-                    erp_result = self._save_product_to_erp(
-                        title=erp_title,
-                        code=code,
-                        category_id=category["category_id"],
-                        main_url=main_oss["url"],
-                        detail_url=detail_oss["url"],
-                        price=price,
-                    )
-                    action = "新增"
-                self._cleanup_generated_assets(assets)
-                results.append({
-                    "index": index,
-                    "title": erp_title,
-                    "source_title": title,
-                    "code": code,
-                    "action": action,
-                    "category_name": category["category_name"],
-                    "main_url": main_oss["url"],
-                    "detail_url": detail_oss["url"],
-                    "erp_result": erp_result,
-                })
-            except Exception as e:
-                logger.error(f"泡袋商品上传失败: title={title}, error={e}")
-                failures.append({"index": index, "title": title, "error": str(e)})
+            existing_code = self._extract_sj_code(raw_title)
+            if existing_code:
+                code = existing_code
+            else:
+                code = self._next_sj_code(next_number or 506)
+                next_number = int(code[2:]) + 1 if re.match(r"^SJ\d+$", code) else None
+            tasks.append({
+                "index": index,
+                "raw_title": raw_title,
+                "title": title,
+                "image_path": str(item["path"]),
+                "code": code,
+                "has_existing_code": bool(existing_code),
+                "suffix": suffix,
+                "bag_type": bag_type,
+                "price": price,
+            })
+
+        results = []
+        failures = []
+        workers = min(BAG_UPLOAD_WORKERS, len(tasks))
+        logger.info(f"泡袋批量处理开始: total={len(tasks)}, workers={workers}, bag_type={bag_type}")
+        if workers <= 1:
+            for task in tasks:
+                self._process_batch_item(task, results, failures)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_map = {executor.submit(self._process_batch_item_result, task): task for task in tasks}
+                for future in as_completed(future_map):
+                    result = future.result()
+                    if result.get("ok"):
+                        results.append(result["item"])
+                    else:
+                        failures.append(result["item"])
+
+        results.sort(key=lambda item: item["index"])
+        failures.sort(key=lambda item: item["index"])
 
         if not failures:
             self._delete_path(source, "泡袋压缩包")
@@ -338,6 +315,78 @@ class BagUploadWorkflow(BaseWorkflow):
             "success": results,
             "failures": failures,
         }
+
+    def _process_batch_item(self, task: dict, results: list[dict], failures: list[dict]) -> None:
+        result = self._process_batch_item_result(task)
+        if result.get("ok"):
+            results.append(result["item"])
+        else:
+            failures.append(result["item"])
+
+    def _process_batch_item_result(self, task: dict) -> dict:
+        title = task["title"]
+        code = task["code"]
+        try:
+            existing_product = None
+            if task["has_existing_code"]:
+                existing_product = self._find_existing_product_by_code(code)
+                if not existing_product:
+                    raise ValueError(f"文件名带编号 {code}，但 ERP 里没有找到对应商品；为避免重复创建，已跳过。")
+                if title == "泡袋新品":
+                    title = self._display_title_from_filename(
+                        existing_product.get("title") or existing_product.get("name") or existing_product.get("product_name") or ""
+                    )
+                erp_title = existing_product.get("title") or self._format_erp_title(code, title, task["suffix"])
+            else:
+                erp_title = self._format_erp_title(code, title, task["suffix"])
+
+            category = self._classify_category(title, task["bag_type"]) or self._default_category(task["bag_type"])
+            assets = self._generate_preview_assets(
+                image_path=task["image_path"],
+                code=code,
+                title=title,
+                bag_type=task["bag_type"],
+            )
+            main_oss = self._upload_to_oss(Path(assets["main_path"]))
+            detail_oss = self._upload_to_oss(Path(assets["detail_path"]))
+            if existing_product:
+                erp_result = self._update_existing_product_images(
+                    existing_product=existing_product,
+                    code=code,
+                    category_id=category["category_id"],
+                    main_url=main_oss["url"],
+                    detail_url=detail_oss["url"],
+                    price=task["price"],
+                )
+                action = "更新"
+            else:
+                erp_result = self._save_product_to_erp(
+                    title=erp_title,
+                    code=code,
+                    category_id=category["category_id"],
+                    main_url=main_oss["url"],
+                    detail_url=detail_oss["url"],
+                    price=task["price"],
+                )
+                action = "新增"
+            self._cleanup_generated_assets(assets)
+            return {
+                "ok": True,
+                "item": {
+                    "index": task["index"],
+                    "title": erp_title,
+                    "source_title": title,
+                    "code": code,
+                    "action": action,
+                    "category_name": category["category_name"],
+                    "main_url": main_oss["url"],
+                    "detail_url": detail_oss["url"],
+                    "erp_result": erp_result,
+                },
+            }
+        except Exception as e:
+            logger.error(f"泡袋商品上传失败: title={title}, error={e}")
+            return {"ok": False, "item": {"index": task["index"], "title": title, "error": str(e)}}
 
     def _batch_done_text(self, result: dict) -> str:
         success = result.get("success") or []
@@ -383,11 +432,11 @@ class BagUploadWorkflow(BaseWorkflow):
         with zipfile.ZipFile(source) as zf:
             infos = [
                 info for info in zf.infolist()
-                if not info.is_dir() and Path(info.filename).suffix.lower() == ".png"
+                if not info.is_dir() and Path(self._zip_member_name(info)).suffix.lower() == ".png"
             ]
-            infos.sort(key=lambda item: item.filename)
+            infos.sort(key=self._zip_member_name)
             for index, info in enumerate(infos, start=1):
-                raw_name = Path(info.filename).name
+                raw_name = posixpath.basename(self._zip_member_name(info).replace("\\", "/"))
                 title = self._title_from_filename(raw_name)
                 out_name = f"{index:03d}_{self._safe_filename(raw_name)}"
                 out_path = source_dir / out_name
@@ -395,6 +444,23 @@ class BagUploadWorkflow(BaseWorkflow):
                     shutil.copyfileobj(src, dst)
                 images.append({"title": title, "path": out_path})
         return images
+
+    def _zip_member_name(self, info: zipfile.ZipInfo) -> str:
+        name = info.filename or ""
+        if info.flag_bits & 0x800:
+            return name
+        try:
+            raw = name.encode("cp437")
+        except UnicodeEncodeError:
+            return name
+        for encoding in ("gbk", "cp936", "utf-8"):
+            try:
+                decoded = raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+            if decoded:
+                return decoded
+        return name
 
     def _title_from_filename(self, filename: str) -> str:
         title = Path(filename).stem.strip()

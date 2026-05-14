@@ -405,13 +405,27 @@ def detail_svg(image_href, code, title):
 
 
 def render_svg(svg_text, output_png, keep_svg=False):
-    output_png.parent.mkdir(parents=True, exist_ok=True)
+    render_svgs([(svg_text, output_png)], keep_svg)
+
+
+def render_svgs(items, keep_svg=False):
+    if not items:
+        return
+    for _, output_png in items:
+        output_png.parent.mkdir(parents=True, exist_ok=True)
+
     with tempfile.TemporaryDirectory() as tmp:
-        svg_path = Path(tmp) / f"{output_png.stem}.svg"
-        svg_path.write_text(svg_text, encoding="utf-8")
-        subprocess.run(["node", str(RENDERER), str(svg_path), str(output_png)], cwd=str(ROOT), check=True)
+        args = ["node", str(RENDERER)]
+        svg_paths = []
+        for index, (svg_text, output_png) in enumerate(items, start=1):
+            svg_path = Path(tmp) / f"{index:02d}-{output_png.stem}.svg"
+            svg_path.write_text(svg_text, encoding="utf-8")
+            svg_paths.append((svg_path, output_png))
+            args.extend([str(svg_path), str(output_png)])
+        subprocess.run(args, cwd=str(ROOT), check=True)
         if keep_svg:
-            shutil.copy2(svg_path, output_png.with_suffix(".svg"))
+            for svg_path, output_png in svg_paths:
+                shutil.copy2(svg_path, output_png.with_suffix(".svg"))
 
 
 def generate_one(input_path, output_root, code, title, keep_svg=False):
@@ -424,8 +438,13 @@ def generate_one(input_path, output_root, code, title, keep_svg=False):
     detail_path = output_root / f"{safe_code}-泡袋详情页.png"
 
     shutil.copy2(input_path, standard_path)
-    render_svg(main_svg(image_href, code, title), main_path, keep_svg)
-    render_svg(detail_svg(image_href, code, title), detail_path, keep_svg)
+    render_svgs(
+        [
+            (main_svg(image_href, code, title), main_path),
+            (detail_svg(image_href, code, title), detail_path),
+        ],
+        keep_svg,
+    )
     return standard_path, main_path, detail_path
 
 
