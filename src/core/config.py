@@ -57,6 +57,10 @@ class Config:
         return value
 
     @property
+    def project_root(self) -> Path:
+        return Path(__file__).parent.parent.parent
+
+    @property
     def erp_api_base(self) -> str:
         return self.get("erp.api_base")
 
@@ -100,7 +104,7 @@ class Config:
 
     @property
     def knowledge_base_path(self) -> str:
-        return self.get("knowledge_base.path", "./src/knowledge/sjbzwiki")
+        return self.get_with_env("knowledge_base.path", "../sjwiki")
 
     @property
     def knowledge_preload(self) -> bool:

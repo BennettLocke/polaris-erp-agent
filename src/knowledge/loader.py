@@ -21,7 +21,13 @@ class KnowledgeLoader:
 
     def __init__(self):
         self.config = get_config()
-        self.base_path = Path(self.config.knowledge_base_path)
+        self.base_path = self._resolve_base_path(self.config.knowledge_base_path)
+
+    def _resolve_base_path(self, configured_path: str) -> Path:
+        path = Path(configured_path).expanduser()
+        if not path.is_absolute():
+            path = self.config.project_root / path
+        return path.resolve(strict=False)
 
     def load(self, force: bool = False) -> dict[str, dict]:
         """

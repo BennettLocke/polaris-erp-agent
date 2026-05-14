@@ -65,7 +65,7 @@ aliyun_asr:
 # 知识库配置
 # ============================================================
 knowledge_base:
-  path: "../sjbzwiki/sjbzwiki"
+  path: "${SJAGENT_WIKI_PATH}"
   preload: true
   embedding_dim: 384
 
