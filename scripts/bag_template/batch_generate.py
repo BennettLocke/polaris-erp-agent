@@ -101,6 +101,9 @@ def font(size, bold=False):
         r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\arial.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc" if bold else "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/source-han-sans/SourceHanSansSC-Bold.otf" if bold else "/usr/share/fonts/opentype/source-han-sans/SourceHanSansSC-Regular.otf",
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansMono-Bold.ttf" if bold else "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
@@ -224,7 +227,7 @@ def detail_spec_layout(category, spec_text):
 
 
 def font_family():
-    return "Microsoft YaHei, WenQuanYi Zen Hei, Droid Sans Fallback, Arial, sans-serif"
+    return "Microsoft YaHei, Noto Sans CJK SC, Source Han Sans SC, WenQuanYi Zen Hei, Droid Sans Fallback, Arial, sans-serif"
 
 
 def bag_image_element(id_, href, base_x, base_y, base_w, base_h, mask):

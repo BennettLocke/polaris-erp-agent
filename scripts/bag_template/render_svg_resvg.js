@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const { Resvg } = require("@resvg/resvg-js");
 
 const args = process.argv.slice(2);
+const defaultFont = process.env.BAG_TEMPLATE_FONT_FAMILY || "Noto Sans CJK SC";
 
 if (args.length < 2 || args.length % 2 !== 0) {
   console.error("Usage: node render_svg_resvg.js input.svg output.png [input2.svg output2.png ...]");
@@ -16,7 +17,7 @@ for (let i = 0; i < args.length; i += 2) {
     fitTo: { mode: "original" },
     font: {
       loadSystemFonts: true,
-      defaultFontFamily: "WenQuanYi Zen Hei",
+      defaultFontFamily: defaultFont,
     },
   });
 
