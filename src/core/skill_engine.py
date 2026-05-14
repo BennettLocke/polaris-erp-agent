@@ -279,6 +279,8 @@ class SkillEngine:
             return self._extract_sales_query_params(text)
         if self._is_sales_delete_request(text):
             return self._extract_sales_delete_params(text)
+        if self._is_transfer_request(text):
+            return self._extract_transfer_params(text)
         if self._is_stocktaking_request(text):
             return self._extract_stocktaking_params(text)
         if self._is_inventory_request(text):
@@ -312,6 +314,8 @@ class SkillEngine:
         ):
             return True
         if intent == "stocktaking" and fast_extracted.get("products"):
+            return True
+        if intent == "transfer" and fast_extracted.get("from") and fast_extracted.get("to") and fast_extracted.get("products"):
             return True
         if intent == "order" and fast_extracted.get("products") and fast_extracted.get("customer"):
             return True
@@ -654,7 +658,87 @@ class SkillEngine:
 
     def _is_inventory_request(self, user_input: str) -> bool:
         words = ["库存", "有货", "有库存", "还有", "还剩", "够不够", "够吗", "查一下", "查下"]
-        return any(w in user_input for w in words) and not any(w in user_input for w in ["下单", "开单", "进货", "调拨"])
+        return any(w in user_input for w in words) and not any(w in user_input for w in ["下单", "开单", "进货", "调拨", "调货"])
+
+    def _is_transfer_request(self, user_input: str) -> bool:
+        return any(w in user_input for w in ["调货", "调拨", "调仓", "仓库调"])
+
+    def _extract_transfer_params(self, user_input: str) -> dict:
+        result = {"intent": "transfer"}
+        text = user_input.strip()
+
+        def normalize_warehouse(value: str) -> str:
+            if not value:
+                return ""
+            if "自己" in value or "店里" in value or "本店" in value:
+                return "自己店里"
+            if "百鑫" in value:
+                return "百鑫"
+            return value
+
+        warehouse = r"(自己店里|自己|店里|本店|百鑫仓库|百鑫)"
+        direction_patterns = [
+            rf"从\s*{warehouse}\s*(?:仓库)?\s*(?:调货|调拨|调|转)?\s*(?:到|至|进|入|给)\s*{warehouse}",
+            rf"{warehouse}\s*(?:仓库)?\s*(?:到|至|调到|转到|调入|进|入|给)\s*{warehouse}",
+        ]
+        for pattern in direction_patterns:
+            m = re.search(pattern, text)
+            if m:
+                result["from"] = normalize_warehouse(m.group(1))
+                result["to"] = normalize_warehouse(m.group(2))
+                text = (text[:m.start()] + " " + text[m.end():]).strip()
+                break
+
+        if "from" not in result:
+            from_match = re.search(rf"从\s*{warehouse}", text)
+            to_match = re.search(rf"(?:到|至|调到|转到|调入|进|入|给)\s*{warehouse}", text)
+            if from_match:
+                result["from"] = normalize_warehouse(from_match.group(1))
+                text = (text[:from_match.start()] + " " + text[from_match.end():]).strip()
+            if to_match:
+                result["to"] = normalize_warehouse(to_match.group(1))
+                text = (text[:to_match.start()] + " " + text[to_match.end():]).strip()
+
+        for word in ["帮我", "请", "调货", "调拨", "调仓", "仓库", "商品", "产品"]:
+            text = text.replace(word, " ")
+        text = re.sub(r"[，,;；\n]+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        products = []
+        for match in re.finditer(r"(.+?)\s*(\d+)\s*(套|张|个|件|捆|斤)", text):
+            raw_name = match.group(1).strip()
+            product = self._build_transfer_product(raw_name, match.group(2), match.group(3))
+            if product:
+                products.append(product)
+
+        if not products:
+            for match in re.finditer(r"(\d+)\s*(套|张|个|件|捆|斤)\s*(.+)", text):
+                raw_name = match.group(3).strip()
+                product = self._build_transfer_product(raw_name, match.group(1), match.group(2))
+                if product:
+                    products.append(product)
+
+        if products:
+            result["products"] = products
+        return result
+
+    def _build_transfer_product(self, raw_name: str, quantity: str, unit: str) -> dict | None:
+        raw_name = re.sub(r"^(?:商品|产品|礼盒|盒子)\s*", "", raw_name or "").strip()
+        raw_name = raw_name.strip(" ：:，,。")
+        if not raw_name:
+            return None
+        color = self._extract_color_from_text(raw_name)
+        if color:
+            raw_name = raw_name.replace(color, "").strip()
+        name = self._normalize_inventory_query_keyword(raw_name)
+        if not name:
+            return None
+        return {
+            "name": name,
+            "quantity": int(quantity),
+            "unit": unit,
+            "color": color,
+        }
 
     def _is_stocktaking_request(self, user_input: str) -> bool:
         return any(w in user_input for w in ["盘点", "盘一下", "库存同步", "同步库存", "校准库存"])
@@ -742,6 +826,8 @@ class SkillEngine:
         return re.sub(r"\s+", " ", keyword).strip()
 
     def _is_order_request(self, user_input: str) -> bool:
+        if self._is_transfer_request(user_input):
+            return False
         has_unit = any(unit in user_input for unit in ["套", "张", "个", "件", "捆", "斤"])
         if not has_unit:
             return False
@@ -828,12 +914,18 @@ class SkillEngine:
                 return {"question": "请问要调整哪个系列？例如：把青云加到1件起系列", "state": {"partial_params": params}}
 
         elif intent == "transfer":
+            for key in ("from", "to"):
+                if params.get(key):
+                    params[key] = "自己店里" if any(w in str(params[key]) for w in ["自己", "店里", "本店"]) else "百鑫"
             if not params.get("from") or not params.get("to"):
                 return {"question": "请问从哪个仓库调到哪个仓库？例如：从自己店里调10套到百鑫", "state": {"partial_params": params}}
             if params["from"] == params["to"]:
                 return {"question": "调出和调入仓库不能相同，请重新指定", "state": {"partial_params": params}}
             if not params.get("products"):
                 return {"question": "请问要调拨什么商品？", "state": {"partial_params": params}}
+            for p in params.get("products", []):
+                if not p.get("name"):
+                    return {"question": "商品信息不完整，请告诉我商品名和数量，例如：岩彩一两橙色8套", "state": {"partial_params": params}}
 
         elif intent == "sales_manage":
             if params.get("action") == "modify":
@@ -969,6 +1061,14 @@ class SkillEngine:
                 if products:
                     new_params["products"] = products
 
+        elif intent == "transfer":
+            parsed = self._extract_transfer_params(text)
+            for key in ("from", "to", "products"):
+                if parsed.get(key) and not partial.get(key):
+                    new_params[key] = parsed[key]
+            if partial.get("products") and parsed.get("products"):
+                new_params["products"] = parsed["products"]
+
         elif intent == "series_manage":
             series = self._extract_series_names(text)
             if series:
@@ -988,7 +1088,7 @@ class SkillEngine:
             return False
 
         # 长输入（>6字）且包含明确新指令词 → 新请求
-        new_request_words = ["删除", "所有", "全部", "最后", "几个", "批量", "查询", "下单", "库存", "进货", "调拨", "盘点", "客户"]
+        new_request_words = ["删除", "所有", "全部", "最后", "几个", "批量", "查询", "下单", "库存", "进货", "调拨", "调货", "盘点", "客户"]
         if len(text) > 6 and any(w in text for w in new_request_words):
             return True
 
@@ -1051,7 +1151,7 @@ class SkillEngine:
             return True
         new_topic_words = [
             "查库存", "库存", "有货", "下单", "开单", "创建工作流", "工作流订单",
-            "删除", "作废", "进货", "入库", "调拨", "盘点", "查询销售单", "查订单",
+            "删除", "作废", "进货", "入库", "调拨", "调货", "盘点", "查询销售单", "查订单",
         ]
         return any(w in text for w in new_topic_words)
 
@@ -1083,6 +1183,11 @@ class SkillEngine:
         if intent == "order":
             if not partial.get("customer"):
                 return bool(re.fullmatch(r'[\u4e00-\u9fa5A-Za-z0-9（）()【】\-]+', text))
+            if not partial.get("products"):
+                return bool(re.search(r'\d+\s*(套|张|个|件|捆|斤)', text))
+        if intent == "transfer":
+            if not (partial.get("from") and partial.get("to")):
+                return any(w in text for w in ["自己", "店里", "本店", "百鑫", "到", "从"])
             if not partial.get("products"):
                 return bool(re.search(r'\d+\s*(套|张|个|件|捆|斤)', text))
         return False
