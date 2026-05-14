@@ -86,6 +86,10 @@ class SkillEngine:
         if admin_reply:
             session.save_turn(user_input, admin_reply)
             return admin_reply
+        if self._is_internal_info_query(user_input):
+            reply = "这属于内部配置信息。需要查询时请使用：管理查询 <口令> <数据库名|数据库配置|知识库路径|智能体路径>。"
+            session.save_turn(user_input, reply)
+            return reply
 
         correction_intent = parse_correction(user_input)
         if correction_intent:
@@ -253,6 +257,44 @@ class SkillEngine:
             return f"智能体项目路径：{config.project_root}"
 
         return "管理员查询只支持：数据库名、数据库配置、知识库路径、智能体路径。密码、API Key、SSH 私钥等敏感密钥不会返回。"
+
+    def _is_internal_info_query(self, user_input: str) -> bool:
+        text = user_input.strip()
+        lowered = text.lower()
+        if re.match(r"^\s*(?:管理查询|管理员查询|admin\s+query)\b", text, re.IGNORECASE):
+            return False
+
+        direct_markers = [
+            "config_query",
+            "db_query",
+            "select database",
+            "sjagent_admin_query_token",
+            "sjagent_wiki_path",
+            ".env",
+            "api key",
+            "apikey",
+            "ssh",
+            "私钥",
+            "密钥",
+        ]
+        if any(marker in lowered for marker in direct_markers):
+            return True
+
+        internal_subjects = [
+            "数据库",
+            "database",
+            "知识库路径",
+            "配置在哪里",
+            "配置路径",
+            "服务器路径",
+            "项目路径",
+            "智能体路径",
+            "密码",
+            "口令",
+            "token",
+        ]
+        owner_scope = ["你的", "你们的", "服务器", "系统", "智能体", "北极星", "内部"]
+        return any(word in text or word in lowered for word in internal_subjects) and any(scope in text for scope in owner_scope)
 
     def _handle_learning_correction(self, session: SessionManager, user_input: str, intent: str) -> str | None:
         last = session.get_meta("last_extraction") or {}
