@@ -130,8 +130,32 @@ class SeriesManageWorkflow(BaseWorkflow):
         self._set_list(data, NON_ONE_PATH, non_one)
         self._save_lists_preserving_comments(one_piece, non_one)
         get_config().reload()
+        self._sync_wiki_rules(action, series, one_piece, non_one)
 
         return f"{change}\n当前1件起订：{'、'.join(one_piece) or '无'}\n当前非1件起订：{'、'.join(non_one) or '无'}"
+
+    def _sync_wiki_rules(self, action: str, series: list[str], one_piece: list[str], non_one: list[str]) -> None:
+        try:
+            from src.knowledge.wiki_inbox import record_wiki_inbox, sync_series_rules_page
+
+            sync_series_rules_page(one_piece, non_one, source="series_manage")
+            action_label = {
+                "set_one_piece": "设为1件起订",
+                "set_non_one_piece": "设为非1件起订",
+                "remove_non_one_piece": "从非1件起订移除",
+            }.get(action, action)
+            record_wiki_inbox(
+                title=f"礼盒起订规则更新：{'、'.join(series)}",
+                category="series_rule",
+                source="series_manage",
+                body=(
+                    f"已确认将「{'、'.join(series)}」{action_label}。\n\n"
+                    f"- 当前1件起订：{'、'.join(one_piece) or '无'}\n"
+                    f"- 当前非1件起订：{'、'.join(non_one) or '无'}"
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"同步系列规则到知识库失败: {e}")
 
     def _format_current_rules(self) -> str:
         data = self._load_config()

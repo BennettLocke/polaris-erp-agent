@@ -86,6 +86,10 @@ class SkillEngine:
         if admin_reply:
             session.save_turn(user_input, admin_reply)
             return admin_reply
+        wiki_memory_reply = self._handle_wiki_memory_request(user_input)
+        if wiki_memory_reply:
+            session.save_turn(user_input, wiki_memory_reply)
+            return wiki_memory_reply
         if self._is_internal_info_query(user_input):
             reply = "这属于内部配置信息。需要查询时请使用：管理查询 <口令> <数据库名|数据库配置|知识库路径|智能体路径>。"
             session.save_turn(user_input, reply)
@@ -308,10 +312,52 @@ class SkillEngine:
             if key in old_params:
                 corrected[key] = old_params[key]
         record_example(last_text, corrected, source="correction")
+        self._record_correction_to_wiki(last_text, corrected, intent)
         session.clear_pending()
         reply = f"已记住：以后遇到「{last_text}」这类说法，优先按「{self._intent_label(intent)}」处理。"
         session.save_turn(user_input, reply)
         return reply
+
+    def _handle_wiki_memory_request(self, user_input: str) -> str | None:
+        match = re.match(r"^\s*(?:记到知识库|写入知识库|更新知识库|知识库记一下)[:：]?\s*(.+?)\s*$", user_input)
+        if not match:
+            return None
+        note = match.group(1).strip()
+        if not note:
+            return "请把要记录的内容写在「记到知识库：」后面。"
+        try:
+            from src.knowledge.wiki_inbox import record_wiki_inbox
+
+            path = record_wiki_inbox(
+                title="人工补充知识",
+                body=note,
+                category="manual_note",
+                source="user_command",
+            )
+            if not path:
+                return "这条内容为空或包含疑似敏感信息，已跳过写入知识库。"
+            return f"已写入知识库待确认区：{path.name}。确认无误后再合并到正式页面。"
+        except Exception as e:
+            logger.warning(f"写入知识库待确认区失败: {e}")
+            return f"写入知识库失败：{e}"
+
+    def _record_correction_to_wiki(self, last_text: str, corrected: dict, intent: str) -> None:
+        try:
+            from src.knowledge.wiki_inbox import record_wiki_inbox
+
+            record_wiki_inbox(
+                title=f"意图纠错：{self._intent_label(intent)}",
+                category="correction",
+                source="learning_correction",
+                body=(
+                    f"用户纠正了一条说法：\n\n"
+                    f"- 原句：{last_text}\n"
+                    f"- 正确意图：{intent}\n"
+                    f"- 结构化结果：{corrected}"
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"写入纠错到知识库失败: {e}")
 
     def _intent_label(self, intent: str) -> str:
         labels = {
