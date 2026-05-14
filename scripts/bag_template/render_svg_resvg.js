@@ -16,7 +16,7 @@ for (let i = 0; i < args.length; i += 2) {
     fitTo: { mode: "original" },
     font: {
       loadSystemFonts: true,
-      defaultFontFamily: "Microsoft YaHei",
+      defaultFontFamily: "WenQuanYi Zen Hei",
     },
   });
 
