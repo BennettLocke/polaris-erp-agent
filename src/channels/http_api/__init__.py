@@ -27,6 +27,7 @@ app.config.update(
 _agent: Agent | None = None
 UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "data" / "uploads"
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
+ALLOWED_BAG_ARCHIVE_EXTENSIONS = {"zip"}
 SHOPXO_AUTH_CACHE: dict[str, tuple[float, dict]] = {}
 SHOPXO_AUTH_CACHE_TTL = 86400 * 30
 WEB_AUTH_TABLE = "sjagent_web_users"
@@ -1555,6 +1556,29 @@ def _allowed_image(filename: str) -> bool:
     return suffix in ALLOWED_IMAGE_EXTENSIONS
 
 
+def _allowed_bag_upload(filename: str) -> bool:
+    suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return suffix in ALLOWED_IMAGE_EXTENSIONS or suffix in ALLOWED_BAG_ARCHIVE_EXTENSIONS
+
+
+def _safe_upload_suffix(filename: str, allowed: set[str], default: str = ".jpg") -> str:
+    raw_suffix = Path(str(filename or "")).suffix.lower()
+    if raw_suffix.startswith(".") and raw_suffix[1:] in allowed:
+        return raw_suffix
+    safe_name = secure_filename(filename or "")
+    safe_suffix = Path(safe_name).suffix.lower()
+    if safe_suffix.startswith(".") and safe_suffix[1:] in allowed:
+        return safe_suffix
+    return default
+
+
+def _delete_local_upload(path: Path, label: str = "上传图片") -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning(f"{label} OSS 上传成功，但删除本地临时文件失败: {path}, error={e}")
+
+
 def _format_image_result(result: dict) -> str:
     items = result.get("items") or []
     if items:
@@ -2085,26 +2109,31 @@ def image_upload():
     session_id = request.form.get("session_id") or f"http_{int(time.time())}"
     if not file or not file.filename:
         return jsonify({"code": 400, "msg": "image is required"}), 400
-    if not _allowed_image(file.filename):
-        return jsonify({"code": 400, "msg": "只支持 png/jpg/jpeg/webp/bmp 图片"}), 400
 
     from src.core.session import SessionManager
     from src.core.tools.caller import get_tool_caller
     from src.core.nodes.image_workflow import process_single_image
 
+    session = SessionManager(session_id)
+    is_bag_upload = session.has_pending() and session.get_pending_intent() == "bag_upload"
+    if is_bag_upload:
+        if not _allowed_bag_upload(file.filename):
+            return jsonify({"code": 400, "msg": "泡袋流程只支持 png/jpg/jpeg/webp/bmp 图片或 zip 压缩包"}), 400
+    elif not _allowed_image(file.filename):
+        return jsonify({"code": 400, "msg": "只支持 png/jpg/jpeg/webp/bmp 图片"}), 400
+
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    original_name = secure_filename(file.filename) or "upload.jpg"
-    suffix = Path(original_name).suffix.lower() or ".jpg"
+    allowed_suffixes = ALLOWED_IMAGE_EXTENSIONS | (ALLOWED_BAG_ARCHIVE_EXTENSIONS if is_bag_upload else set())
+    suffix = _safe_upload_suffix(file.filename, allowed_suffixes, ".jpg")
     save_name = f"{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
     save_path = UPLOAD_DIR / save_name
     file.save(save_path)
 
     try:
-        session = SessionManager(session_id)
-        if session.has_pending() and session.get_pending_intent() == "bag_upload":
+        if is_bag_upload:
             if _agent is None:
                 return jsonify({"code": 500, "msg": "Agent not initialized"}), 500
-            preview_url = f"/api/images/file/{save_name}"
+            preview_url = f"/api/images/file/{save_name}" if _allowed_image(save_name) else ""
             response_text = _agent.run(
                 user_input=f"图片: {save_path} 预览: {preview_url}",
                 user_id=_request_user_id("http_user"),
@@ -2185,6 +2214,7 @@ def workflow_image_upload():
             return jsonify({"code": 500, "msg": "OSS 上传返回异常", "data": result}), 500
         if result.get("error"):
             return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        _delete_local_upload(save_path, "工作流订单图片")
         return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"工作流订单图片上传 OSS 失败: {e}")
@@ -2929,7 +2959,7 @@ def product_upload_api():
             return jsonify({"code": 400, "msg": "只支持 png/jpg/jpeg/webp/bmp 图片"}), 400
 
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        suffix = Path(filename).suffix.lower() or ".jpg"
+        suffix = _safe_upload_suffix(file.filename, ALLOWED_IMAGE_EXTENSIONS, ".jpg")
         save_name = f"product_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
         save_path = UPLOAD_DIR / save_name
         file.save(save_path)
@@ -2944,6 +2974,7 @@ def product_upload_api():
             return jsonify({"code": 500, "msg": "OSS 上传返回异常", "data": result}), 500
         if result.get("error"):
             return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        _delete_local_upload(save_path, "商品图片")
         return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"商品图片上传异常: {e}")

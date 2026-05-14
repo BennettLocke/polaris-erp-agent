@@ -6,14 +6,23 @@ import numpy as np
 from PIL import Image, ImageOps
 
 
-TARGET_W = 550
-TARGET_H = 1500
-TARGET_RATIO = TARGET_W / TARGET_H
+DEFAULT_TARGET_W = 550
+DEFAULT_TARGET_H = 1500
 
 
 def load_image(path):
     image = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
     return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+
+def write_image(path, image, params=None):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ext = path.suffix or ".png"
+    ok, encoded = cv2.imencode(ext, image, params or [])
+    if not ok:
+        raise RuntimeError(f"Could not encode image: {path}")
+    encoded.tofile(str(path))
 
 
 def order_points(points):
@@ -167,38 +176,38 @@ def linefit_rect(mask, contour):
     )
 
 
-def warp_to_target(image, rect):
+def warp_to_target(image, rect, target_w=DEFAULT_TARGET_W, target_h=DEFAULT_TARGET_H):
     rect = order_points(rect)
     dst = np.array(
-        [[0, 0], [TARGET_W - 1, 0], [TARGET_W - 1, TARGET_H - 1], [0, TARGET_H - 1]],
+        [[0, 0], [target_w - 1, 0], [target_w - 1, target_h - 1], [0, target_h - 1]],
         dtype=np.float32,
     )
     matrix = cv2.getPerspectiveTransform(rect, dst)
     return cv2.warpPerspective(
         image,
         matrix,
-        (TARGET_W, TARGET_H),
+        (target_w, target_h),
         flags=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_REPLICATE,
     )
 
 
-def prepare(image, debug_dir=None):
+def prepare(image, debug_dir=None, target_w=DEFAULT_TARGET_W, target_h=DEFAULT_TARGET_H):
     mask, contour = make_mask(image)
     rect = linefit_rect(mask, contour)
     method = "linefit"
     if rect is None:
         rect = raw_rect(contour)
         method = "raw"
-    warped = warp_to_target(image, rect)
+    warped = warp_to_target(image, rect, target_w=target_w, target_h=target_h)
 
     if debug_dir:
         debug = Path(debug_dir)
         debug.mkdir(parents=True, exist_ok=True)
         overlay = image.copy()
         cv2.polylines(overlay, [order_points(rect).astype(np.int32)], True, (0, 255, 255), 6)
-        cv2.imwrite(str(debug / f"corners-{method}.jpg"), overlay)
-        cv2.imwrite(str(debug / "mask.png"), mask)
+        write_image(debug / f"corners-{method}.jpg", overlay)
+        write_image(debug / "mask.png", mask)
     return warped, method
 
 
@@ -207,14 +216,20 @@ def main():
     parser.add_argument("input")
     parser.add_argument("output")
     parser.add_argument("--debug-dir")
+    parser.add_argument("--target-width", type=int, default=DEFAULT_TARGET_W)
+    parser.add_argument("--target-height", type=int, default=DEFAULT_TARGET_H)
     args = parser.parse_args()
 
     image = load_image(args.input)
-    prepared, method = prepare(image, debug_dir=args.debug_dir)
+    prepared, method = prepare(
+        image,
+        debug_dir=args.debug_dir,
+        target_w=args.target_width,
+        target_h=args.target_height,
+    )
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(output), prepared, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-    print(f"saved {output} {TARGET_W}x{TARGET_H} method={method}")
+    write_image(output, prepared, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    print(f"saved {output} {args.target_width}x{args.target_height} method={method}")
 
 
 if __name__ == "__main__":

@@ -464,9 +464,19 @@ function productLineHtml(product = {}) {
   return `<li><strong>${escapeHtml(name)}</strong>${color ? `<span>${escapeHtml(color)}</span>` : ""}<span>${escapeHtml(`${qty}${unit}`)}</span>${warehouse ? `<span>${escapeHtml(warehouse)}</span>` : ""}${price ? `<span>${escapeHtml(price)}</span>` : ""}</li>`;
 }
 
+function pendingActionOf(session = state.session) {
+  const stateData = (session && session.state) || {};
+  return (session && session.pending_action) || stateData.pending_action || "";
+}
+
+function isConfirmablePending(session = state.session) {
+  const action = pendingActionOf(session);
+  return action.includes("confirm_");
+}
+
 function pendingSummaryHtml(session = state.session) {
   const stateData = session.state || {};
-  const action = session.pending_action || stateData.pending_action || "";
+  const action = pendingActionOf(session);
   const intent = session.pending_intent || "";
   const title = pendingTitle(session);
   let html = `<div class="business-summary"><h4>${escapeHtml(title)}</h4>`;
@@ -526,12 +536,27 @@ function pendingSummaryHtml(session = state.session) {
     ];
     html += kvRows(rows);
     if (stateData.image_path) html += `<p><b>图片：</b>${escapeHtml(String(stateData.image_path).split(/[\\\\/]/).pop())}</p>`;
+    const bagImages = [
+      ["标准图", stateData.standard_url],
+      ["主图", stateData.main_url],
+      ["详情页", stateData.detail_url],
+    ].filter((item) => item[1]);
+    if (bagImages.length) {
+      html += `<div class="bag-preview-grid">${bagImages.map(([label, url]) => `
+        <a class="bag-preview-item" href="${escapeAttr(url)}" target="_blank" rel="noopener">
+          <span>${escapeHtml(label)}</span>
+          <img src="${escapeAttr(url)}" alt="${escapeAttr(label)}">
+        </a>
+      `).join("")}</div>`;
+    }
   } else {
     const rows = flattenRows(stateData).slice(0, 12);
     html += rows.length ? kvRows(rows) : '<div class="empty">这次确认没有结构化字段，按聊天内容核对即可。</div>';
   }
 
-  html += `<p class="summary-note">确认后才会真正写入系统；取消不会执行。</p></div>`;
+  html += isConfirmablePending(session)
+    ? `<p class="summary-note">确认后才会真正写入系统；取消不会执行。</p></div>`
+    : `<p class="summary-note">按聊天里的问题继续回复；这一步不会写入系统。</p></div>`;
   return html;
 }
 
@@ -686,7 +711,7 @@ function setPendingValue(target, path, value) {
 
 function collectPendingEdits() {
   const stateCopy = JSON.parse(JSON.stringify((state.session && state.session.state) || {}));
-  const pendingAction = (state.session && state.session.pending_action) || stateCopy.pending_action || "";
+  const pendingAction = pendingActionOf(state.session);
   document.querySelectorAll("#businessConfirmBody [data-pending-path]").forEach((input) => {
     const original = input.dataset.originalValue ?? "";
     const path = input.dataset.pendingPath || "";
@@ -903,7 +928,7 @@ function closeBusinessConfirm() {
 }
 
 function showBusinessConfirm(session = state.session) {
-  if (!session || !session.has_pending) {
+  if (!session || !session.has_pending || !isConfirmablePending(session)) {
     closeBusinessConfirm();
     return;
   }
@@ -932,7 +957,7 @@ function showBusinessConfirm(session = state.session) {
   if (body) body.innerHTML = pendingEditableHtml(session);
   if (ok) {
     const stateData = session.state || {};
-    const action = session.pending_action || stateData.pending_action || "";
+    const action = pendingActionOf(session);
     ok.textContent = action.includes("confirm_image_workflow_orders")
       ? "提交工作流订单"
       : (action.includes("confirm_image_sales") ? "继续开单" : (action.includes("confirm_product_name") ? "继续匹配" : "确认执行"));
@@ -987,9 +1012,15 @@ function showInventoryPopup(keyword, list) {
 
 function pendingTitle(session = state.session) {
   const stateData = session.state || {};
-  const action = session.pending_action || stateData.pending_action || "";
+  const action = pendingActionOf(session);
   const intent = session.pending_intent || "";
-  if (action.includes("bag_") || intent.includes("bag_upload")) return "泡袋新品确认";
+  if (intent.includes("bag_upload") || action.includes("bag_")) {
+    if (action.includes("collect_bag_type")) return "选择泡袋模板";
+    if (action.includes("collect_bag_archive")) return "上传泡袋压缩包";
+    if (action.includes("collect_bag_name")) return "填写泡袋名称";
+    if (action.includes("collect_bag_image")) return "上传泡袋图片";
+    return "泡袋新品确认";
+  }
   if (action.includes("confirm_image_workflow_orders")) return "OCR识别结果";
   if (action.includes("confirm_image_sales")) return "是否继续开销售单";
   if (action.includes("confirm_product_name")) return "商品匹配确认";
@@ -1009,7 +1040,7 @@ function renderBusinessContext() {
   const data = session.state || session.last_extraction || {};
   const rows = flattenRows(data).slice(0, 18);
   const html = businessHistoryHtml();
-  if (session.has_pending) showBusinessConfirm(session);
+  if (session.has_pending && isConfirmablePending(session)) showBusinessConfirm(session);
   else closeBusinessConfirm();
   if (context) {
     let slot = $("contextCards");
@@ -1208,10 +1239,12 @@ async function sendChat(text) {
       const fileToUpload = state.pendingFile;
       state.pendingFile = null;
       clearPreview();
-      const localPreviewUrl = URL.createObjectURL(fileToUpload);
-      const userImageMessage = addMessage("user", `上传图片：${fileToUpload.name || "截图"}
-${localPreviewUrl}`, false);
-      pendingMessage = addMessage("assistant", "正在识别图片...");
+      const isImageFile = fileToUpload && ((fileToUpload.type || "").startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif)$/i.test(fileToUpload.name || ""));
+      const localPreviewUrl = isImageFile ? URL.createObjectURL(fileToUpload) : "";
+      const uploadLabel = isImageFile ? "上传图片" : "上传附件";
+      const userImageMessage = addMessage("user", `${uploadLabel}：${fileToUpload.name || "附件"}${localPreviewUrl ? `
+${localPreviewUrl}` : ""}`, false);
+      pendingMessage = addMessage("assistant", isImageFile ? "正在识别图片..." : "正在处理附件...");
       await uploadImage(fileToUpload, userImageMessage, localPreviewUrl);
       if (pendingMessage) {
         pendingMessage.remove();
@@ -1260,8 +1293,10 @@ async function uploadImage(file, userImageMessage = null, localPreviewUrl = "") 
   if (userImageMessage && previewUrl) {
     updateMessage(userImageMessage, `上传图片：${file.name || "截图"}
 ${previewUrl}`);
+  } else if (userImageMessage) {
+    updateMessage(userImageMessage, `上传附件：${file.name || "附件"}`);
   } else if (!userImageMessage) {
-    addMessage("user", `上传图片：${file.name || "截图"}${previewUrl ? `
+    addMessage("user", `${previewUrl ? "上传图片" : "上传附件"}：${file.name || "附件"}${previewUrl ? `
 ${previewUrl}` : ""}`);
   }
   if (localPreviewUrl) setTimeout(() => URL.revokeObjectURL(localPreviewUrl), 1000);
@@ -1283,9 +1318,15 @@ function showPreview(file) {
   const composer = document.querySelector(".composer");
   if (tray) {
     if (tray.dataset.previewUrl) URL.revokeObjectURL(tray.dataset.previewUrl);
-    const url = URL.createObjectURL(file);
-    tray.dataset.previewUrl = url;
-    tray.innerHTML = `<span class="attachment-chip image-chip"><img src="${url}" alt=""><span>${escapeHtml(file.name || "截图")}</span></span>`;
+    const isImage = file && ((file.type || "").startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name || ""));
+    if (isImage) {
+      const url = URL.createObjectURL(file);
+      tray.dataset.previewUrl = url;
+      tray.innerHTML = `<span class="attachment-chip image-chip"><img src="${url}" alt=""><span>${escapeHtml(file.name || "截图")}</span></span>`;
+    } else {
+      tray.dataset.previewUrl = "";
+      tray.innerHTML = `<span class="attachment-chip"><span>${escapeHtml(file.name || "附件")}</span></span>`;
+    }
   }
   if (composer) composer.classList.add("has-attachment");
 }
@@ -3098,6 +3139,13 @@ function bindEvents() {
   });
   document.querySelectorAll("[data-command-prefix]").forEach((button) => {
     button.addEventListener("click", () => insertCommandPrefix(button.dataset.commandPrefix || ""));
+  });
+  document.querySelectorAll("[data-command-send]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const input = $("chatInput");
+      if (input) input.value = button.dataset.commandSend || "";
+      sendChat();
+    });
   });
   document.addEventListener("click", (event) => {
     const saleCustomerButton = event.target.closest("[data-sale-customer-id]");

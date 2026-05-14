@@ -104,6 +104,10 @@ EXTRA_CSS = """
   .summary-lines li { display: flex; flex-wrap: wrap; gap: 6px 9px; align-items: center; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 13px; line-height: 1.45; }
   .summary-lines li strong { color: var(--text); }
   .summary-lines li span { color: var(--muted); }
+  .bag-preview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .bag-preview-item { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; text-decoration: none; }
+  .bag-preview-item span { color: var(--text); font-weight: 700; }
+  .bag-preview-item img { width: 100%; height: 116px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: #f8f8f8; }
   .summary-note { padding-top: 4px; border-top: 1px solid var(--line); }
   .history-card { display: grid; gap: 8px; }
   #contextCards { display: grid; gap: 12px; margin-top: 12px; }
