@@ -3,6 +3,8 @@ Skill 执行引擎
 
 按意图加载对应的 skill workflow，按固定步骤执行。
 """
+import hmac
+import os
 import re
 from src.core.tool_agent import classify_and_extract
 from src.core.learning import match_learned, parse_correction, record_example
@@ -79,6 +81,11 @@ class SkillEngine:
         set_current_session_id(session_id)
         session = SessionManager(session_id)
         history = session.get_history()
+
+        admin_reply = self._handle_admin_query(user_input)
+        if admin_reply:
+            session.save_turn(user_input, admin_reply)
+            return admin_reply
 
         correction_intent = parse_correction(user_input)
         if correction_intent:
@@ -200,6 +207,52 @@ class SkillEngine:
             return f"处理出错：{str(e)}"
 
         return self._handle_result(session, intent, user_input, result)
+
+    def _handle_admin_query(self, user_input: str) -> str | None:
+        match = re.match(r"^\s*(?:管理查询|管理员查询|admin\s+query)\s+(\S+)\s+(.+?)\s*$", user_input, re.IGNORECASE)
+        if not match:
+            return None
+
+        provided_token, query = match.group(1).strip(), match.group(2).strip()
+        expected_token = os.environ.get("SJAGENT_ADMIN_QUERY_TOKEN", "").strip()
+        if not expected_token:
+            return "管理员查询未启用：请先在服务器或本地 .env 设置 SJAGENT_ADMIN_QUERY_TOKEN。"
+        if not hmac.compare_digest(provided_token, expected_token):
+            return "管理员口令不正确，不能查询内部配置。"
+
+        return self._admin_query_answer(query)
+
+    def _admin_query_answer(self, query: str) -> str:
+        from src.core.config import get_config
+
+        config = get_config()
+        normalized = re.sub(r"[\s:：，。,./\\_-]+", "", query).lower()
+
+        if any(word in normalized for word in ["数据库名", "databasename", "dbname"]):
+            name = config.db_config.get("name") or "未配置"
+            return f"数据库名：{name}"
+
+        if any(word in normalized for word in ["数据库配置", "databaseconfig", "dbconfig"]):
+            db = config.db_config
+            return "\n".join([
+                "数据库配置：",
+                f"- host：{db.get('host') or '未配置'}",
+                f"- port：{db.get('port') or '未配置'}",
+                f"- name：{db.get('name') or '未配置'}",
+                f"- user：{db.get('user') or '未配置'}",
+                f"- charset：{db.get('charset') or '未配置'}",
+                "- password：已隐藏",
+            ])
+
+        if any(word in normalized for word in ["知识库路径", "wikipath", "knowledgebasepath"]):
+            from src.knowledge.loader import KnowledgeLoader
+
+            return f"知识库路径：{KnowledgeLoader().base_path}"
+
+        if any(word in normalized for word in ["项目路径", "智能体路径", "agentpath", "projectroot"]):
+            return f"智能体项目路径：{config.project_root}"
+
+        return "管理员查询只支持：数据库名、数据库配置、知识库路径、智能体路径。密码、API Key、SSH 私钥等敏感密钥不会返回。"
 
     def _handle_learning_correction(self, session: SessionManager, user_input: str, intent: str) -> str | None:
         last = session.get_meta("last_extraction") or {}
