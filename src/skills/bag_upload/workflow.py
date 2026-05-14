@@ -254,67 +254,67 @@ class BagUploadWorkflow(BaseWorkflow):
         source_dir = batch_dir / "_source"
         source_dir.mkdir(parents=True, exist_ok=True)
 
-        source_images = self._collect_batch_images(source, source_dir)
-        if not source_images:
-            raise ValueError("压缩包里没有找到 PNG 图片")
+        try:
+            source_images = self._collect_batch_images(source, source_dir)
+            if not source_images:
+                raise ValueError("压缩包里没有找到 PNG 图片")
 
-        tasks = []
-        next_number = None
-        suffix = BAG_TYPES.get(bag_type, BAG_TYPES["岩茶"])["suffix"]
-        price = self._bag_price(bag_type)
-        for index, item in enumerate(source_images, start=1):
-            raw_title = item["title"]
-            title = self._display_title_from_filename(raw_title)
-            existing_code = self._extract_sj_code(raw_title)
-            if existing_code:
-                code = existing_code
+            tasks = []
+            next_number = None
+            suffix = BAG_TYPES.get(bag_type, BAG_TYPES["岩茶"])["suffix"]
+            price = self._bag_price(bag_type)
+            for index, item in enumerate(source_images, start=1):
+                raw_title = item["title"]
+                title = self._display_title_from_filename(raw_title)
+                existing_code = self._extract_sj_code(raw_title)
+                if existing_code:
+                    code = existing_code
+                else:
+                    code = self._next_sj_code(next_number or 506)
+                    next_number = int(code[2:]) + 1 if re.match(r"^SJ\d+$", code) else None
+                tasks.append({
+                    "index": index,
+                    "raw_title": raw_title,
+                    "title": title,
+                    "image_path": str(item["path"]),
+                    "code": code,
+                    "has_existing_code": bool(existing_code),
+                    "suffix": suffix,
+                    "bag_type": bag_type,
+                    "price": price,
+                })
+
+            results = []
+            failures = []
+            workers = min(BAG_UPLOAD_WORKERS, len(tasks))
+            logger.info(f"泡袋批量处理开始: total={len(tasks)}, workers={workers}, bag_type={bag_type}")
+            if workers <= 1:
+                for task in tasks:
+                    self._process_batch_item(task, results, failures)
             else:
-                code = self._next_sj_code(next_number or 506)
-                next_number = int(code[2:]) + 1 if re.match(r"^SJ\d+$", code) else None
-            tasks.append({
-                "index": index,
-                "raw_title": raw_title,
-                "title": title,
-                "image_path": str(item["path"]),
-                "code": code,
-                "has_existing_code": bool(existing_code),
-                "suffix": suffix,
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    future_map = {executor.submit(self._process_batch_item_result, task): task for task in tasks}
+                    for future in as_completed(future_map):
+                        result = future.result()
+                        if result.get("ok"):
+                            results.append(result["item"])
+                        else:
+                            failures.append(result["item"])
+
+            results.sort(key=lambda item: item["index"])
+            failures.sort(key=lambda item: item["index"])
+
+            return {
+                "source": str(source),
                 "bag_type": bag_type,
                 "price": price,
-            })
-
-        results = []
-        failures = []
-        workers = min(BAG_UPLOAD_WORKERS, len(tasks))
-        logger.info(f"泡袋批量处理开始: total={len(tasks)}, workers={workers}, bag_type={bag_type}")
-        if workers <= 1:
-            for task in tasks:
-                self._process_batch_item(task, results, failures)
-        else:
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                future_map = {executor.submit(self._process_batch_item_result, task): task for task in tasks}
-                for future in as_completed(future_map):
-                    result = future.result()
-                    if result.get("ok"):
-                        results.append(result["item"])
-                    else:
-                        failures.append(result["item"])
-
-        results.sort(key=lambda item: item["index"])
-        failures.sort(key=lambda item: item["index"])
-
-        if not failures:
+                "total": len(source_images),
+                "success": results,
+                "failures": failures,
+            }
+        finally:
             self._delete_path(source, "泡袋压缩包")
             self._delete_path(batch_dir, "泡袋批处理目录")
-
-        return {
-            "source": str(source),
-            "bag_type": bag_type,
-            "price": price,
-            "total": len(source_images),
-            "success": results,
-            "failures": failures,
-        }
 
     def _process_batch_item(self, task: dict, results: list[dict], failures: list[dict]) -> None:
         result = self._process_batch_item_result(task)
@@ -326,6 +326,7 @@ class BagUploadWorkflow(BaseWorkflow):
     def _process_batch_item_result(self, task: dict) -> dict:
         title = task["title"]
         code = task["code"]
+        assets = None
         try:
             existing_product = None
             if task["has_existing_code"]:
@@ -369,7 +370,6 @@ class BagUploadWorkflow(BaseWorkflow):
                     price=task["price"],
                 )
                 action = "新增"
-            self._cleanup_generated_assets(assets)
             return {
                 "ok": True,
                 "item": {
@@ -387,6 +387,9 @@ class BagUploadWorkflow(BaseWorkflow):
         except Exception as e:
             logger.error(f"泡袋商品上传失败: title={title}, error={e}")
             return {"ok": False, "item": {"index": task["index"], "title": title, "error": str(e)}}
+        finally:
+            if assets:
+                self._cleanup_generated_assets(assets)
 
     def _batch_done_text(self, result: dict) -> str:
         success = result.get("success") or []
