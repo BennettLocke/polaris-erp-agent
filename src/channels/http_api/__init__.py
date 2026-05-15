@@ -14,6 +14,7 @@ from flask import Flask, request, jsonify, Response, send_from_directory, sessio
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from src.core.agent import Agent
+from src.core.features import feature_enabled
 from src.utils import get_logger
 
 logger = get_logger("sjagent.http_api")
@@ -1776,6 +1777,9 @@ def init_api(agent: Agent):
     """初始化 HTTP API"""
     global _agent
     _agent = agent
+    if not feature_enabled("asr_hotword_scheduler"):
+        logger.info("Aliyun ASR hotword scheduler disabled by device feature switch")
+        return
     try:
         from src.services.aliyun_asr import start_hotword_scheduler
         if start_hotword_scheduler():
@@ -2117,6 +2121,9 @@ def image_upload():
     session = SessionManager(session_id)
     is_bag_upload = session.has_pending() and session.get_pending_intent() == "bag_upload"
     if is_bag_upload:
+        if not feature_enabled("bag_upload"):
+            session.clear_pending()
+            return jsonify({"code": 403, "msg": "bag upload is disabled on this device"}), 403
         if not _allowed_bag_upload(file.filename):
             return jsonify({"code": 400, "msg": "泡袋流程只支持 png/jpg/jpeg/webp/bmp 图片或 zip 压缩包"}), 400
     elif not _allowed_image(file.filename):

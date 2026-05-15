@@ -6,6 +6,7 @@ Skill 执行引擎
 import hmac
 import os
 import re
+from src.core.features import disabled_feature_reply, feature_enabled
 from src.core.tool_agent import classify_and_extract
 from src.core.learning import match_learned, parse_correction, record_example
 from src.core.session import SessionManager, set_current_session_id
@@ -45,12 +46,10 @@ class SkillEngine:
         from src.skills.series_manage.workflow import SeriesManageWorkflow
         from src.skills.customer_manage.workflow import CustomerManageWorkflow
         from src.skills.print_sales.workflow import PrintSalesWorkflow
-        from src.skills.bag_upload.workflow import BagUploadWorkflow
 
         self.workflows = {
             "order": OrderFlowWorkflow(),
             "workflow": WorkflowOrderWorkflow(),
-            "bag_upload": BagUploadWorkflow(),
             "inventory": InventoryWorkflow(),
             "stocktaking": StocktakingWorkflow(),
             "purchase": PurchaseWorkflow(),
@@ -65,6 +64,11 @@ class SkillEngine:
             "help": ChatWorkflow(),
             "unknown": ChatWorkflow(),
         }
+        if feature_enabled("bag_upload"):
+            from src.skills.bag_upload.workflow import BagUploadWorkflow
+            self.workflows["bag_upload"] = BagUploadWorkflow()
+        else:
+            logger.info("bag_upload skill disabled by device feature switch")
         logger.info(f"已注册 {len(self.workflows)} 个 skill")
 
     def run(self, user_input: str, session_id: str = "default") -> str:
@@ -106,6 +110,11 @@ class SkillEngine:
             intent = session.get_pending_intent()
             state = session.get_state()
             workflow = self.workflows.get(intent)
+            if intent == "bag_upload" and not feature_enabled("bag_upload"):
+                session.clear_pending()
+                reply = disabled_feature_reply("bag_upload")
+                session.save_turn(user_input, reply)
+                return reply
 
             if self._is_cancel_request(user_input) and not self._route_cancel_to_pending(intent, state, user_input):
                 session.clear_pending()
@@ -188,6 +197,10 @@ class SkillEngine:
             llm_extracted = classify_and_extract(user_input, history)
             extracted = self._choose_extraction(llm_extracted, fast_extracted)
         intent = extracted.pop("intent", "chat")
+        if intent == "bag_upload" and not feature_enabled("bag_upload"):
+            reply = disabled_feature_reply("bag_upload")
+            session.save_turn(user_input, reply)
+            return reply
         # 提取参数（去掉 intent 字段，剩下的都是 params）
         params = {k: v for k, v in extracted.items() if v is not None}
         logger.info(f"[SkillEngine] 意图: {intent}, 参数: {params} (输入: {user_input[:50]})")
