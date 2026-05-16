@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import argparse
 import audioop
+import json
 import math
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import wave
 from pathlib import Path
@@ -50,6 +52,40 @@ WAKE_WORDS = {
     "晓星",
     "晓新",
 }
+LEARNED_WAKE_PATH = ROOT / "data" / "generated" / "voice" / "wake_words.json"
+
+
+def load_learned_wake_words() -> set[str]:
+    try:
+        data = json.loads(LEARNED_WAKE_PATH.read_text(encoding="utf-8"))
+        words = data.get("words", []) if isinstance(data, dict) else data
+        return {str(word).strip() for word in words if str(word).strip()}
+    except FileNotFoundError:
+        return set()
+    except Exception as exc:
+        print(f"WAKE_LEARN_LOAD_ERROR {exc}", flush=True)
+        return set()
+
+
+def all_wake_words() -> set[str]:
+    return WAKE_WORDS | load_learned_wake_words()
+
+
+def learn_wake_variants(text: str) -> None:
+    candidates = set(re.findall(r"[小晓][\u4e00-\u9fff]", text or ""))
+    candidates = {word for word in candidates if 2 <= len(word) <= 3}
+    if not candidates:
+        return
+    existing = load_learned_wake_words()
+    updated = sorted((existing | candidates) - WAKE_WORDS)
+    if sorted(existing) == updated:
+        return
+    try:
+        LEARNED_WAKE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LEARNED_WAKE_PATH.write_text(json.dumps({"words": updated}, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"WAKE_LEARNED {','.join(sorted(candidates))}", flush=True)
+    except Exception as exc:
+        print(f"WAKE_LEARN_SAVE_ERROR {exc}", flush=True)
 
 
 def normalize_text(text: str) -> str:
@@ -58,12 +94,12 @@ def normalize_text(text: str) -> str:
 
 def is_wake_text(text: str) -> bool:
     normalized = normalize_text(text)
-    return any(word in normalized for word in WAKE_WORDS)
+    return any(word in normalized for word in all_wake_words())
 
 
 def strip_wake_words(text: str) -> str:
     value = text or ""
-    for word in sorted(WAKE_WORDS, key=len, reverse=True):
+    for word in sorted(all_wake_words(), key=len, reverse=True):
         value = value.replace(word, "")
     value = re.sub(r"^[，。！？、,.!?\s]+", "", value)
     return value.strip()
@@ -71,7 +107,8 @@ def strip_wake_words(text: str) -> str:
 
 def normalize_command_text(text: str) -> str:
     value = (text or "").strip()
-    value = re.sub(r"^(小星|小新|小兴|小鑫|小明|小红|小机|小鸡)[，。！？、,.!?\s]*", "", value)
+    for word in sorted(all_wake_words(), key=len, reverse=True):
+        value = re.sub(rf"^{re.escape(word)}[，。！？、,.!?\s]*", "", value)
     value = re.sub(r"^(帮我|帮忙|麻烦|请|去|给我|你去|帮我去)", "", value).strip()
     return value
 
@@ -295,6 +332,10 @@ def _finish_stream_player(process) -> None:
         process.kill()
 
 
+def play_prompt_async(group: str, *, device: str = "") -> None:
+    threading.Thread(target=lambda: play_prompt(group, device=device), name=f"voice-prompt-{group}", daemon=True).start()
+
+
 def speak_text(args, text: str, *, stem: str = "response") -> None:
     if not args.speak_results:
         return
@@ -341,6 +382,8 @@ def handle_command(args, command: str) -> None:
         play_prompt("failed", device=args.output_device)
         return
     print(f"COMMAND {command}", flush=True)
+    if args.processing_prompt:
+        play_prompt_async("processing", device=args.output_device)
     try:
         result = run_agent_command(command, session_id=args.agent_session_id)
     except Exception as exc:
@@ -403,6 +446,7 @@ def run_stream(args) -> None:
     calibration_frames = max(1, int(args.vad_calibration_ms / args.vad_frame_ms))
     calibration: list[int] = []
     waiting_command_until = 0.0
+    ignore_audio_until = 0.0
 
     while True:
         if waiting_command_until and time.monotonic() > waiting_command_until:
@@ -411,6 +455,9 @@ def run_stream(args) -> None:
                 print("command_window=timeout", flush=True)
         raw = next(raw_frames)
         pcm, rms, state = raw_to_pcm16(raw, gain=args.gain, state=state)
+        if ignore_audio_until and time.monotonic() < ignore_audio_until:
+            continue
+        ignore_audio_until = 0.0
         if calibration_frames:
             calibration.append(rms)
             calibration_frames -= 1
@@ -486,15 +533,21 @@ def run_stream(args) -> None:
             handle_command(args, text)
             continue
 
-        command_tail = strip_wake_words(text) if is_wake_text(text) else ""
-        if is_wake_text(text):
-            play_prompt("wake", device=args.output_device)
+        woke = is_wake_text(text)
+        command_tail = strip_wake_words(text) if woke else ""
+        if woke:
+            learn_wake_variants(text)
             if command_tail:
+                play_prompt_async("wake", device=args.output_device)
+                ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
                 handle_command(args, command_tail)
             elif args.assistant_mode:
                 waiting_command_until = time.monotonic() + args.command_window_seconds
                 print("command_window=opened", flush=True)
-            time.sleep(args.cooldown)
+                play_prompt_async("wake", device=args.output_device)
+                ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
+            if not waiting_command_until:
+                time.sleep(args.cooldown)
 
 
 def main() -> None:
@@ -513,8 +566,10 @@ def main() -> None:
     parser.add_argument("--stream-vad", action="store_true", help="Use continuous local VAD before ASR")
     parser.add_argument("--assistant-mode", action="store_true", help="After wake word, listen for one command")
     parser.add_argument("--command-window-seconds", type=float, default=8.0)
+    parser.add_argument("--wake-reply-ignore-seconds", type=float, default=0.8)
     parser.add_argument("--agent-session-id", default="orangepi_voice")
     parser.add_argument("--speak-results", action="store_true")
+    parser.add_argument("--processing-prompt", action="store_true")
     parser.add_argument("--tts-provider", choices=["mimo", "volc"], default="mimo")
     parser.add_argument("--tts-max-chars", type=int, default=180)
     parser.add_argument("--stream-tts-play", action="store_true")
