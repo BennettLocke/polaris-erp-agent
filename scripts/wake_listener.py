@@ -254,10 +254,12 @@ def run_stream(args) -> None:
     pre_roll: list[bytes] = []
     silence_frames = 0
     speech_frames_count = 0
+    active_streak = 0
     max_pre_roll = max(1, int(args.vad_pre_roll_ms / args.vad_frame_ms))
     end_silence_frames = max(1, int(args.vad_end_silence_ms / args.vad_frame_ms))
     max_speech_frames = max(1, int(args.vad_max_seconds / frame_seconds))
     min_speech_frames = max(1, int(args.vad_min_speech_ms / args.vad_frame_ms))
+    start_speech_frames = max(1, args.vad_start_frames)
     calibration_frames = max(1, int(args.vad_calibration_ms / args.vad_frame_ms))
     calibration: list[int] = []
 
@@ -297,11 +299,16 @@ def run_stream(args) -> None:
             if len(pre_roll) > max_pre_roll:
                 pre_roll.pop(0)
             if active:
+                active_streak += 1
+            else:
+                active_streak = 0
+            if active_streak >= start_speech_frames:
                 speaking = True
                 speech_frames = list(pre_roll)
                 pre_roll.clear()
                 silence_frames = 0
-                speech_frames_count = 1
+                speech_frames_count = active_streak
+                active_streak = 0
             continue
 
         speech_frames.append(pcm)
@@ -353,6 +360,7 @@ def main() -> None:
     parser.add_argument("--vad-use-webrtc", action="store_true")
     parser.add_argument("--vad-mode", type=int, default=2, choices=[0, 1, 2, 3])
     parser.add_argument("--vad-pre-roll-ms", type=int, default=300)
+    parser.add_argument("--vad-start-frames", type=int, default=3)
     parser.add_argument("--vad-min-speech-ms", type=int, default=350)
     parser.add_argument("--vad-end-silence-ms", type=int, default=600)
     parser.add_argument("--vad-max-seconds", type=float, default=4.0)
