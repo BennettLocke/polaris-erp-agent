@@ -44,7 +44,7 @@ def get_volc_realtime_asr_config() -> VolcRealtimeAsrConfig:
         model=os.getenv("VOLC_ASR_MODEL") or config.get_with_env("volc_asr.model", "bigmodel"),
         sample_rate=int(os.getenv("VOLC_ASR_SAMPLE_RATE") or config.get("volc_asr.sample_rate", 16000)),
         chunk_ms=int(os.getenv("VOLC_ASR_CHUNK_MS") or config.get("volc_asr.chunk_ms", 200)),
-        send_interval_ms=int(os.getenv("VOLC_ASR_SEND_INTERVAL_MS") or config.get("volc_asr.send_interval_ms", 120)),
+        send_interval_ms=int(os.getenv("VOLC_ASR_SEND_INTERVAL_MS") or config.get("volc_asr.send_interval_ms", 0)),
         enable_nonstream=str(
             os.getenv("VOLC_ASR_ENABLE_NONSTREAM") or config.get("volc_asr.enable_nonstream", "true")
         ).lower()
