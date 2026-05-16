@@ -26,7 +26,6 @@ PROMPT_GROUPS: dict[str, list[VoicePrompt]] = {
         VoicePrompt("wake_wozai", "我在。", "用户刚刚喊了小星。"),
         VoicePrompt("wake_en_wozai", "嗯，我在。", "用户刚刚喊了小星。"),
         VoicePrompt("wake_lailai", "来了。", "用户刚刚喊了小星。"),
-        VoicePrompt("wake_ninshuo", "在，您说。", "用户刚刚喊了小星。"),
         VoicePrompt("wake_tingzhe", "我听着呢。", "用户刚刚喊了小星。"),
         VoicePrompt("wake_xiaoxing", "小星在。", "用户刚刚喊了小星。"),
     ],
