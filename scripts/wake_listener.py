@@ -99,7 +99,19 @@ def wav_to_pcm16(path: Path, *, gain: float = 1.0) -> tuple[bytes, int]:
     avg = audioop.avg(frames, width)
     if avg:
         frames = audioop.bias(frames, width, -avg)
-    return frames, audioop.rms(frames, width)
+    return frames, activity_rms(frames, width, rate)
+
+
+def activity_rms(frames: bytes, width: int, rate: int, *, window_ms: int = 200) -> int:
+    """Use short-window peak RMS so quick wake words do not get averaged away."""
+    window_bytes = max(width, int(rate * window_ms / 1000) * width)
+    if len(frames) <= window_bytes:
+        return audioop.rms(frames, width)
+    values = [
+        audioop.rms(frames[offset : offset + window_bytes], width)
+        for offset in range(0, len(frames) - window_bytes + 1, window_bytes)
+    ]
+    return max(values) if values else audioop.rms(frames, width)
 
 
 def run_once(args) -> bool:
