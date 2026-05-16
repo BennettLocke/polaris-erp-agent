@@ -269,7 +269,10 @@ def _start_stream_player(args):
         player = "mpg123" if args.tts_provider == "volc" else "aplay"
     cmd = [player]
     if player == "mpg123":
-        cmd.extend(["-q", "-"])
+        cmd.extend(["-q", "-o", "alsa"])
+        if args.output_device:
+            cmd.extend(["-a", args.output_device])
+        cmd.append("-")
     elif player == "ffplay":
         cmd.extend(["-nodisp", "-autoexit", "-loglevel", "quiet", "-"])
     else:
