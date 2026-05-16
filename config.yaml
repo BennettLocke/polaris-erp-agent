@@ -66,11 +66,15 @@ aliyun_asr:
 # ============================================================
 volc_asr:
   api_key: "${VOLC_ASR_API_KEY}"
-  ws_url: "wss://ai-gateway.vei.volces.com/v1/realtime"
+  app_key: "${VOLC_ASR_APP_KEY}"
+  access_key: "${VOLC_ASR_ACCESS_KEY}"
+  resource_id: "volc.bigasr.sauc.duration"
+  ws_url: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
   model: "bigmodel"
   sample_rate: 16000
-  chunk_ms: 100
-  send_interval_ms: 20
+  chunk_ms: 200
+  send_interval_ms: 120
+  enable_nonstream: true
 
 # ============================================================
 # 知识库配置
