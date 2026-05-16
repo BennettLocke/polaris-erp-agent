@@ -109,6 +109,19 @@ tts:
   format: "wav"
   output_dir: "./data/generated/voice"
 
+volc_tts:
+  api_key: "${VOLC_TTS_API_KEY}"
+  app_id: "${VOLC_TTS_APP_ID}"
+  access_key: "${VOLC_TTS_ACCESS_KEY}"
+  resource_id: "seed-tts-2.0"
+  url: "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+  speaker: "zh_female_vv_uranus_bigtts"
+  format: "mp3"
+  sample_rate: 24000
+  speech_rate: 0
+  loudness_rate: 0
+  output_dir: "./data/generated/voice/responses"
+
 # ============================================================
 # LangGraph 配置
 # ============================================================

@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.services.aliyun_short_asr import recognize_pcm16 as recognize_pcm16_aliyun  # noqa: E402
 from src.services.mimo_tts import synthesize  # noqa: E402
+from src.services.volc_tts import synthesize_stream as synthesize_volc_stream  # noqa: E402
 from src.services.volc_realtime_asr import recognize_pcm16 as recognize_pcm16_volc  # noqa: E402
 from src.services.voice_prompts import ensure_group, play_file, play_prompt  # noqa: E402
 
@@ -43,6 +44,9 @@ WAKE_WORDS = {
     "小红",
     "小机",
     "小鸡",
+    "小宁",
+    "小拧",
+    "晓宁",
     "晓星",
     "晓新",
 }
@@ -257,18 +261,68 @@ def recognize(args, pcm: bytes) -> str:
     return recognize_pcm16_volc(pcm, timeout=args.asr_timeout)
 
 
+def _start_stream_player(args):
+    if not args.stream_tts_play:
+        return None
+    player = args.stream_tts_player
+    if not player:
+        player = "mpg123" if args.tts_provider == "volc" else "aplay"
+    cmd = [player]
+    if player == "mpg123":
+        cmd.extend(["-q", "-"])
+    elif player == "ffplay":
+        cmd.extend(["-nodisp", "-autoexit", "-loglevel", "quiet", "-"])
+    else:
+        return None
+    try:
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    except FileNotFoundError:
+        print(f"TTS_STREAM_WARNING player not found: {player}", flush=True)
+        return None
+
+
+def _finish_stream_player(process) -> None:
+    if not process:
+        return
+    try:
+        if process.stdin:
+            process.stdin.close()
+        process.wait(timeout=20)
+    except Exception:
+        process.kill()
+
+
 def speak_text(args, text: str, *, stem: str = "response") -> None:
     if not args.speak_results:
         return
     message = spoken_text(text, max_chars=args.tts_max_chars)
+    player = None
     try:
         out_dir = ROOT / "data" / "generated" / "voice" / "responses"
         out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{stem}_{int(time.time())}.wav"
-        audio_path = synthesize(message, path, context="你是桌面机器人小星，请用自然中文普通话播报业务查询结果。")
-        play_file(audio_path, device=args.output_device)
+        if args.tts_provider == "volc":
+            path = out_dir / f"{stem}_{int(time.time())}.mp3"
+            player = _start_stream_player(args)
+
+            def on_chunk(audio: bytes) -> None:
+                if player and player.stdin:
+                    try:
+                        player.stdin.write(audio)
+                        player.stdin.flush()
+                    except BrokenPipeError:
+                        pass
+
+            audio_path = synthesize_volc_stream(message, path, chunk_callback=on_chunk if player else None)
+            if not player:
+                subprocess.run([args.stream_tts_player or "mpg123", "-q", str(audio_path)], check=True)
+        else:
+            path = out_dir / f"{stem}_{int(time.time())}.wav"
+            audio_path = synthesize(message, path, context="你是桌面机器人小星，请用自然中文普通话播报业务查询结果。")
+            play_file(audio_path, device=args.output_device)
     except Exception as exc:
         print(f"TTS_ERROR {exc}", flush=True)
+    finally:
+        _finish_stream_player(player)
 
 
 def handle_command(args, command: str) -> None:
@@ -451,7 +505,10 @@ def main() -> None:
     parser.add_argument("--command-window-seconds", type=float, default=8.0)
     parser.add_argument("--agent-session-id", default="orangepi_voice")
     parser.add_argument("--speak-results", action="store_true")
+    parser.add_argument("--tts-provider", choices=["mimo", "volc"], default="mimo")
     parser.add_argument("--tts-max-chars", type=int, default=180)
+    parser.add_argument("--stream-tts-play", action="store_true")
+    parser.add_argument("--stream-tts-player", default="mpg123")
     parser.add_argument("--capture-backend", choices=["alsa", "arecord"], default="arecord")
     parser.add_argument("--vad-frame-ms", type=int, default=30, choices=[10, 20, 30])
     parser.add_argument("--vad-use-webrtc", action="store_true")
