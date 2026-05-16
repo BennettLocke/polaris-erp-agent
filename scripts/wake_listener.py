@@ -23,8 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.services.aliyun_short_asr import recognize_pcm16 as recognize_pcm16_aliyun  # noqa: E402
+from src.services.mimo_tts import synthesize  # noqa: E402
 from src.services.volc_realtime_asr import recognize_pcm16 as recognize_pcm16_volc  # noqa: E402
-from src.services.voice_prompts import ensure_group, play_prompt  # noqa: E402
+from src.services.voice_prompts import ensure_group, play_file, play_prompt  # noqa: E402
 
 
 WAKE_WORDS = {
@@ -54,6 +55,53 @@ def normalize_text(text: str) -> str:
 def is_wake_text(text: str) -> bool:
     normalized = normalize_text(text)
     return any(word in normalized for word in WAKE_WORDS)
+
+
+def strip_wake_words(text: str) -> str:
+    value = text or ""
+    for word in sorted(WAKE_WORDS, key=len, reverse=True):
+        value = value.replace(word, "")
+    value = re.sub(r"^[，。！？、,.!?\s]+", "", value)
+    return value.strip()
+
+
+def normalize_command_text(text: str) -> str:
+    value = (text or "").strip()
+    value = re.sub(r"^(小星|小新|小兴|小鑫|小明|小红|小机|小鸡)[，。！？、,.!?\s]*", "", value)
+    value = re.sub(r"^(帮我|帮忙|麻烦|请|去|给我|你去|帮我去)", "", value).strip()
+    return value
+
+
+def spoken_text(text: str, *, max_chars: int = 180) -> str:
+    value = (text or "").strip()
+    value = re.sub(r"https?://\S+", "", value)
+    value = value.replace("```", "")
+    lines = []
+    for line in value.splitlines():
+        clean = line.strip()
+        if not clean or set(clean) <= {"|", "-", ":", " "}:
+            continue
+        clean = clean.strip("|").replace("|", "，")
+        clean = re.sub(r"\s+", " ", clean)
+        lines.append(clean)
+    value = "。".join(lines) if lines else value
+    value = re.sub(r"[#*_`>]+", "", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    if len(value) > max_chars:
+        value = value[:max_chars].rstrip("，。；; ") + "。后面内容我已经查到，可以在网页里看完整结果。"
+    return value or "处理完成。"
+
+
+_AGENT = None
+
+
+def run_agent_command(command: str, *, session_id: str) -> str:
+    global _AGENT
+    if _AGENT is None:
+        from src.core.agent import Agent
+
+        _AGENT = Agent()
+    return _AGENT.run(command, user_id="orangepi_voice", session_id=session_id)
 
 
 def record_wav(path: Path, *, device: str, seconds: float) -> None:
@@ -209,6 +257,34 @@ def recognize(args, pcm: bytes) -> str:
     return recognize_pcm16_volc(pcm, timeout=args.asr_timeout)
 
 
+def speak_text(args, text: str, *, stem: str = "response") -> None:
+    if not args.speak_results:
+        return
+    message = spoken_text(text, max_chars=args.tts_max_chars)
+    try:
+        out_dir = ROOT / "data" / "generated" / "voice" / "responses"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{stem}_{int(time.time())}.wav"
+        audio_path = synthesize(message, path, context="你是桌面机器人小星，请用自然中文普通话播报业务查询结果。")
+        play_file(audio_path, device=args.output_device)
+    except Exception as exc:
+        print(f"TTS_ERROR {exc}", flush=True)
+
+
+def handle_command(args, command: str) -> None:
+    command = normalize_command_text(command)
+    if not command:
+        play_prompt("failed", device=args.output_device)
+        return
+    print(f"COMMAND {command}", flush=True)
+    try:
+        result = run_agent_command(command, session_id=args.agent_session_id)
+    except Exception as exc:
+        result = f"处理异常：{exc}"
+    print(f"AGENT {result}", flush=True)
+    speak_text(args, result)
+
+
 def run_once(args) -> bool:
     with tempfile.TemporaryDirectory(prefix="sjagent-wake-") as tmp:
         wav_path = Path(tmp) / "chunk.wav"
@@ -262,8 +338,13 @@ def run_stream(args) -> None:
     start_speech_frames = max(1, args.vad_start_frames)
     calibration_frames = max(1, int(args.vad_calibration_ms / args.vad_frame_ms))
     calibration: list[int] = []
+    waiting_command_until = 0.0
 
     while True:
+        if waiting_command_until and time.monotonic() > waiting_command_until:
+            waiting_command_until = 0.0
+            if args.verbose:
+                print("command_window=timeout", flush=True)
         raw = next(raw_frames)
         pcm, rms, state = raw_to_pcm16(raw, gain=args.gain, state=state)
         if calibration_frames:
@@ -336,8 +417,19 @@ def run_stream(args) -> None:
             continue
 
         print(f"ASR {text}", flush=True)
+        if waiting_command_until:
+            waiting_command_until = 0.0
+            handle_command(args, text)
+            continue
+
+        command_tail = strip_wake_words(text) if is_wake_text(text) else ""
         if is_wake_text(text):
             play_prompt("wake", device=args.output_device)
+            if command_tail:
+                handle_command(args, command_tail)
+            elif args.assistant_mode:
+                waiting_command_until = time.monotonic() + args.command_window_seconds
+                print("command_window=opened", flush=True)
             time.sleep(args.cooldown)
 
 
@@ -355,6 +447,11 @@ def main() -> None:
     parser.add_argument("--asr-timeout", type=int, default=15)
     parser.add_argument("--once", action="store_true", help="Record and process one chunk")
     parser.add_argument("--stream-vad", action="store_true", help="Use continuous local VAD before ASR")
+    parser.add_argument("--assistant-mode", action="store_true", help="After wake word, listen for one command")
+    parser.add_argument("--command-window-seconds", type=float, default=8.0)
+    parser.add_argument("--agent-session-id", default="orangepi_voice")
+    parser.add_argument("--speak-results", action="store_true")
+    parser.add_argument("--tts-max-chars", type=int, default=180)
     parser.add_argument("--capture-backend", choices=["alsa", "arecord"], default="arecord")
     parser.add_argument("--vad-frame-ms", type=int, default=30, choices=[10, 20, 30])
     parser.add_argument("--vad-use-webrtc", action="store_true")
