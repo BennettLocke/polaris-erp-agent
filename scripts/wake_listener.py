@@ -93,6 +93,9 @@ def wav_to_pcm16(path: Path, *, gain: float = 1.0) -> tuple[bytes, int]:
         width = 2
     if gain and gain != 1.0:
         frames = audioop.mul(frames, width, gain)
+    avg = audioop.avg(frames, width)
+    if avg:
+        frames = audioop.bias(frames, width, -avg)
     return frames, audioop.rms(frames, width)
 
 
