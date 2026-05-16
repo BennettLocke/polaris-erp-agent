@@ -1,7 +1,7 @@
 """Simple wake-word listener for the Orange Pi desktop robot.
 
-First version: record short chunks from INMP441, send speech-like chunks to
-Aliyun short ASR, and play a cached wake prompt when the transcript resembles
+Record short chunks from INMP441, send speech-like chunks to ASR, and play a
+cached wake prompt when the transcript resembles
 "小星".
 """
 from __future__ import annotations
@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.services.aliyun_short_asr import recognize_pcm16  # noqa: E402
+from src.services.aliyun_short_asr import recognize_pcm16 as recognize_pcm16_aliyun  # noqa: E402
+from src.services.volc_realtime_asr import recognize_pcm16 as recognize_pcm16_volc  # noqa: E402
 from src.services.voice_prompts import ensure_group, play_prompt  # noqa: E402
 
 
@@ -106,12 +107,15 @@ def run_once(args) -> bool:
         return False
 
     try:
-        text = recognize_pcm16(
-            pcm,
-            sample_rate=16000,
-            timeout=args.asr_timeout,
-            enable_voice_detection=not args.no_cloud_vad,
-        )
+        if args.asr_provider == "aliyun":
+            text = recognize_pcm16_aliyun(
+                pcm,
+                sample_rate=16000,
+                timeout=args.asr_timeout,
+                enable_voice_detection=not args.no_cloud_vad,
+            )
+        else:
+            text = recognize_pcm16_volc(pcm, timeout=args.asr_timeout)
     except Exception as exc:
         print(f"ASR_ERROR {exc}", flush=True)
         return False
@@ -133,7 +137,8 @@ def main() -> None:
     parser.add_argument("--rms-threshold", type=int, default=120)
     parser.add_argument("--gain", type=float, default=8.0, help="PCM gain before ASR")
     parser.add_argument("--no-cloud-vad", action="store_true", help="Disable Aliyun endpoint VAD")
-    parser.add_argument("--asr-timeout", type=int, default=30)
+    parser.add_argument("--asr-provider", choices=["volc", "aliyun"], default="volc")
+    parser.add_argument("--asr-timeout", type=int, default=15)
     parser.add_argument("--once", action="store_true", help="Record and process one chunk")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
