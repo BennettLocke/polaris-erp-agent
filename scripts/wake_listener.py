@@ -18,6 +18,7 @@ import threading
 import time
 import wave
 from pathlib import Path
+from array import array
 
 from dotenv import load_dotenv
 
@@ -237,6 +238,86 @@ def _open_webrtc_vad(args):
     return webrtcvad.Vad(args.vad_mode)
 
 
+class LocalWakeDetector:
+    def process(self, pcm16: bytes) -> bool:
+        return False
+
+
+class PorcupineWakeDetector(LocalWakeDetector):
+    def __init__(self, args) -> None:
+        import pvporcupine
+
+        access_key = args.porcupine_access_key
+        if not access_key:
+            raise RuntimeError("Porcupine needs --porcupine-access-key or PICOVOICE_ACCESS_KEY")
+        keyword_paths = [p for p in args.porcupine_keyword_path if p]
+        if not keyword_paths:
+            raise RuntimeError("Porcupine needs --porcupine-keyword-path /path/to/xiaoxing.ppn")
+        self.engine = pvporcupine.create(
+            access_key=access_key,
+            keyword_paths=keyword_paths,
+            sensitivities=[args.porcupine_sensitivity] * len(keyword_paths),
+        )
+        self.frame_length = self.engine.frame_length
+        self.buffer = array("h")
+        print(f"local_wake=porcupine frame_length={self.frame_length}", flush=True)
+
+    def process(self, pcm16: bytes) -> bool:
+        samples = array("h")
+        samples.frombytes(pcm16)
+        self.buffer.extend(samples)
+        detected = False
+        while len(self.buffer) >= self.frame_length:
+            frame = self.buffer[: self.frame_length]
+            del self.buffer[: self.frame_length]
+            if self.engine.process(frame) >= 0:
+                detected = True
+        return detected
+
+
+class OpenWakeWordDetector(LocalWakeDetector):
+    def __init__(self, args) -> None:
+        from openwakeword.model import Model
+
+        model_paths = [p for p in args.openwakeword_model_path if p]
+        if not model_paths:
+            raise RuntimeError("openWakeWord needs --openwakeword-model-path /path/to/model.onnx")
+        self.model = Model(wakeword_models=model_paths)
+        self.threshold = args.openwakeword_threshold
+        self.buffer = array("h")
+        print(f"local_wake=openwakeword threshold={self.threshold}", flush=True)
+
+    def process(self, pcm16: bytes) -> bool:
+        import numpy as np
+
+        samples = array("h")
+        samples.frombytes(pcm16)
+        self.buffer.extend(samples)
+        detected = False
+        # openWakeWord expects 1280 samples (80 ms at 16 kHz) per prediction.
+        while len(self.buffer) >= 1280:
+            frame = self.buffer[:1280]
+            del self.buffer[:1280]
+            prediction = self.model.predict(np.array(frame, dtype=np.int16))
+            if prediction and max(float(v) for v in prediction.values()) >= self.threshold:
+                print(f"LOCAL_WAKE_SCORE {prediction}", flush=True)
+                detected = True
+        return detected
+
+
+def _open_local_wake_detector(args) -> LocalWakeDetector | None:
+    if args.local_wake_provider == "none":
+        return None
+    try:
+        if args.local_wake_provider == "porcupine":
+            return PorcupineWakeDetector(args)
+        if args.local_wake_provider == "openwakeword":
+            return OpenWakeWordDetector(args)
+    except Exception as exc:
+        print(f"LOCAL_WAKE_WARNING {exc}", flush=True)
+    return None
+
+
 def _capture_arecord(args, raw_frame_bytes: int):
     process = subprocess.Popen(
         [
@@ -428,6 +509,7 @@ def run_stream(args) -> None:
     else:
         raw_frames = _capture_arecord(args, raw_frame_bytes)
     vad = _open_webrtc_vad(args)
+    local_wake = _open_local_wake_detector(args)
 
     print(f"wake listener stream started backend={args.capture_backend}", flush=True)
     state = None
@@ -471,6 +553,20 @@ def run_stream(args) -> None:
             noise_floor = rms
         if not speaking:
             noise_floor = noise_floor * 0.94 + rms * 0.06
+
+        if local_wake and not waiting_command_until and local_wake.process(pcm):
+            print("LOCAL_WAKE detected", flush=True)
+            waiting_command_until = time.monotonic() + args.command_window_seconds
+            print("command_window=opened", flush=True)
+            play_prompt_async("wake", device=args.output_device)
+            ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
+            pre_roll.clear()
+            speaking = False
+            speech_frames = []
+            silence_frames = 0
+            speech_frames_count = 0
+            active_streak = 0
+            continue
 
         threshold = _vad_threshold(noise_floor, args)
         energy_active = rms >= threshold
@@ -575,6 +671,12 @@ def main() -> None:
     parser.add_argument("--stream-tts-play", action="store_true")
     parser.add_argument("--stream-tts-player", default="mpg123")
     parser.add_argument("--capture-backend", choices=["alsa", "arecord"], default="arecord")
+    parser.add_argument("--local-wake-provider", choices=["none", "porcupine", "openwakeword"], default="none")
+    parser.add_argument("--porcupine-access-key", default="")
+    parser.add_argument("--porcupine-keyword-path", action="append", default=[])
+    parser.add_argument("--porcupine-sensitivity", type=float, default=0.65)
+    parser.add_argument("--openwakeword-model-path", action="append", default=[])
+    parser.add_argument("--openwakeword-threshold", type=float, default=0.55)
     parser.add_argument("--vad-frame-ms", type=int, default=30, choices=[10, 20, 30])
     parser.add_argument("--vad-use-webrtc", action="store_true")
     parser.add_argument("--vad-mode", type=int, default=2, choices=[0, 1, 2, 3])
