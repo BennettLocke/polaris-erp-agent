@@ -70,7 +70,7 @@ def record_wav(path: Path, *, device: str, seconds: float) -> None:
     )
 
 
-def wav_to_pcm16(path: Path) -> tuple[bytes, int]:
+def wav_to_pcm16(path: Path, *, gain: float = 1.0) -> tuple[bytes, int]:
     with wave.open(str(path), "rb") as wav:
         channels = wav.getnchannels()
         width = wav.getsampwidth()
@@ -87,6 +87,8 @@ def wav_to_pcm16(path: Path) -> tuple[bytes, int]:
     if width != 2:
         frames = audioop.lin2lin(frames, width, 2)
         width = 2
+    if gain and gain != 1.0:
+        frames = audioop.mul(frames, width, gain)
     return frames, audioop.rms(frames, width)
 
 
@@ -94,14 +96,19 @@ def run_once(args) -> bool:
     with tempfile.TemporaryDirectory(prefix="sjagent-wake-") as tmp:
         wav_path = Path(tmp) / "chunk.wav"
         record_wav(wav_path, device=args.input_device, seconds=args.chunk_seconds)
-        pcm, rms = wav_to_pcm16(wav_path)
+        pcm, rms = wav_to_pcm16(wav_path, gain=args.gain)
     if args.verbose:
         print(f"rms={rms}")
     if rms < args.rms_threshold:
         return False
 
     try:
-        text = recognize_pcm16(pcm, sample_rate=16000, timeout=args.asr_timeout)
+        text = recognize_pcm16(
+            pcm,
+            sample_rate=16000,
+            timeout=args.asr_timeout,
+            enable_voice_detection=not args.no_cloud_vad,
+        )
     except Exception as exc:
         print(f"ASR_ERROR {exc}", flush=True)
         return False
@@ -121,6 +128,8 @@ def main() -> None:
     parser.add_argument("--chunk-seconds", type=float, default=2.2)
     parser.add_argument("--cooldown", type=float, default=2.5)
     parser.add_argument("--rms-threshold", type=int, default=120)
+    parser.add_argument("--gain", type=float, default=8.0, help="PCM gain before ASR")
+    parser.add_argument("--no-cloud-vad", action="store_true", help="Disable Aliyun endpoint VAD")
     parser.add_argument("--asr-timeout", type=int, default=30)
     parser.add_argument("--once", action="store_true", help="Record and process one chunk")
     parser.add_argument("--verbose", action="store_true")
