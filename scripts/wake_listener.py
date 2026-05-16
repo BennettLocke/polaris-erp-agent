@@ -10,6 +10,7 @@ import argparse
 import audioop
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -305,6 +306,63 @@ class OpenWakeWordDetector(LocalWakeDetector):
         return detected
 
 
+class SherpaKeywordWakeDetector(LocalWakeDetector):
+    def __init__(self, args) -> None:
+        import numpy as np
+        import sherpa_onnx
+
+        self.np = np
+        model_dir = Path(args.sherpa_model_dir)
+        if not model_dir.is_absolute():
+            model_dir = ROOT / model_dir
+        keywords_file = Path(args.sherpa_keywords_file)
+        if not keywords_file.is_absolute():
+            keywords_file = ROOT / keywords_file
+
+        self.min_rms = args.sherpa_min_rms
+        chunk = args.sherpa_chunk
+        encoder_name = f"encoder-epoch-13-avg-2-chunk-{chunk}-left-64"
+        joiner_name = f"joiner-epoch-13-avg-2-chunk-{chunk}-left-64"
+        if args.sherpa_int8:
+            encoder_name += ".int8"
+            joiner_name += ".int8"
+
+        self.spotter = sherpa_onnx.KeywordSpotter(
+            tokens=str(model_dir / "tokens.txt"),
+            encoder=str(model_dir / f"{encoder_name}.onnx"),
+            decoder=str(model_dir / f"decoder-epoch-13-avg-2-chunk-{chunk}-left-64.onnx"),
+            joiner=str(model_dir / f"{joiner_name}.onnx"),
+            keywords_file=str(keywords_file),
+            num_threads=args.sherpa_num_threads,
+            max_active_paths=args.sherpa_max_active_paths,
+            keywords_score=args.sherpa_keywords_score,
+            keywords_threshold=args.sherpa_keywords_threshold,
+            num_trailing_blanks=args.sherpa_num_trailing_blanks,
+            provider="cpu",
+        )
+        self.stream = self.spotter.create_stream()
+        print(
+            f"local_wake=sherpa model={model_dir.name} keywords={keywords_file} "
+            f"chunk={chunk} int8={args.sherpa_int8}",
+            flush=True,
+        )
+
+    def process(self, pcm16: bytes) -> bool:
+        if audioop.rms(pcm16, 2) < self.min_rms:
+            return False
+        samples = self.np.frombuffer(pcm16, dtype=self.np.int16).astype(self.np.float32) / 32768.0
+        self.stream.accept_waveform(16000, samples)
+        detected = False
+        while self.spotter.is_ready(self.stream):
+            self.spotter.decode_stream(self.stream)
+            result = self.spotter.get_result(self.stream)
+            if result:
+                print(f"LOCAL_WAKE_SHERPA {result}", flush=True)
+                self.spotter.reset_stream(self.stream)
+                detected = True
+        return detected
+
+
 def _open_local_wake_detector(args) -> LocalWakeDetector | None:
     if args.local_wake_provider == "none":
         return None
@@ -313,6 +371,8 @@ def _open_local_wake_detector(args) -> LocalWakeDetector | None:
             return PorcupineWakeDetector(args)
         if args.local_wake_provider == "openwakeword":
             return OpenWakeWordDetector(args)
+        if args.local_wake_provider == "sherpa":
+            return SherpaKeywordWakeDetector(args)
     except Exception as exc:
         print(f"LOCAL_WAKE_WARNING {exc}", flush=True)
     return None
@@ -671,12 +731,25 @@ def main() -> None:
     parser.add_argument("--stream-tts-play", action="store_true")
     parser.add_argument("--stream-tts-player", default="mpg123")
     parser.add_argument("--capture-backend", choices=["alsa", "arecord"], default="arecord")
-    parser.add_argument("--local-wake-provider", choices=["none", "porcupine", "openwakeword"], default="none")
-    parser.add_argument("--porcupine-access-key", default="")
+    parser.add_argument("--local-wake-provider", choices=["none", "porcupine", "openwakeword", "sherpa"], default="none")
+    parser.add_argument("--porcupine-access-key", default=os.getenv("PICOVOICE_ACCESS_KEY", ""))
     parser.add_argument("--porcupine-keyword-path", action="append", default=[])
     parser.add_argument("--porcupine-sensitivity", type=float, default=0.65)
     parser.add_argument("--openwakeword-model-path", action="append", default=[])
     parser.add_argument("--openwakeword-threshold", type=float, default=0.55)
+    parser.add_argument(
+        "--sherpa-model-dir",
+        default="models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20",
+    )
+    parser.add_argument("--sherpa-keywords-file", default="models/xiaoxing_keywords.txt")
+    parser.add_argument("--sherpa-chunk", type=int, default=8, choices=[8, 16])
+    parser.add_argument("--sherpa-int8", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--sherpa-num-threads", type=int, default=1)
+    parser.add_argument("--sherpa-max-active-paths", type=int, default=8)
+    parser.add_argument("--sherpa-keywords-score", type=float, default=2.5)
+    parser.add_argument("--sherpa-keywords-threshold", type=float, default=0.25)
+    parser.add_argument("--sherpa-num-trailing-blanks", type=int, default=1)
+    parser.add_argument("--sherpa-min-rms", type=int, default=120)
     parser.add_argument("--vad-frame-ms", type=int, default=30, choices=[10, 20, 30])
     parser.add_argument("--vad-use-webrtc", action="store_true")
     parser.add_argument("--vad-mode", type=int, default=2, choices=[0, 1, 2, 3])

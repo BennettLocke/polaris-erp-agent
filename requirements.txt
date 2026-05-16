@@ -44,3 +44,6 @@ websockets>=12.0
 pyalsaaudio>=0.11.0; platform_system == "Linux"
 webrtcvad-wheels>=2.0.14; platform_system == "Linux"
 pvporcupine>=4.0.2; platform_system == "Linux"
+sherpa-onnx>=1.13.2; platform_machine == "aarch64" or platform_machine == "x86_64" or platform_machine == "AMD64"
+sentencepiece>=0.2.0
+pypinyin>=0.55.0
