@@ -131,6 +131,18 @@ class Config:
         return int(self.get("llm.max_tokens", 4096))
 
     @property
+    def tts_config(self) -> dict:
+        return {
+            "provider": self.get("tts.provider", "mimo"),
+            "base_url": self.get_with_env("tts.base_url", "https://token-plan-cn.xiaomimimo.com/v1"),
+            "model": self.get_with_env("tts.model", "mimo-v2-tts"),
+            "api_key": self.get_with_env("tts.api_key", ""),
+            "voice": self.get_with_env("tts.voice", "mimo_default"),
+            "format": self.get_with_env("tts.format", "wav"),
+            "output_dir": self.get_with_env("tts.output_dir", "./data/generated/voice"),
+        }
+
+    @property
     def logging_level(self) -> str:
         return self.get("logging.level", "INFO")
 

@@ -85,6 +85,15 @@ llm:
   api_key: "${MIMO_API_KEY}"
   max_tokens: 4096
 
+tts:
+  provider: "mimo"
+  base_url: "https://token-plan-cn.xiaomimimo.com/v1"
+  model: "mimo-v2-tts"
+  api_key: "${MIMO_API_KEY}"
+  voice: "mimo_default"
+  format: "wav"
+  output_dir: "./data/generated/voice"
+
 # ============================================================
 # LangGraph 配置
 # ============================================================
