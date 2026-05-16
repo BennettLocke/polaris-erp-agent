@@ -202,12 +202,23 @@ def run_stream(args) -> None:
     end_silence_frames = max(1, int(args.vad_end_silence_ms / args.vad_frame_ms))
     max_speech_frames = max(1, int(args.vad_max_seconds / frame_seconds))
     min_speech_frames = max(1, int(args.vad_min_speech_ms / args.vad_frame_ms))
+    calibration_frames = max(1, int(args.vad_calibration_ms / args.vad_frame_ms))
+    calibration: list[int] = []
 
     while True:
         raw = process.stdout.read(raw_frame_bytes)
         if not raw:
             raise RuntimeError("arecord stopped")
         pcm, rms, state = raw_to_pcm16(raw, gain=args.gain, state=state)
+        if calibration_frames:
+            calibration.append(rms)
+            calibration_frames -= 1
+            if not calibration_frames:
+                values = sorted(calibration)
+                noise_floor = values[len(values) // 2]
+                if args.verbose:
+                    print(f"calibrated_noise={int(noise_floor)}", flush=True)
+            continue
         if not noise_floor:
             noise_floor = rms
         if not speaking:
@@ -279,6 +290,7 @@ def main() -> None:
     parser.add_argument("--vad-min-speech-ms", type=int, default=350)
     parser.add_argument("--vad-end-silence-ms", type=int, default=600)
     parser.add_argument("--vad-max-seconds", type=float, default=4.0)
+    parser.add_argument("--vad-calibration-ms", type=int, default=1000)
     parser.add_argument("--vad-start-ratio", type=float, default=1.04)
     parser.add_argument("--vad-start-margin", type=int, default=350)
     parser.add_argument("--vad-min-rms", type=int, default=9500)
