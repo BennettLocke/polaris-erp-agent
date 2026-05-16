@@ -324,6 +324,13 @@ def speak_text(args, text: str, *, stem: str = "response") -> None:
             play_file(audio_path, device=args.output_device)
     except Exception as exc:
         print(f"TTS_ERROR {exc}", flush=True)
+        if args.tts_provider == "volc":
+            try:
+                path = out_dir / f"{stem}_{int(time.time())}_fallback.wav"
+                audio_path = synthesize(message, path, context="你是桌面机器人小星，请用自然中文普通话播报业务查询结果。")
+                play_file(audio_path, device=args.output_device)
+            except Exception as fallback_exc:
+                print(f"TTS_FALLBACK_ERROR {fallback_exc}", flush=True)
     finally:
         _finish_stream_player(player)
 
