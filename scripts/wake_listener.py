@@ -128,6 +128,76 @@ def raw_to_pcm16(raw: bytes, *, gain: float, state) -> tuple[bytes, int, object]
     return frames, audioop.rms(frames, 2), state
 
 
+def _normalize_vad_frame(pcm: bytes, frame_ms: int) -> bytes:
+    expected = int(16000 * frame_ms / 1000) * 2
+    if len(pcm) == expected:
+        return pcm
+    if len(pcm) > expected:
+        return pcm[:expected]
+    return pcm + (b"\x00" * (expected - len(pcm)))
+
+
+def _open_webrtc_vad(args):
+    if not args.vad_use_webrtc:
+        return None
+    try:
+        import webrtcvad
+    except ImportError:
+        print("VAD_WARNING webrtcvad is not installed; falling back to energy VAD", flush=True)
+        return None
+    return webrtcvad.Vad(args.vad_mode)
+
+
+def _capture_arecord(args, raw_frame_bytes: int):
+    process = subprocess.Popen(
+        [
+            "arecord",
+            "-q",
+            "-D",
+            args.input_device,
+            "-f",
+            "S32_LE",
+            "-r",
+            "48000",
+            "-c",
+            "2",
+            "-t",
+            "raw",
+        ],
+        stdout=subprocess.PIPE,
+        bufsize=raw_frame_bytes * 4,
+    )
+    if not process.stdout:
+        raise RuntimeError("arecord stdout is not available")
+    while True:
+        raw = process.stdout.read(raw_frame_bytes)
+        if not raw:
+            raise RuntimeError("arecord stopped")
+        yield raw
+
+
+def _capture_alsa(args, period_size: int):
+    try:
+        import alsaaudio
+    except ImportError as exc:
+        raise RuntimeError("pyalsaaudio is not installed") from exc
+
+    capture = alsaaudio.PCM(
+        type=alsaaudio.PCM_CAPTURE,
+        mode=alsaaudio.PCM_NORMAL,
+        device=args.input_device,
+    )
+    capture.setchannels(2)
+    capture.setrate(48000)
+    capture.setformat(alsaaudio.PCM_FORMAT_S32_LE)
+    capture.setperiodsize(period_size)
+    while True:
+        length, raw = capture.read()
+        if length <= 0:
+            continue
+        yield raw
+
+
 def recognize(args, pcm: bytes) -> str:
     if args.asr_provider == "aliyun":
         return recognize_pcm16_aliyun(
@@ -168,29 +238,15 @@ def _vad_threshold(noise_floor: float, args) -> float:
 
 def run_stream(args) -> None:
     frame_seconds = args.vad_frame_ms / 1000
-    raw_frame_bytes = int(48000 * frame_seconds) * 2 * 4
-    process = subprocess.Popen(
-        [
-            "arecord",
-            "-q",
-            "-D",
-            args.input_device,
-            "-f",
-            "S32_LE",
-            "-r",
-            "48000",
-            "-c",
-            "2",
-            "-t",
-            "raw",
-        ],
-        stdout=subprocess.PIPE,
-        bufsize=raw_frame_bytes * 4,
-    )
-    if not process.stdout:
-        raise RuntimeError("arecord stdout is not available")
+    period_size = int(48000 * frame_seconds)
+    raw_frame_bytes = period_size * 2 * 4
+    if args.capture_backend == "alsa":
+        raw_frames = _capture_alsa(args, period_size)
+    else:
+        raw_frames = _capture_arecord(args, raw_frame_bytes)
+    vad = _open_webrtc_vad(args)
 
-    print("wake listener stream started", flush=True)
+    print(f"wake listener stream started backend={args.capture_backend}", flush=True)
     state = None
     noise_floor = 0.0
     speaking = False
@@ -206,9 +262,7 @@ def run_stream(args) -> None:
     calibration: list[int] = []
 
     while True:
-        raw = process.stdout.read(raw_frame_bytes)
-        if not raw:
-            raise RuntimeError("arecord stopped")
+        raw = next(raw_frames)
         pcm, rms, state = raw_to_pcm16(raw, gain=args.gain, state=state)
         if calibration_frames:
             calibration.append(rms)
@@ -225,9 +279,18 @@ def run_stream(args) -> None:
             noise_floor = noise_floor * 0.94 + rms * 0.06
 
         threshold = _vad_threshold(noise_floor, args)
-        active = rms >= threshold
+        energy_active = rms >= threshold
+        vad_active = False
+        if vad:
+            vad_frame = _normalize_vad_frame(pcm, args.vad_frame_ms)
+            vad_active = vad.is_speech(vad_frame, 16000) and rms >= args.vad_min_rms
+        active = vad_active if vad else energy_active
         if args.verbose:
-            print(f"rms={rms} noise={int(noise_floor)} threshold={int(threshold)} active={int(active)}", flush=True)
+            print(
+                f"rms={rms} noise={int(noise_floor)} threshold={int(threshold)} "
+                f"vad={int(vad_active)} active={int(active)}",
+                flush=True,
+            )
 
         if not speaking:
             pre_roll.append(pcm)
@@ -285,7 +348,10 @@ def main() -> None:
     parser.add_argument("--asr-timeout", type=int, default=15)
     parser.add_argument("--once", action="store_true", help="Record and process one chunk")
     parser.add_argument("--stream-vad", action="store_true", help="Use continuous local VAD before ASR")
-    parser.add_argument("--vad-frame-ms", type=int, default=100)
+    parser.add_argument("--capture-backend", choices=["alsa", "arecord"], default="arecord")
+    parser.add_argument("--vad-frame-ms", type=int, default=30, choices=[10, 20, 30])
+    parser.add_argument("--vad-use-webrtc", action="store_true")
+    parser.add_argument("--vad-mode", type=int, default=2, choices=[0, 1, 2, 3])
     parser.add_argument("--vad-pre-roll-ms", type=int, default=300)
     parser.add_argument("--vad-min-speech-ms", type=int, default=350)
     parser.add_argument("--vad-end-silence-ms", type=int, default=600)

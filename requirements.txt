@@ -41,3 +41,5 @@ lark-oapi>=1.2.0
 # 环境变量
 python-dotenv>=1.0.0
 websockets>=12.0
+pyalsaaudio>=0.11.0; platform_system == "Linux"
+webrtcvad-wheels>=2.0.14; platform_system == "Linux"
