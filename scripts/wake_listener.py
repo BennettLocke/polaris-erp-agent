@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import audioop
+import math
 import re
 import subprocess
 import sys
@@ -62,7 +63,7 @@ def record_wav(path: Path, *, device: str, seconds: float) -> None:
             "-c",
             "2",
             "-d",
-            str(seconds),
+            str(max(1, math.ceil(seconds))),
             str(path),
         ],
         check=True,
