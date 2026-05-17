@@ -38,12 +38,15 @@ def ensure_model(models_dir: Path) -> Path:
 
 
 def write_keywords(models_dir: Path) -> Path:
-    # 小星 and 晓星. We avoid adding near-sounds such as 小新/小心 here; that
-    # made the local wake detector too eager during tests.
+    # Keep near-sound aliases local-only. They make wake more forgiving while
+    # cloud ASR remains disabled before wake, so they no longer trigger command
+    # handling through the old ASR fallback.
     raw = models_dir / "xiaoxing_keywords_raw.txt"
     raw.write_text(
-        "\u5c0f\u661f :3.0 #0.20 @\u5c0f\u661f\n"
-        "\u6653\u661f :2.5 #0.20 @\u6653\u661f\n",
+        "\u5c0f\u661f :4.0 #0.12 @\u5c0f\u661f\n"
+        "\u6653\u661f :3.5 #0.12 @\u6653\u661f\n"
+        "\u5c0f\u65b0 :2.5 #0.16 @\u5c0f\u65b0\n"
+        "\u5c0f\u5fc3 :2.5 #0.16 @\u5c0f\u5fc3\n",
         encoding="utf-8",
     )
     return raw
