@@ -156,6 +156,7 @@ def normalize_command_text(text: str) -> str:
         value = re.sub(rf"^{re.escape(word)}[，。！？、,.!?\s]*", "", value)
     value = re.sub(r"^(帮我|帮忙|麻烦|请|去|给我|你去|帮我去)", "", value).strip()
     value = re.sub(r"^(查一下|查下|查询|找一下|找下|看一下|看下)", "", value).strip()
+    value = re.sub(r"(裤子|库子|酷子)", "库存", value)
     if "\u5e93\u5b58" in value:
         for misheard in INVENTORY_QUERY_MISHEARS:
             if value.startswith(misheard):
@@ -182,7 +183,11 @@ def is_unclear_voice_command(text: str) -> bool:
 
 def is_uncertain_agent_result(text: str) -> bool:
     value = normalize_text(text)
-    return "\u672a\u627e\u5230\u5546\u54c1" in value or "\u6ca1\u627e\u5230\u5546\u54c1" in value
+    return (
+        "\u672a\u627e\u5230\u5546\u54c1" in value
+        or "\u6ca1\u627e\u5230\u5546\u54c1" in value
+        or ("\u672a\u627e\u5230" in value and "\u5e93\u5b58\u8bb0\u5f55" in value)
+    )
 
 
 def _spoken_inventory_summary(text: str, *, max_chars: int) -> str | None:
