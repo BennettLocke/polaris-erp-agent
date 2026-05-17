@@ -144,8 +144,76 @@ def is_ignorable_voice_command(text: str) -> bool:
     return normalized in IGNORABLE_VOICE_COMMANDS or len(normalized) <= 1
 
 
+def _spoken_inventory_summary(text: str, *, max_chars: int) -> str | None:
+    if "库存查询" not in text or "总计" not in text:
+        return None
+
+    product = ""
+    total_qty = ""
+    total_rows = ""
+    items: list[tuple[str, str, str, int]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("库存查询"):
+            product = line.split("：", 1)[-1].strip()
+            continue
+        match = re.search(r"总计[:：]\s*(\d+)\s*条有库存记录[，,]\s*(\d+)\s*套", line)
+        if match:
+            total_rows, total_qty = match.groups()
+            continue
+        if not line.startswith("|") or "---" in line or "仓库" in line and "库存" in line:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        try:
+            qty = int(float(cells[-1]))
+        except ValueError:
+            continue
+        warehouse, item_name, color = cells[0], cells[1], cells[2]
+        if item_name == "合计":
+            continue
+        items.append((warehouse, item_name, color, qty))
+
+    if not total_qty and not items:
+        return None
+    if not product and items:
+        product = items[0][1].replace("【", "").replace("】", "")
+
+    warehouses = []
+    for warehouse, *_ in items:
+        if warehouse and warehouse not in warehouses:
+            warehouses.append(warehouse)
+    color_parts = [f"{color}{qty}套" if color else f"{qty}套" for _, _, color, qty in items[:6]]
+    if len(items) > 6:
+        color_parts.append(f"另外还有{len(items) - 6}条")
+
+    prefix = f"{product}，" if product else ""
+    if total_qty:
+        summary = f"{prefix}共{total_qty}套"
+        if total_rows:
+            summary += f"，{total_rows}条库存"
+    else:
+        summary = prefix.rstrip("，")
+    if warehouses:
+        summary += f"，在{'、'.join(warehouses[:2])}"
+        if len(warehouses) > 2:
+            summary += f"等{len(warehouses)}个仓库"
+    if color_parts:
+        summary += f"。明细：{'，'.join(color_parts)}。"
+    else:
+        summary += "。"
+    if len(summary) > max_chars:
+        summary = summary[:max_chars].rstrip("，。；; ") + "。"
+    return summary
+
+
 def spoken_text(text: str, *, max_chars: int = 180) -> str:
     value = (text or "").strip()
+    inventory_summary = _spoken_inventory_summary(value, max_chars=max_chars)
+    if inventory_summary:
+        return inventory_summary
+
     value = re.sub(r"https?://\S+", "", value)
     value = value.replace("```", "")
     lines = []
