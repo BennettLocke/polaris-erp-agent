@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 from src.services.aliyun_short_asr import recognize_pcm16 as recognize_pcm16_aliyun  # noqa: E402
 from src.services.mimo_tts import synthesize  # noqa: E402
 from src.services.volc_tts import synthesize_stream as synthesize_volc_stream  # noqa: E402
+from src.services.volc_realtime_asr import VolcStreamingRecognizer  # noqa: E402
 from src.services.volc_realtime_asr import recognize_pcm16 as recognize_pcm16_volc  # noqa: E402
 from src.services.voice_prompts import ensure_group, play_file, play_prompt  # noqa: E402
 
@@ -623,9 +624,11 @@ def run_stream(args) -> None:
     calibration: list[int] = []
     waiting_command_until = 0.0
     ignore_audio_until = 0.0
+    streaming_asr: VolcStreamingRecognizer | None = None
+    expecting_command_utterance = False
 
     while True:
-        if waiting_command_until and time.monotonic() > waiting_command_until:
+        if waiting_command_until and not speaking and time.monotonic() > waiting_command_until:
             waiting_command_until = 0.0
             if args.verbose:
                 print("command_window=timeout", flush=True)
@@ -660,6 +663,7 @@ def run_stream(args) -> None:
             silence_frames = 0
             speech_frames_count = 0
             active_streak = 0
+            expecting_command_utterance = False
             continue
 
         threshold = _vad_threshold(noise_floor, args)
@@ -687,6 +691,11 @@ def run_stream(args) -> None:
             if active_streak >= start_speech_frames:
                 speaking = True
                 speech_frames = list(pre_roll)
+                expecting_command_utterance = bool(waiting_command_until)
+                if expecting_command_utterance and args.asr_provider == "volc" and args.stream_command_asr:
+                    streaming_asr = VolcStreamingRecognizer(timeout=args.asr_timeout)
+                    for frame in speech_frames:
+                        streaming_asr.feed(frame)
                 pre_roll.clear()
                 silence_frames = 0
                 speech_frames_count = active_streak
@@ -694,6 +703,8 @@ def run_stream(args) -> None:
             continue
 
         speech_frames.append(pcm)
+        if streaming_asr is not None:
+            streaming_asr.feed(pcm)
         speech_frames_count += 1
         if active:
             silence_frames = 0
@@ -707,6 +718,7 @@ def run_stream(args) -> None:
         speaking = False
         if speech_frames_count < min_speech_frames:
             speech_frames = []
+            expecting_command_utterance = False
             continue
 
         utterance = b"".join(speech_frames)
@@ -714,16 +726,24 @@ def run_stream(args) -> None:
         if local_wake and not waiting_command_until:
             # Pure local wake mode: do not spend cloud ASR calls before the
             # local wake engine opens the command window.
+            streaming_asr = None
+            expecting_command_utterance = False
             continue
         try:
-            text = recognize(args, utterance)
+            if streaming_asr is not None:
+                text = streaming_asr.finish()
+                streaming_asr = None
+            else:
+                text = recognize(args, utterance)
         except Exception as exc:
+            streaming_asr = None
             print(f"ASR_ERROR {exc}", flush=True)
             continue
 
         print(f"ASR {text}", flush=True)
-        if waiting_command_until:
+        if waiting_command_until or expecting_command_utterance:
             waiting_command_until = 0.0
+            expecting_command_utterance = False
             handle_command(args, text)
             continue
 
@@ -756,6 +776,7 @@ def main() -> None:
     parser.add_argument("--no-cloud-vad", action="store_true", help="Disable Aliyun endpoint VAD")
     parser.add_argument("--asr-provider", choices=["volc", "aliyun"], default="volc")
     parser.add_argument("--asr-timeout", type=int, default=15)
+    parser.add_argument("--stream-command-asr", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--once", action="store_true", help="Record and process one chunk")
     parser.add_argument("--stream-vad", action="store_true", help="Use continuous local VAD before ASR")
     parser.add_argument("--assistant-mode", action="store_true", help="After wake word, listen for one command")

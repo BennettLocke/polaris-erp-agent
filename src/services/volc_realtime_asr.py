@@ -8,6 +8,8 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
+from queue import Queue
+from threading import Thread
 from typing import Any
 
 from src.core.config import get_config
@@ -29,6 +31,51 @@ class VolcRealtimeAsrConfig:
     chunk_ms: int
     send_interval_ms: int
     enable_nonstream: bool
+    hotwords: tuple[str, ...]
+
+
+DEFAULT_HOTWORDS = (
+    "小星",
+    "晓星",
+    "小新",
+    "小宁",
+    "查询",
+    "查库存",
+    "库存",
+    "喜悦",
+    "半斤",
+    "泡袋",
+    "上传泡袋",
+    "岩茶",
+    "红茶",
+    "岩茶泡袋",
+    "红茶泡袋",
+    "大红袍",
+    "肉桂",
+    "水仙",
+    "正山小种",
+    "金骏眉",
+    "银骏眉",
+    "长泡袋",
+    "主图",
+    "详情页",
+)
+
+
+def _split_hotwords(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        words = [part.strip() for part in value.replace("\n", ",").replace("，", ",").split(",")]
+    elif isinstance(value, (list, tuple)):
+        words = [str(item).strip() for item in value]
+    else:
+        words = []
+    result: list[str] = []
+    seen: set[str] = set()
+    for word in [*DEFAULT_HOTWORDS, *words]:
+        if word and word not in seen:
+            seen.add(word)
+            result.append(word)
+    return tuple(result)
 
 
 def get_volc_realtime_asr_config() -> VolcRealtimeAsrConfig:
@@ -49,6 +96,7 @@ def get_volc_realtime_asr_config() -> VolcRealtimeAsrConfig:
             os.getenv("VOLC_ASR_ENABLE_NONSTREAM") or config.get("volc_asr.enable_nonstream", "true")
         ).lower()
         not in {"0", "false", "no"},
+        hotwords=_split_hotwords(os.getenv("VOLC_ASR_HOTWORDS") or config.get("volc_asr.hotwords", [])),
     )
 
 
@@ -68,6 +116,7 @@ def _build_headers(cfg: VolcRealtimeAsrConfig) -> dict[str, str]:
 
 
 def _init_payload(cfg: VolcRealtimeAsrConfig) -> bytes:
+    corpus = {"hotwords": [{"word": word} for word in cfg.hotwords]}
     payload = {
         "user": {
             "uid": "sjagent-orangepi",
@@ -90,12 +139,7 @@ def _init_payload(cfg: VolcRealtimeAsrConfig) -> bytes:
             "enable_nonstream": cfg.enable_nonstream,
             "end_window_size": 600,
             "force_to_speech_time": 500,
-            "corpus": {
-                "context": json.dumps(
-                    {"hotwords": [{"word": "小星"}, {"word": "库存"}, {"word": "泡袋"}]},
-                    ensure_ascii=False,
-                ),
-            },
+            "corpus": {"context": json.dumps(corpus, ensure_ascii=False)},
         },
     }
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -226,3 +270,74 @@ async def recognize_pcm16_async(pcm: bytes, *, timeout: float = 15.0) -> str:
 
 def recognize_pcm16(pcm: bytes, *, timeout: float = 15.0) -> str:
     return asyncio.run(recognize_pcm16_async(pcm, timeout=timeout))
+
+
+class VolcStreamingRecognizer:
+    """Thread-backed streaming ASR session for live command capture."""
+
+    def __init__(self, *, timeout: float = 15.0) -> None:
+        self.timeout = timeout
+        self._chunks: Queue[bytes | None] = Queue()
+        self._result: Queue[str | BaseException] = Queue(maxsize=1)
+        self._thread = Thread(target=self._thread_main, name="volc-streaming-asr", daemon=True)
+        self._thread.start()
+
+    def feed(self, pcm: bytes) -> None:
+        if pcm:
+            self._chunks.put(bytes(pcm))
+
+    def finish(self) -> str:
+        self._chunks.put(None)
+        result = self._result.get(timeout=self.timeout + 5)
+        self._thread.join(timeout=1)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    def _thread_main(self) -> None:
+        try:
+            self._result.put(asyncio.run(self._run()))
+        except BaseException as exc:
+            self._result.put(exc)
+
+    async def _run(self) -> str:
+        cfg = get_volc_realtime_asr_config()
+        try:
+            import websockets
+        except ImportError as exc:
+            raise VolcRealtimeAsrError("websockets is not installed") from exc
+
+        headers = _build_headers(cfg)
+        final_text = ""
+
+        async def receive_loop(client: Any) -> str:
+            nonlocal final_text
+            while True:
+                message_type, flags, event = _parse_frame(await client.recv())
+                text = _extract_transcript(event)
+                if text:
+                    final_text = text
+                if flags == 0x03:
+                    return _extract_transcript(event) or final_text
+
+        async with await _connect(websockets, cfg.ws_url, headers) as client:
+            await client.send(_full_client_request(_init_payload(cfg)))
+            _, _, event = _parse_frame(await client.recv())
+            final_text = _extract_transcript(event) or final_text
+            receiver = asyncio.create_task(receive_loop(client))
+            pending: bytes | None = None
+            try:
+                while True:
+                    chunk = await asyncio.to_thread(self._chunks.get)
+                    if chunk is None:
+                        if pending is not None:
+                            await client.send(_audio_request(pending, is_last=True))
+                        else:
+                            await client.send(_audio_request(b"", is_last=True))
+                        return await asyncio.wait_for(receiver, timeout=self.timeout)
+                    if pending is not None:
+                        await client.send(_audio_request(pending, is_last=False))
+                    pending = chunk
+            finally:
+                if not receiver.done():
+                    receiver.cancel()
