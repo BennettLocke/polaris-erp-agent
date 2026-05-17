@@ -67,6 +67,15 @@ IGNORABLE_VOICE_COMMANDS = {
     "\u884c",
     "\u53ef\u4ee5",
 }
+UNCLEAR_VOICE_COMMANDS = {
+    "\u770b\u4e00\u4e0b",
+    "\u770b\u4e0b",
+    "\u627e\u4e00\u4e0b",
+    "\u627e\u4e0b",
+    "\u67e5\u4e00\u4e0b",
+    "\u67e5\u4e0b",
+    "\u540c\u5b66",
+}
 INVENTORY_QUERY_MISHEARS = (
     "\u7ec3\u4e60",
     "\u8054\u7cfb",
@@ -131,6 +140,7 @@ def normalize_command_text(text: str) -> str:
     for word in sorted(all_wake_words(), key=len, reverse=True):
         value = re.sub(rf"^{re.escape(word)}[，。！？、,.!?\s]*", "", value)
     value = re.sub(r"^(帮我|帮忙|麻烦|请|去|给我|你去|帮我去)", "", value).strip()
+    value = re.sub(r"^(查一下|查下|查询|找一下|找下|看一下|看下)", "", value).strip()
     if "\u5e93\u5b58" in value:
         for misheard in INVENTORY_QUERY_MISHEARS:
             if value.startswith(misheard):
@@ -142,6 +152,18 @@ def normalize_command_text(text: str) -> str:
 def is_ignorable_voice_command(text: str) -> bool:
     normalized = normalize_text(text)
     return normalized in IGNORABLE_VOICE_COMMANDS or len(normalized) <= 1
+
+
+def is_unclear_voice_command(text: str) -> bool:
+    normalized = normalize_text(text)
+    if normalized in UNCLEAR_VOICE_COMMANDS:
+        return True
+    return bool(re.fullmatch(r"(?:\u5e2e\u6211)?(?:\u770b|\u627e|\u67e5)(?:\u4e00\u4e0b|\u4e0b)?", normalized))
+
+
+def is_uncertain_agent_result(text: str) -> bool:
+    value = normalize_text(text)
+    return "\u672a\u627e\u5230\u5546\u54c1" in value or "\u6ca1\u627e\u5230\u5546\u54c1" in value
 
 
 def _spoken_inventory_summary(text: str, *, max_chars: int) -> str | None:
@@ -189,12 +211,21 @@ def _spoken_inventory_summary(text: str, *, max_chars: int) -> str | None:
     for warehouse, _, color, qty in items:
         label = "百鑫库存" if "百鑫" in warehouse else "自己店里" if ("自己" in warehouse or "店" in warehouse) else warehouse
         by_warehouse.setdefault(label, []).append((color, qty))
+    colors = [color for _, _, color, _ in items if color]
+    unique_colors = []
+    for color in colors:
+        if color not in unique_colors:
+            unique_colors.append(color)
+    product_prefix = product.replace(" ", "")
+    if len(unique_colors) == 1 and unique_colors[0] not in product_prefix:
+        product_prefix += unique_colors[0]
     warehouse_summaries = []
     for warehouse, rows in by_warehouse.items():
         details = "，".join(f"{color or '未标颜色'}有{qty}套" for color, qty in rows)
         warehouse_summaries.append(f"{warehouse}{details}")
     if warehouse_summaries:
-        summary = "；".join(warehouse_summaries) + "。"
+        prefix = f"{product_prefix}，" if product_prefix else ""
+        summary = prefix + "；".join(warehouse_summaries) + "。"
         if len(summary) > max_chars:
             summary = summary[:max_chars].rstrip("，。；; ") + "。"
         return summary
@@ -655,6 +686,10 @@ def handle_command(args, command: str) -> bool:
     if is_ignorable_voice_command(command):
         print(f"COMMAND_IGNORED {command}", flush=True)
         return False
+    if is_unclear_voice_command(command):
+        print(f"COMMAND_UNCLEAR {command}", flush=True)
+        play_prompt("failed", device=args.output_device)
+        return False
     print(f"COMMAND {command}", flush=True)
     if args.processing_prompt:
         play_prompt_async("processing", device=args.output_device)
@@ -663,6 +698,9 @@ def handle_command(args, command: str) -> bool:
     except Exception as exc:
         result = f"处理异常：{exc}"
     print(f"AGENT {result}", flush=True)
+    if is_uncertain_agent_result(result):
+        play_prompt("failed", device=args.output_device)
+        return False
     speak_text(args, result)
     return True
 
