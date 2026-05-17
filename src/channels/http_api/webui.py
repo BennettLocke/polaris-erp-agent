@@ -284,8 +284,9 @@ EXTRA_CSS = """
   #salesList .customer-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #salesList .product-lines { gap: 8px; padding: 10px; height: var(--sales-product-height); overflow: hidden; position: relative; align-content: start; margin-top: 0; }
   #salesList .product-lines.has-more::after { content: ""; position: absolute; bottom: 0; left: 0; right: 0; height: 28px; background: linear-gradient(transparent, #f8fafc); pointer-events: none; }
-  #salesList .product-row { grid-template-columns: minmax(0, 1fr) 56px 92px; align-items: start; font-size: 13px; }
+  #salesList .product-row { grid-template-columns: minmax(0, 1fr) 48px 76px 86px; align-items: start; font-size: 13px; }
   #salesList .product-name { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.4; }
+  #salesList .product-unit-price { text-align: right; color: var(--muted); font-weight: 760; white-space: nowrap; }
   #salesList .kv { margin: 0; }
   #salesList .product-price,
   #salesList .kv-row:nth-child(2) strong,
@@ -310,7 +311,7 @@ EXTRA_CSS = """
     #salesList .customer-name { padding-bottom: 8px; }
     #salesList .customer-name strong { font-size: 16px; }
     #salesList .product-lines { padding: 8px; gap: 6px; }
-    #salesList .product-row { grid-template-columns: minmax(0, 1fr) 48px 78px; gap: 6px; font-size: 12px; }
+    #salesList .product-row { grid-template-columns: minmax(0, 1fr) 42px 64px 72px; gap: 6px; font-size: 12px; }
     #salesList .kv { gap: 6px; }
     #salesList .kv-row { font-size: 12px; }
     #salesList .card-actions { padding-top: 7px; }

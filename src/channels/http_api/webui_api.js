@@ -1521,7 +1521,11 @@ function renderSales(list, target, compact = false) {
     const productHtml = rows.length
       ? '<div class="product-lines' + (hasMore ? ' has-more' : '') + '" id="plines' + id + '">' + rows.map(function(p) {
         const qty = p.quantity ?? p.buy_number ?? p.num ?? "";
-        return '<div class="product-row"><span class="product-name">' + escapeHtml([p.title, p.spec].filter(Boolean).join(" ")) + '</span><span class="product-qty">x' + escapeHtml(qty || "-") + '</span><span class="product-price">¥' + money(p.total_price || (Number(p.price || 0) * Number(qty || 0))) + '</span></div>';
+        const qtyNumber = Number(qty || 0);
+        const totalNumber = Number(p.total_price || 0);
+        const unitNumber = Number(p.price || 0) || (qtyNumber > 0 ? totalNumber / qtyNumber : 0);
+        const subtotal = totalNumber || (unitNumber * qtyNumber);
+        return '<div class="product-row"><span class="product-name">' + escapeHtml([p.title, p.spec].filter(Boolean).join(" ")) + '</span><span class="product-qty">x' + escapeHtml(qty || "-") + '</span><span class="product-unit-price">¥' + money(unitNumber) + '</span><span class="product-price">¥' + money(subtotal) + '</span></div>';
       }).join("") + (products.length > rows.length && !compact ? '<button class="expand-btn" onclick="openSalesDetail(' + id + ')">' + products.length + ' 项，查看全部</button>' : "") + '</div>'
       : '<div class="muted">' + escapeHtml(card.product_summary || "暂无商品信息") + '</div>';
     return `
