@@ -76,6 +76,21 @@ UNCLEAR_VOICE_COMMANDS = {
     "\u67e5\u4e0b",
     "\u540c\u5b66",
 }
+VOICE_COMMAND_KEYWORDS = (
+    "\u5e93\u5b58",
+    "\u67e5",
+    "\u627e",
+    "\u770b",
+    "\u5ba2\u6237",
+    "\u5f00\u5355",
+    "\u4e0b\u5355",
+    "\u8ba2\u5355",
+    "\u6253\u5370",
+    "\u4e0a\u4f20",
+    "\u6ce1\u888b",
+    "\u793c\u76d2",
+    "\u89c4\u5219",
+)
 INVENTORY_QUERY_MISHEARS = (
     "\u7ec3\u4e60",
     "\u8054\u7cfb",
@@ -157,6 +172,10 @@ def is_ignorable_voice_command(text: str) -> bool:
 def is_unclear_voice_command(text: str) -> bool:
     normalized = normalize_text(text)
     if normalized in UNCLEAR_VOICE_COMMANDS:
+        return True
+    if len(normalized) <= 2:
+        return True
+    if len(normalized) <= 4 and not any(keyword in normalized for keyword in VOICE_COMMAND_KEYWORDS):
         return True
     return bool(re.fullmatch(r"(?:\u5e2e\u6211)?(?:\u770b|\u627e|\u67e5)(?:\u4e00\u4e0b|\u4e0b)?", normalized))
 
