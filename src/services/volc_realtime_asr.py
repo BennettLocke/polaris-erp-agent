@@ -74,6 +74,19 @@ _GIFT_KEYWORDS = (
     "10小盒",
     "十小盒",
 )
+_NON_GIFT_TITLE_KEYWORDS = (
+    "泡袋",
+    "长泡袋",
+    "红茶泡袋",
+    "岩茶泡袋",
+    "提袋",
+    "内衬",
+    "纸箱",
+    "快递",
+    "打包",
+    "包装箱",
+    "PVC",
+)
 
 
 def _clean_hotword(value: Any) -> str:
@@ -86,6 +99,8 @@ def _clean_hotword(value: Any) -> str:
 
 def _is_gift_box_title(title: str) -> bool:
     text = _clean_hotword(title)
+    if any(keyword in text for keyword in _NON_GIFT_TITLE_KEYWORDS):
+        return False
     return any(keyword in text for keyword in _GIFT_KEYWORDS)
 
 
@@ -160,6 +175,14 @@ def _fetch_dynamic_hotwords(limit: int) -> tuple[str, ...]:
                     OR p.title LIKE '%%10小盒%%'
                     OR p.title LIKE '%%十小盒%%'
                   )
+                  AND p.title NOT LIKE '%%泡袋%%'
+                  AND p.title NOT LIKE '%%提袋%%'
+                  AND p.title NOT LIKE '%%内衬%%'
+                  AND p.title NOT LIKE '%%纸箱%%'
+                  AND p.title NOT LIKE '%%快递%%'
+                  AND p.title NOT LIKE '%%打包%%'
+                  AND p.title NOT LIKE '%%包装箱%%'
+                  AND p.title NOT LIKE '%%PVC%%'
                 ORDER BY p.id DESC
                 LIMIT %s
                 """,
