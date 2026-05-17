@@ -184,6 +184,16 @@ def _spoken_inventory_summary(text: str, *, max_chars: int) -> str | None:
     for warehouse, *_ in items:
         if warehouse and warehouse not in warehouses:
             warehouses.append(warehouse)
+    if len(items) == 1:
+        warehouse, _, color, qty = items[0]
+        name = product.replace(" ", "")
+        color_text = color if color and color not in name else ""
+        place = f"{warehouse}" if warehouse else ""
+        summary = f"{name}{color_text}，{place}还有{qty}套。"
+        if len(summary) > max_chars:
+            summary = summary[:max_chars].rstrip("，。；; ") + "。"
+        return summary
+
     color_parts = [f"{color}{qty}套" if color else f"{qty}套" for _, _, color, qty in items[:6]]
     if len(items) > 6:
         color_parts.append(f"另外还有{len(items) - 6}条")
@@ -629,17 +639,17 @@ def speak_text(args, text: str, *, stem: str = "response") -> None:
         _finish_stream_player(player)
 
 
-def handle_command(args, command: str) -> None:
+def handle_command(args, command: str) -> bool:
     command = normalize_command_text(command)
     if not command:
-        play_prompt("failed", device=args.output_device)
-        return
+        print("COMMAND_EMPTY_IGNORED", flush=True)
+        return False
     if is_wake_text(command):
         print(f"COMMAND_WAKE_IGNORED {command}", flush=True)
-        return
+        return False
     if is_ignorable_voice_command(command):
         print(f"COMMAND_IGNORED {command}", flush=True)
-        return
+        return False
     print(f"COMMAND {command}", flush=True)
     if args.processing_prompt:
         play_prompt_async("processing", device=args.output_device)
@@ -649,6 +659,7 @@ def handle_command(args, command: str) -> None:
         result = f"处理异常：{exc}"
     print(f"AGENT {result}", flush=True)
     speak_text(args, result)
+    return True
 
 
 def run_once(args) -> bool:
@@ -825,9 +836,12 @@ def run_stream(args) -> None:
 
         print(f"ASR {text}", flush=True)
         if waiting_command_until or expecting_command_utterance:
-            waiting_command_until = 0.0
             expecting_command_utterance = False
-            handle_command(args, text)
+            if handle_command(args, text):
+                waiting_command_until = 0.0
+            else:
+                waiting_command_until = time.monotonic() + args.command_window_seconds
+                print("command_window=continued", flush=True)
             continue
 
         woke = is_wake_text(text)

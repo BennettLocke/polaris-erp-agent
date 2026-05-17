@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import random
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from src.services.mimo_tts import synthesize
 from src.utils import get_logger
 
 logger = get_logger("sjagent.services.voice_prompts")
+_PLAY_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -91,7 +94,17 @@ def play_file(path: str | Path, *, device: str = "") -> None:
     if device:
         args.extend(["-D", device])
     args.append(str(path))
-    subprocess.run(args, check=True)
+    with _PLAY_LOCK:
+        last_exc: subprocess.CalledProcessError | None = None
+        for attempt in range(3):
+            try:
+                subprocess.run(args, check=True)
+                return
+            except subprocess.CalledProcessError as exc:
+                last_exc = exc
+                time.sleep(0.25 * (attempt + 1))
+        if last_exc:
+            raise last_exc
 
 
 def play_prompt(group: str, *, device: str = "", force: bool = False) -> Path:
