@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -61,11 +62,11 @@ def main() -> None:
     model_dir = ensure_model(models_dir)
     raw = write_keywords(models_dir)
     keywords = models_dir / "xiaoxing_keywords.txt"
+    cli = shutil.which("sherpa-onnx-cli")
+    cmd = [cli] if cli else [sys.executable, "-m", "sherpa_onnx.cli"]
     subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "sherpa_onnx.cli",
+        cmd
+        + [
             "text2token",
             "--tokens",
             str(model_dir / "tokens.txt"),
