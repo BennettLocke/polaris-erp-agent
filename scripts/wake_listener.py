@@ -184,12 +184,17 @@ def _spoken_inventory_summary(text: str, *, max_chars: int) -> str | None:
     for warehouse, *_ in items:
         if warehouse and warehouse not in warehouses:
             warehouses.append(warehouse)
-    if len(items) == 1:
-        warehouse, _, color, qty = items[0]
-        name = product.replace(" ", "")
-        color_text = color if color and color not in name else ""
-        place = f"{warehouse}" if warehouse else ""
-        summary = f"{name}{color_text}，{place}还有{qty}套。"
+
+    by_warehouse: dict[str, list[tuple[str, int]]] = {}
+    for warehouse, _, color, qty in items:
+        label = "百鑫库存" if "百鑫" in warehouse else "自己店里" if ("自己" in warehouse or "店" in warehouse) else warehouse
+        by_warehouse.setdefault(label, []).append((color, qty))
+    warehouse_summaries = []
+    for warehouse, rows in by_warehouse.items():
+        details = "，".join(f"{color or '未标颜色'}有{qty}套" for color, qty in rows)
+        warehouse_summaries.append(f"{warehouse}{details}")
+    if warehouse_summaries:
+        summary = "；".join(warehouse_summaries) + "。"
         if len(summary) > max_chars:
             summary = summary[:max_chars].rstrip("，。；; ") + "。"
         return summary
