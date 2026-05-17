@@ -493,13 +493,26 @@ def _start_stream_player(args):
 
 def _finish_stream_player(process) -> None:
     if not process:
-        return
+        return False
     try:
         if process.stdin:
             process.stdin.close()
-        process.wait(timeout=20)
+        return process.wait(timeout=20) == 0
     except Exception:
         process.kill()
+        return False
+
+
+def _play_mp3_file(path: Path, args) -> None:
+    wav_path = path.with_suffix(".wav")
+    subprocess.run(["mpg123", "-q", "-w", str(wav_path), str(path)], check=True)
+    try:
+        play_file(wav_path, device=args.output_device)
+    finally:
+        try:
+            wav_path.unlink()
+        except OSError:
+            pass
 
 
 def play_prompt_async(group: str, *, device: str = "") -> None:
@@ -527,8 +540,10 @@ def speak_text(args, text: str, *, stem: str = "response") -> None:
                         pass
 
             audio_path = synthesize_volc_stream(message, path, chunk_callback=on_chunk if player else None)
-            if not player:
-                subprocess.run([args.stream_tts_player or "mpg123", "-q", str(audio_path)], check=True)
+            stream_ok = _finish_stream_player(player) if player else False
+            player = None
+            if not stream_ok:
+                _play_mp3_file(audio_path, args)
         else:
             path = out_dir / f"{stem}_{int(time.time())}.wav"
             audio_path = synthesize(message, path, context="你是桌面机器人小星，请用自然中文普通话播报业务查询结果。")

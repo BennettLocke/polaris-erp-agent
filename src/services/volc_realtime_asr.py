@@ -6,11 +6,15 @@ import gzip
 import inspect
 import json
 import os
+import re
+import time
 import uuid
 from dataclasses import dataclass
 from queue import Queue
 from threading import Thread
 from typing import Any
+
+import pymysql
 
 from src.core.config import get_config
 
@@ -42,24 +46,151 @@ DEFAULT_HOTWORDS = (
     "查询",
     "查库存",
     "库存",
-    "喜悦",
+    "客户",
+    "开单",
+    "礼盒",
     "半斤",
-    "泡袋",
-    "上传泡袋",
-    "岩茶",
-    "红茶",
-    "岩茶泡袋",
-    "红茶泡袋",
-    "大红袍",
-    "肉桂",
-    "水仙",
-    "正山小种",
-    "金骏眉",
-    "银骏眉",
-    "长泡袋",
-    "主图",
-    "详情页",
+    "三两",
+    "二两",
+    "一两",
 )
+
+_HOTWORD_CACHE: dict[str, Any] = {"expires_at": 0.0, "words": ()}
+_GIFT_KEYWORDS = (
+    "半斤",
+    "3两",
+    "三两",
+    "2两",
+    "二两",
+    "1两",
+    "一两",
+    "2大盒",
+    "二大盒",
+    "两大盒",
+    "3小盒",
+    "三小盒",
+    "6小盒",
+    "六小盒",
+    "10小盒",
+    "十小盒",
+)
+
+
+def _clean_hotword(value: Any) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"SJ\d+", "", text, flags=re.IGNORECASE)
+    text = text.replace("【", "").replace("】", "")
+    text = re.sub(r"[^\w\u4e00-\u9fff]", "", text)
+    return text[:24]
+
+
+def _is_gift_box_title(title: str) -> bool:
+    text = _clean_hotword(title)
+    return any(keyword in text for keyword in _GIFT_KEYWORDS)
+
+
+def _add_hotword(words: list[str], seen: set[str], value: Any) -> None:
+    word = _clean_hotword(value)
+    if len(word) < 2 or word in seen or not re.search(r"[\u4e00-\u9fff]", word):
+        return
+    seen.add(word)
+    words.append(word)
+
+
+def _series_from_title(title: str) -> str:
+    text = _clean_hotword(title)
+    for keyword in _GIFT_KEYWORDS:
+        pos = text.find(keyword)
+        if pos > 0:
+            return text[:pos]
+    return ""
+
+
+def _fetch_dynamic_hotwords(limit: int) -> tuple[str, ...]:
+    config = get_config()
+    db = config.db_config
+    words: list[str] = []
+    seen: set[str] = set()
+    conn = pymysql.connect(
+        host=db["host"],
+        port=int(db.get("port") or 3306),
+        user=db["user"],
+        password=db["password"],
+        database=db["name"],
+        charset=db.get("charset") or "utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=True,
+    )
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT name, company_name, contacts_name
+                FROM sxo_plugins_erp_company
+                WHERE is_enable = 1 AND is_customer = 1
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            for row in cursor.fetchall():
+                _add_hotword(words, seen, row.get("name"))
+                _add_hotword(words, seen, row.get("company_name"))
+                _add_hotword(words, seen, row.get("contacts_name"))
+
+            cursor.execute(
+                """
+                SELECT DISTINCT p.title
+                FROM sxo_plugins_erp_product p
+                WHERE (
+                    p.title LIKE '%%半斤%%'
+                    OR p.title LIKE '%%3两%%'
+                    OR p.title LIKE '%%三两%%'
+                    OR p.title LIKE '%%2两%%'
+                    OR p.title LIKE '%%二两%%'
+                    OR p.title LIKE '%%1两%%'
+                    OR p.title LIKE '%%一两%%'
+                    OR p.title LIKE '%%2大盒%%'
+                    OR p.title LIKE '%%二大盒%%'
+                    OR p.title LIKE '%%两大盒%%'
+                    OR p.title LIKE '%%3小盒%%'
+                    OR p.title LIKE '%%三小盒%%'
+                    OR p.title LIKE '%%6小盒%%'
+                    OR p.title LIKE '%%六小盒%%'
+                    OR p.title LIKE '%%10小盒%%'
+                    OR p.title LIKE '%%十小盒%%'
+                  )
+                ORDER BY p.id DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            for row in cursor.fetchall():
+                title = row.get("title") or ""
+                if not _is_gift_box_title(title):
+                    continue
+                _add_hotword(words, seen, title)
+                _add_hotword(words, seen, _series_from_title(title))
+    finally:
+        conn.close()
+    return tuple(words[:limit])
+
+
+def _dynamic_hotwords(config, limit: int) -> tuple[str, ...]:
+    enabled = str(config.get("volc_asr.dynamic_hotwords", "true")).lower() not in {"0", "false", "no"}
+    if not enabled:
+        return ()
+    now = time.time()
+    if now < float(_HOTWORD_CACHE.get("expires_at") or 0):
+        return tuple(_HOTWORD_CACHE.get("words") or ())
+    try:
+        words = _fetch_dynamic_hotwords(limit)
+        _HOTWORD_CACHE.update({"expires_at": now + 3600, "words": words})
+        return words
+    except Exception as exc:
+        print(f"VOLC_HOTWORDS_WARNING {exc}", flush=True)
+        _HOTWORD_CACHE.update({"expires_at": now + 300, "words": ()})
+        return ()
 
 
 def _split_hotwords(value: Any) -> tuple[str, ...]:
@@ -76,6 +207,18 @@ def _split_hotwords(value: Any) -> tuple[str, ...]:
             seen.add(word)
             result.append(word)
     return tuple(result)
+
+
+def _build_hotwords(config) -> tuple[str, ...]:
+    configured = _split_hotwords(os.getenv("VOLC_ASR_HOTWORDS") or config.get("volc_asr.hotwords", []))
+    limit = int(os.getenv("VOLC_ASR_HOTWORD_LIMIT") or config.get("volc_asr.hotword_limit", 500))
+    result: list[str] = []
+    seen: set[str] = set()
+    for word in (*configured, *_dynamic_hotwords(config, limit)):
+        if word and word not in seen:
+            seen.add(word)
+            result.append(word)
+    return tuple(result[:limit])
 
 
 def get_volc_realtime_asr_config() -> VolcRealtimeAsrConfig:
@@ -96,7 +239,7 @@ def get_volc_realtime_asr_config() -> VolcRealtimeAsrConfig:
             os.getenv("VOLC_ASR_ENABLE_NONSTREAM") or config.get("volc_asr.enable_nonstream", "true")
         ).lower()
         not in {"0", "false", "no"},
-        hotwords=_split_hotwords(os.getenv("VOLC_ASR_HOTWORDS") or config.get("volc_asr.hotwords", [])),
+        hotwords=_build_hotwords(config),
     )
 
 
