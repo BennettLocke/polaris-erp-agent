@@ -711,6 +711,10 @@ def run_stream(args) -> None:
 
         utterance = b"".join(speech_frames)
         speech_frames = []
+        if local_wake and not waiting_command_until:
+            # Pure local wake mode: do not spend cloud ASR calls before the
+            # local wake engine opens the command window.
+            continue
         try:
             text = recognize(args, utterance)
         except Exception as exc:
@@ -721,11 +725,6 @@ def run_stream(args) -> None:
         if waiting_command_until:
             waiting_command_until = 0.0
             handle_command(args, text)
-            continue
-        if local_wake:
-            # When a local wake engine is enabled, cloud ASR should only handle
-            # commands after wake. Otherwise near-sounds like "小心小心" can
-            # reopen the command window through the old ASR wake fallback.
             continue
 
         woke = is_wake_text(text)
