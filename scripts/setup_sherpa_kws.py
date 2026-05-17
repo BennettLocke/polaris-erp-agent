@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
-import subprocess
-import sys
 import tarfile
 import urllib.request
 from pathlib import Path
@@ -53,6 +50,24 @@ def write_keywords(models_dir: Path) -> Path:
     return raw
 
 
+def encode_keywords(raw: Path, output: Path, model_dir: Path) -> None:
+    from sherpa_onnx.utils import text2token
+
+    lines: list[str] = []
+    for line in raw.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        phrase, sep, suffix = line.partition(" :")
+        encoded = text2token(
+            [phrase.strip()],
+            tokens=str(model_dir / "tokens.txt"),
+            tokens_type="phone+ppinyin",
+            lexicon=str(model_dir / "en.phone"),
+        )[0]
+        lines.append(" ".join(str(token) for token in encoded) + (f" :{suffix}" if sep else ""))
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--models-dir", default=str(ROOT / "models"))
@@ -63,24 +78,7 @@ def main() -> None:
     raw = write_keywords(models_dir)
     keywords = models_dir / "xiaoxing_keywords.txt"
     keywords.unlink(missing_ok=True)
-    cli_path = Path(sys.executable).resolve().parent / "sherpa-onnx-cli"
-    cli = str(cli_path) if cli_path.exists() else shutil.which("sherpa-onnx-cli")
-    cmd = [cli] if cli else [sys.executable, "-m", "sherpa_onnx.cli"]
-    subprocess.run(
-        cmd
-        + [
-            "text2token",
-            "--tokens",
-            str(model_dir / "tokens.txt"),
-            "--tokens-type",
-            "phone+ppinyin",
-            "--lexicon",
-            str(model_dir / "en.phone"),
-            str(raw),
-            str(keywords),
-        ],
-        check=True,
-    )
+    encode_keywords(raw, keywords, model_dir)
     print(f"model_dir={model_dir}")
     print(f"keywords_raw={raw}")
     print(f"keywords={keywords}")
