@@ -55,6 +55,24 @@ WAKE_WORDS = {
     "晓新",
 }
 LEARNED_WAKE_PATH = ROOT / "data" / "generated" / "voice" / "wake_words.json"
+IGNORABLE_VOICE_COMMANDS = {
+    "\u55ef",
+    "\u554a",
+    "\u989d",
+    "\u5443",
+    "\u54e6",
+    "\u597d",
+    "\u597d\u7684",
+    "\u884c",
+    "\u53ef\u4ee5",
+}
+INVENTORY_QUERY_MISHEARS = (
+    "\u7ec3\u4e60",
+    "\u8054\u7cfb",
+    "\u8fde\u7eed",
+    "\u7ec3\u7ec3",
+    "\u641c\u7d22",
+)
 
 
 def load_learned_wake_words() -> set[str]:
@@ -112,7 +130,17 @@ def normalize_command_text(text: str) -> str:
     for word in sorted(all_wake_words(), key=len, reverse=True):
         value = re.sub(rf"^{re.escape(word)}[，。！？、,.!?\s]*", "", value)
     value = re.sub(r"^(帮我|帮忙|麻烦|请|去|给我|你去|帮我去)", "", value).strip()
+    if "\u5e93\u5b58" in value:
+        for misheard in INVENTORY_QUERY_MISHEARS:
+            if value.startswith(misheard):
+                value = "\u67e5\u8be2" + value[len(misheard) :]
+                break
     return value
+
+
+def is_ignorable_voice_command(text: str) -> bool:
+    normalized = normalize_text(text)
+    return normalized in IGNORABLE_VOICE_COMMANDS or len(normalized) <= 1
 
 
 def spoken_text(text: str, *, max_chars: int = 180) -> str:
@@ -521,6 +549,12 @@ def handle_command(args, command: str) -> None:
     command = normalize_command_text(command)
     if not command:
         play_prompt("failed", device=args.output_device)
+        return
+    if is_wake_text(command):
+        print(f"COMMAND_WAKE_IGNORED {command}", flush=True)
+        return
+    if is_ignorable_voice_command(command):
+        print(f"COMMAND_IGNORED {command}", flush=True)
         return
     print(f"COMMAND {command}", flush=True)
     if args.processing_prompt:
