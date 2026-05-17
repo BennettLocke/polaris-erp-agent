@@ -62,6 +62,7 @@ def main() -> None:
     model_dir = ensure_model(models_dir)
     raw = write_keywords(models_dir)
     keywords = models_dir / "xiaoxing_keywords.txt"
+    keywords.unlink(missing_ok=True)
     cli_path = Path(sys.executable).resolve().parent / "sherpa-onnx-cli"
     cli = str(cli_path) if cli_path.exists() else shutil.which("sherpa-onnx-cli")
     cmd = [cli] if cli else [sys.executable, "-m", "sherpa_onnx.cli"]
