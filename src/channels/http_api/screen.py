@@ -731,7 +731,7 @@ def get_screen_html() -> str:
       $("inventoryList").innerHTML = inventory.map((item) => rowHtml(item.title, item.sub, item.tag || "LOW", item.class || "warn")).join("") || rowHtml("暂无预警", "库存数据正常", "OK", "ok");
       $("inventoryTotal").textContent = data.inventory_total ?? inventory.length ?? "--";
       $("inventoryLow").textContent = inventory.length;
-      const ordersList = (data.orders || []).slice(0, 4);
+      const ordersList = (data.orders || []).slice(0, 6);
       $("ordersList").innerHTML = ordersList.map(orderHtml).join("") || orderHtml({ customer_name: "暂无订单", goods_name: "等待数据刷新", status_text: "" });
     }
 
