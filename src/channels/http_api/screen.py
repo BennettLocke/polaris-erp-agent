@@ -232,9 +232,9 @@ def get_screen_html() -> str:
       position: absolute;
       z-index: 6;
       left: 22px;
-      top: 92px;
+      top: 86px;
       bottom: 86px;
-      width: 292px;
+      width: 214px;
       height: auto;
       display: grid;
       align-content: end;
