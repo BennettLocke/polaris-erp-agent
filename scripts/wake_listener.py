@@ -32,6 +32,7 @@ from src.services.volc_tts import synthesize_stream as synthesize_volc_stream  #
 from src.services.volc_realtime_asr import VolcStreamingRecognizer  # noqa: E402
 from src.services.volc_realtime_asr import recognize_pcm16 as recognize_pcm16_volc  # noqa: E402
 from src.services.screen_state import notify_screen_state  # noqa: E402
+from src.services.voice_reply_formatter import format_voice_reply  # noqa: E402
 from src.services.voice_prompts import ensure_group, play_file, play_prompt  # noqa: E402
 
 
@@ -280,6 +281,8 @@ def _spoken_inventory_summary(text: str, *, max_chars: int) -> str | None:
 
 
 def spoken_text(text: str, *, max_chars: int = 180) -> str:
+    return format_voice_reply(text, max_chars=max_chars)
+
     value = (text or "").strip()
     inventory_summary = _spoken_inventory_summary(value, max_chars=max_chars)
     if inventory_summary:

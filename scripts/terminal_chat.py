@@ -32,57 +32,11 @@ logger.remove()
 
 from src.core.agent import Agent  # noqa: E402
 from src.services.screen_state import notify_screen_state  # noqa: E402
+from src.services.voice_reply_formatter import format_voice_reply  # noqa: E402
 
 logger.remove()
 
 _AGENT: Agent | None = None
-
-
-def compact_reply(text: str, *, max_chars: int = 180) -> str:
-    value = (text or "").strip()
-    if "库存查询" in value and "|" in value:
-        product = ""
-        rows: list[tuple[str, str, int]] = []
-        for raw in value.splitlines():
-            line = raw.strip()
-            if line.startswith("库存查询"):
-                product = line.split("：", 1)[-1].replace(" ", "").strip()
-                continue
-            if not line.startswith("|") or "---" in line:
-                continue
-            cells = [cell.strip() for cell in line.strip("|").split("|")]
-            if len(cells) < 4 or cells[0] == "仓库" or cells[1] == "合计":
-                continue
-            try:
-                qty = int(float(cells[-1]))
-            except ValueError:
-                continue
-            warehouse, item_name, color = cells[0], cells[1], cells[2]
-            if not product:
-                product = item_name.replace("【", "").replace("】", "").replace(" ", "")
-            rows.append((warehouse, color, qty))
-        if rows:
-            grouped: dict[str, list[tuple[str, int]]] = {}
-            for warehouse, color, qty in rows:
-                label = "百鑫库存" if "百鑫" in warehouse else "自己店里" if ("自己" in warehouse or "店" in warehouse) else warehouse
-                grouped.setdefault(label, []).append((color, qty))
-            parts = []
-            for warehouse, items in grouped.items():
-                details = "，".join(f"{color or '未标颜色'}{qty}套" for color, qty in items)
-                parts.append(f"{warehouse}{details}")
-            return f"{product}：" + "；".join(parts)
-
-    lines = []
-    for raw in value.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("|") or set(line) <= {"-", ":", "|", " "}:
-            continue
-        line = line.replace("**", "").replace("#", "").replace("`", "")
-        lines.append(line)
-    short = "。".join(lines) if lines else value
-    if len(short) > max_chars:
-        short = short[:max_chars].rstrip("，。；; ") + "。"
-    return short
 
 
 def get_agent() -> Agent:
@@ -107,7 +61,7 @@ def run_once(args: argparse.Namespace, message: str) -> int:
         print(f"处理失败：{exc}", file=sys.stderr)
         screen_notify(args, "error", role="assistant", text=f"处理失败：{exc}")
         return 1
-    display_reply = compact_reply(reply)
+    display_reply = format_voice_reply(reply)
     screen_notify(args, "talk", role="assistant", text=display_reply)
     elapsed = time.time() - started
     print(f"小星：{display_reply}")
