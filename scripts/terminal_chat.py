@@ -4,11 +4,21 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+VENV_PYTHON = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+if VENV_PYTHON.exists() and os.environ.get("SJ_TERMINAL_CHAT_NO_REEXEC") != "1":
+    current = Path(sys.executable).resolve()
+    target = VENV_PYTHON.resolve()
+    if current != target:
+        env = dict(os.environ)
+        env["SJ_TERMINAL_CHAT_NO_REEXEC"] = "1"
+        os.execve(str(target), [str(target), *sys.argv], env)
+
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
