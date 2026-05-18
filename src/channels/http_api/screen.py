@@ -221,7 +221,7 @@ def get_screen_html() -> str:
     .standby-time-head { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; margin-bottom: 1px; }
     .standby-time-head span { font-size: 11px; font-weight: 900; line-height: 1; }
     .standby-time-head i { height: 2px; background: rgba(233, 255, 255, .34); }
-    .standby-date-row { display: flex; align-items: center; gap: 8px; }
+    .standby-date-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
     .standby-date-row strong { font-size: 54px; font-weight: 950; line-height: .88; }
     .standby-time-stack { display: grid; gap: 1px; padding-top: 0; font-weight: 850; transform: translateY(-1px); }
     .standby-time-stack span { font-size: 11px; line-height: 1.05; }
@@ -232,7 +232,7 @@ def get_screen_html() -> str:
       position: absolute;
       z-index: 6;
       left: 30px;
-      top: 86px;
+      top: 98px;
       bottom: 86px;
       width: 222px;
       height: auto;
