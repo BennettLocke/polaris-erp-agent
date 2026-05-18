@@ -233,7 +233,7 @@ def get_screen_html() -> str:
       z-index: 6;
       left: 22px;
       top: 92px;
-      bottom: 24px;
+      bottom: 86px;
       width: 292px;
       height: auto;
       display: grid;
@@ -262,7 +262,7 @@ def get_screen_html() -> str:
       overflow-wrap: anywhere;
       word-break: break-word;
     }
-    .log-item.latest span { font-size: 11px; line-height: 1.25; }
+    .log-item.latest span { font-size: 10px; line-height: 1.28; }
 
     .standby-scene { position: absolute; inset: 0; transform: none; transform-origin: 50% 50%; }
     .standby-star {
