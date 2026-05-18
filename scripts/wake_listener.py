@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.services.aliyun_short_asr import recognize_pcm16 as recognize_pcm16_aliyun  # noqa: E402
+from src.services.local_robot_features import handle_local_robot_command, is_local_robot_command  # noqa: E402
 from src.services.mimo_tts import synthesize  # noqa: E402
 from src.services.volc_tts import synthesize_stream as synthesize_volc_stream  # noqa: E402
 from src.services.volc_realtime_asr import VolcStreamingRecognizer  # noqa: E402
@@ -730,6 +731,12 @@ def handle_command(args, command: str) -> bool:
     if is_ignorable_voice_command(command):
         print(f"COMMAND_IGNORED {command}", flush=True)
         return False
+    if is_local_robot_command(command):
+        print(f"COMMAND_LOCAL {command}", flush=True)
+        screen_notify(args, "listen", role="user", text=command)
+        local_reply = handle_local_robot_command(command, output_device=args.output_device) or "已处理。"
+        screen_notify(args, "talk", role="assistant", text=local_reply)
+        return True
     if is_unclear_voice_command(command):
         print(f"COMMAND_UNCLEAR {command}", flush=True)
         screen_notify(args, "error", role="assistant", text="没听清，再说一遍。")

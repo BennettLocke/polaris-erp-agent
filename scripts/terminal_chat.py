@@ -31,6 +31,7 @@ from loguru import logger  # noqa: E402
 logger.remove()
 
 from src.core.agent import Agent  # noqa: E402
+from src.services.local_robot_features import handle_local_robot_command  # noqa: E402
 from src.services.screen_state import notify_screen_state  # noqa: E402
 from src.services.voice_reply_formatter import format_voice_reply  # noqa: E402
 
@@ -54,6 +55,13 @@ def run_once(args: argparse.Namespace, message: str) -> int:
     started = time.time()
     print("你：", message, flush=True)
     screen_notify(args, "listen", role="user", text=message)
+    local_reply = handle_local_robot_command(message)
+    if local_reply:
+        screen_notify(args, "talk", role="assistant", text=local_reply)
+        elapsed = time.time() - started
+        print(f"小星：{local_reply}")
+        print(f"耗时：{elapsed:.1f}s")
+        return 0
     screen_notify(args, "processing")
     try:
         reply = get_agent().run(message, user_id=args.user_id, session_id=args.session_id)
