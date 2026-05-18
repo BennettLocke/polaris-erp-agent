@@ -33,6 +33,7 @@ logger.remove()
 from src.core.agent import Agent  # noqa: E402
 from src.services.screen_state import notify_screen_state  # noqa: E402
 
+logger.remove()
 
 _AGENT: Agent | None = None
 
