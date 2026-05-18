@@ -33,6 +33,53 @@ from src.services.screen_state import notify_screen_state  # noqa: E402
 _AGENT: Agent | None = None
 
 
+def compact_reply(text: str, *, max_chars: int = 180) -> str:
+    value = (text or "").strip()
+    if "库存查询" in value and "|" in value:
+        product = ""
+        rows: list[tuple[str, str, int]] = []
+        for raw in value.splitlines():
+            line = raw.strip()
+            if line.startswith("库存查询"):
+                product = line.split("：", 1)[-1].replace(" ", "").strip()
+                continue
+            if not line.startswith("|") or "---" in line:
+                continue
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) < 4 or cells[0] == "仓库" or cells[1] == "合计":
+                continue
+            try:
+                qty = int(float(cells[-1]))
+            except ValueError:
+                continue
+            warehouse, item_name, color = cells[0], cells[1], cells[2]
+            if not product:
+                product = item_name.replace("【", "").replace("】", "").replace(" ", "")
+            rows.append((warehouse, color, qty))
+        if rows:
+            grouped: dict[str, list[tuple[str, int]]] = {}
+            for warehouse, color, qty in rows:
+                label = "百鑫库存" if "百鑫" in warehouse else "自己店里" if ("自己" in warehouse or "店" in warehouse) else warehouse
+                grouped.setdefault(label, []).append((color, qty))
+            parts = []
+            for warehouse, items in grouped.items():
+                details = "，".join(f"{color or '未标颜色'}{qty}套" for color, qty in items)
+                parts.append(f"{warehouse}{details}")
+            return f"{product}：" + "；".join(parts)
+
+    lines = []
+    for raw in value.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("|") or set(line) <= {"-", ":", "|", " "}:
+            continue
+        line = line.replace("**", "").replace("#", "").replace("`", "")
+        lines.append(line)
+    short = "。".join(lines) if lines else value
+    if len(short) > max_chars:
+        short = short[:max_chars].rstrip("，。；; ") + "。"
+    return short
+
+
 def get_agent() -> Agent:
     global _AGENT
     if _AGENT is None:
@@ -48,16 +95,17 @@ def run_once(args: argparse.Namespace, message: str) -> int:
     started = time.time()
     print("你：", message, flush=True)
     screen_notify(args, "listen", role="user", text=message)
-    screen_notify(args, "processing", role="assistant", text="正在处理...")
+    screen_notify(args, "processing")
     try:
         reply = get_agent().run(message, user_id=args.user_id, session_id=args.session_id)
     except Exception as exc:
         print(f"处理失败：{exc}", file=sys.stderr)
         screen_notify(args, "error", role="assistant", text=f"处理失败：{exc}")
         return 1
-    screen_notify(args, "talk", role="assistant", text=reply)
+    display_reply = compact_reply(reply)
+    screen_notify(args, "talk", role="assistant", text=display_reply)
     elapsed = time.time() - started
-    print(f"小星：{reply}")
+    print(f"小星：{display_reply}")
     print(f"耗时：{elapsed:.1f}s")
     return 0
 

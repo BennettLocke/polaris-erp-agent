@@ -734,7 +734,7 @@ def handle_command(args, command: str) -> bool:
         return False
     print(f"COMMAND {command}", flush=True)
     screen_notify(args, "listen", role="user", text=command)
-    screen_notify(args, "processing", role="assistant", text="正在处理...")
+    screen_notify(args, "processing")
     if args.processing_prompt:
         play_prompt_async("processing", device=args.output_device)
     try:
@@ -746,7 +746,7 @@ def handle_command(args, command: str) -> bool:
         screen_notify(args, "error", role="assistant", text="没听清，再说一遍。")
         play_prompt("failed", device=args.output_device)
         return False
-    screen_notify(args, "talk", role="assistant", text=str(result or ""))
+    screen_notify(args, "talk", role="assistant", text=spoken_text(str(result or ""), max_chars=args.tts_max_chars))
     speak_text(args, result)
     return True
 

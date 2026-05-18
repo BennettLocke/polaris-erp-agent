@@ -384,6 +384,7 @@ def get_screen_html() -> str:
       background: #00d8ff;
     }
     .standby-bubble {
+      display: none !important;
       position: absolute;
       z-index: 4;
       left: 58%;
@@ -618,6 +619,7 @@ def get_screen_html() -> str:
     const title = $("pageTitle");
     let latestVersion = -1;
     let mainTimer = 0;
+    let expressionTimer = 0;
 
     function escapeHtml(text) {
       return String(text || "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -678,10 +680,18 @@ def get_screen_html() -> str:
       const expression = state.expression || state.status || "idle";
       standby.dataset.expression = expression;
       const latest = state.latest || {};
-      const message = state.message || latest.text || "";
-      $("standbyBubble").textContent = message || (expression === "listen" ? "我在听。" : expression === "processing" ? "正在处理..." : "我在。");
       renderMessages(state.messages || []);
       latestVersion = Number(state.version || 0);
+      clearTimeout(expressionTimer);
+      if (expression === "talk") {
+        expressionTimer = setTimeout(() => {
+          if (latestVersion === Number(state.version || 0)) standby.dataset.expression = "idle";
+        }, 3600);
+      } else if (expression === "listen") {
+        expressionTimer = setTimeout(() => {
+          if (latestVersion === Number(state.version || 0)) standby.dataset.expression = "idle";
+        }, 8000);
+      }
     }
 
     function moneyShort(text) {

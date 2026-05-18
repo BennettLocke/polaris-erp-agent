@@ -53,6 +53,9 @@ def update_screen_state(
     normalized_status = _normalize_status(status)
     clean_text = (text or "").strip()
     clean_role = (role or "").strip().lower()
+    if normalized_status == "processing":
+        clean_text = ""
+        clean_role = ""
     if clean_text and clean_role in {"user", "assistant", "system"}:
         item = {
             "role": clean_role,
