@@ -231,10 +231,10 @@ def get_screen_html() -> str:
     .screen-log {
       position: absolute;
       z-index: 6;
-      left: 30px;
-      top: 112px;
-      bottom: 82px;
-      width: 222px;
+      left: 22px;
+      top: 92px;
+      bottom: 24px;
+      width: 292px;
       height: auto;
       display: grid;
       align-content: end;
@@ -259,6 +259,8 @@ def get_screen_html() -> str:
       font-size: 10px;
       line-height: 1.28;
       font-weight: 760;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .log-item.latest span { font-size: 11px; line-height: 1.25; }
 
