@@ -213,20 +213,20 @@ def get_screen_html() -> str:
     .standby-time {
       position: absolute;
       z-index: 5;
-      top: 28px;
+      top: 26px;
       left: 30px;
-      width: 216px;
+      width: 228px;
       text-shadow: 0 0 6px rgba(0, 216, 255, .26), 0 0 14px rgba(0, 109, 255, .22);
     }
-    .standby-time-head { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; margin-bottom: 2px; }
-    .standby-time-head span { font-size: 10px; font-weight: 900; line-height: 1; }
+    .standby-time-head { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; margin-bottom: 1px; }
+    .standby-time-head span { font-size: 11px; font-weight: 900; line-height: 1; }
     .standby-time-head i { height: 2px; background: rgba(233, 255, 255, .34); }
     .standby-date-row { display: flex; align-items: center; gap: 8px; }
-    .standby-date-row strong { font-size: 46px; font-weight: 950; line-height: .92; }
-    .standby-time-stack { display: grid; gap: 1px; padding-top: 4px; font-weight: 850; }
+    .standby-date-row strong { font-size: 50px; font-weight: 950; line-height: .9; }
+    .standby-time-stack { display: grid; gap: 1px; padding-top: 0; font-weight: 850; transform: translateY(-1px); }
     .standby-time-stack span { font-size: 11px; line-height: 1.05; }
-    .standby-time-stack b { font-size: 17px; }
-    .standby-date-meta { display: flex; justify-content: space-between; margin-top: 6px; color: rgba(233, 255, 255, .68); font-size: 11px; font-weight: 750; }
+    .standby-time-stack b { font-size: 18px; }
+    .standby-date-meta { display: flex; justify-content: space-between; margin-top: 2px; color: rgba(233, 255, 255, .68); font-size: 11px; font-weight: 750; }
 
     .screen-log {
       position: absolute;
