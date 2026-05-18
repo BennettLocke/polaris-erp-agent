@@ -12,6 +12,7 @@ PRODUCT_SPECS = [
     "二三两",
     "两大盒",
     "两泡装小盒",
+    "二小盒",
     "三小盒",
     "六小盒",
     "十小盒",
@@ -42,6 +43,26 @@ def normalize_half_jin_aliases(text: str) -> str:
     return value
 
 
+def normalize_liang_aliases(text: str) -> str:
+    """Map 2/3-liang OCR and typing variants to 二三两."""
+    value = str(text or "")
+    return re.sub(r"(?:2\s*两|3\s*两|二\s*两|三\s*两|二\s*三\s*两)", "二三两", value)
+
+
+def normalize_small_box_aliases(text: str) -> str:
+    """Normalize common numeric/Chinese 小盒 specs."""
+    value = str(text or "")
+    replacements = (
+        (r"(?:2|二|两)\s*小\s*盒", "二小盒"),
+        (r"(?:3|三)\s*小\s*盒", "三小盒"),
+        (r"(?:6|六)\s*小\s*盒", "六小盒"),
+        (r"(?:10|十)\s*小\s*盒", "十小盒"),
+    )
+    for pattern, normalized in replacements:
+        value = re.sub(pattern, normalized, value)
+    return value
+
+
 def normalize_product_name(
     name: str,
     *,
@@ -58,20 +79,13 @@ def normalize_product_name(
         for color in sorted({str(c) for c in colors if c}, key=len, reverse=True):
             value = value.replace(color, "")
 
-    value = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", value)
+    value = normalize_liang_aliases(value)
     value = re.sub(r"(?:2\s*大盒|两\s*大盒|二\s*大盒)", "两大盒", value)
     value = re.sub(r"(?:2\s*泡(?:盒|装小盒)?|二\s*泡(?:盒|装小盒)?|两\s*泡(?:盒|装小盒)?)", "两泡装小盒", value)
     value = normalize_half_jin_aliases(value)
     value = re.sub(r"(?:1\s*两|一\s*两)", "一两", value)
 
-    replacements = [
-        ("2小盒", "二小盒"),
-        ("3小盒", "三小盒"),
-        ("6小盒", "六小盒"),
-        ("10小盒", "十小盒"),
-    ]
-    for raw, normalized in replacements:
-        value = value.replace(raw, normalized)
+    value = normalize_small_box_aliases(value)
 
     spec_list = list(specs or PRODUCT_SPECS)
     spec_pattern = "|".join(re.escape(spec) for spec in sorted(dict.fromkeys(spec_list), key=len, reverse=True))
