@@ -371,12 +371,13 @@ def _webui_auth_guard():
         return None
     public_paths = {
         "/login",
+        "/screen",
         "/api/web-auth/login",
         "/api/web-auth/register",
         "/api/web-auth/me",
         "/api/web-auth/logout",
     }
-    if path in public_paths or path.startswith("/api/auth/"):
+    if path in public_paths or path.startswith("/api/auth/") or path.startswith("/api/screen/"):
         return None
     if path == "/web" or path.startswith("/api/"):
         if not _current_web_user():
@@ -1972,6 +1973,165 @@ def webui():
     return response
 
 
+@app.route("/screen", methods=["GET"])
+def screen_page():
+    """Orange Pi 480x320 kiosk page."""
+    from src.channels.http_api.screen import get_screen_html
+
+    response = Response(get_screen_html(), content_type="text/html; charset=utf-8")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.route("/api/screen/assets/<path:filename>", methods=["GET"])
+def screen_assets(filename: str):
+    """Serve screen-only visual assets."""
+    from src.channels.http_api.screen import SCREEN_ASSETS_DIR
+
+    return send_from_directory(SCREEN_ASSETS_DIR, filename)
+
+
+@app.route("/api/screen/state", methods=["GET", "POST"])
+def screen_state_api():
+    """Shared state for the Orange Pi screen and voice loop."""
+    from src.services.screen_state import get_screen_state, update_screen_state
+
+    if request.method == "GET":
+        return jsonify({"code": 0, "data": get_screen_state()})
+    body = request.get_json(silent=True) or {}
+    status = body.get("status") or body.get("expression") or "idle"
+    role = body.get("role")
+    text = body.get("text") or body.get("message")
+    reset = bool(body.get("reset"))
+    return jsonify(
+        {
+            "code": 0,
+            "data": update_screen_state(status=status, role=role, text=text, source="screen-api", reset=reset),
+        }
+    )
+
+
+def _screen_dashboard_payload() -> dict:
+    db = _db_client()
+    now = time.time()
+    local_now = time.localtime(now)
+    day_start_tuple = (
+        local_now.tm_year,
+        local_now.tm_mon,
+        local_now.tm_mday,
+        0,
+        0,
+        0,
+        local_now.tm_wday,
+        local_now.tm_yday,
+        local_now.tm_isdst,
+    )
+    start_ts = int(time.mktime(day_start_tuple))
+    end_ts = start_ts + 86400
+    sales_rows = db.query(
+        """
+        SELECT COUNT(*) AS count, COALESCE(SUM(COALESCE(total_price, price, 0)), 0) AS amount
+        FROM sxo_plugins_erp_sales
+        WHERE add_time >= %s AND add_time < %s
+        """,
+        (start_ts, end_ts),
+    )
+    workflow_rows = db.query(
+        """
+        SELECT COUNT(*) AS count
+        FROM sxo_workflow_order
+        WHERE COALESCE(order_type, 0) <> 1
+           OR COALESCE(is_made, 0) <> 1
+           OR COALESCE(is_delivered, 0) <> 1
+        """,
+    )
+    delivery_rows = db.query(
+        """
+        SELECT COUNT(*) AS count
+        FROM sxo_workflow_order
+        WHERE COALESCE(is_delivered, 0) <> 1
+        """,
+    )
+    sales = sales_rows[0] if sales_rows else {}
+    workflow = workflow_rows[0] if workflow_rows else {}
+    delivery = delivery_rows[0] if delivery_rows else {}
+    summary = {
+        "today_sales_count": int(sales.get("count") or 0),
+        "today_sales_amount": _as_money(sales.get("amount") or 0),
+        "today_sales_amount_text": f"¥{_as_money(sales.get('amount') or 0)}",
+        "pending_workflow_count": int(workflow.get("count") or 0),
+        "updated_at": int(now),
+    }
+
+    sales_cards, _sales_total = _db_sales_cards("", 1, 4, None)
+    workflow_cards, _workflow_total = _db_workflow_orders("", 1, 4, "active")
+    inventory_rows = db.search_inventory(keyword="", only_in_stock=True, limit=900)
+    inventory_cards = _inventory_cards(inventory_rows if isinstance(inventory_rows, list) else [], 12)
+    low_inventory = [card for card in inventory_cards if int(card.get("total_stock") or 0) <= 30][:4]
+    if not low_inventory:
+        low_inventory = inventory_cards[-4:]
+
+    recent = []
+    for card in workflow_cards[:3]:
+        recent.append(
+            {
+                "title": f"{card.get('customer_name') or '客户'} {card.get('goods_name') or ''}".strip(),
+                "sub": f"{card.get('goods_color') or ''} x{card.get('order_quantity') or 0} · {card.get('status_text') or ''}",
+                "tag": "订单",
+                "class": "ok" if int(card.get("is_made") or 0) else "warn",
+            }
+        )
+    sales_items = [
+        {
+            "title": card.get("product_summary") or card.get("sales_no") or "销售单",
+            "sub": f"{card.get('customer_name') or '客户'} · {card.get('date_text') or ''}",
+            "value": str(card.get("total_quantity") or card.get("buy_number_count") or ""),
+        }
+        for card in sales_cards
+    ]
+    inventory_items = [
+        {
+            "title": card.get("title") or "商品",
+            "sub": f"{card.get('piece_text') or ''} · 库存 {card.get('total_stock') or 0}",
+            "tag": "LOW" if int(card.get("total_stock") or 0) <= 30 else "OK",
+            "class": "warn" if int(card.get("total_stock") or 0) <= 30 else "ok",
+        }
+        for card in low_inventory[:4]
+    ]
+    order_items = []
+    for card in workflow_cards[:4]:
+        order_items.append(
+            {
+                "customer_name": card.get("customer_name") or "客户",
+                "goods_name": f"{card.get('goods_name') or ''} {card.get('goods_color') or ''}".strip(),
+                "status_text": card.get("status_text") or "",
+                "status_tag": "待制作" if not int(card.get("is_made") or 0) else "订单",
+            }
+        )
+    return {
+        "summary": summary,
+        "recent": recent,
+        "sales": sales_items,
+        "inventory": inventory_items,
+        "inventory_total": len(inventory_cards),
+        "orders": order_items,
+        "pending_delivery_count": int(delivery.get("count") or 0),
+        "updated_at": int(now),
+    }
+
+
+@app.route("/api/screen/dashboard", methods=["GET"])
+def screen_dashboard_api():
+    """Compact live data for the 480x320 screen page."""
+    try:
+        return jsonify({"code": 0, "data": _screen_dashboard_payload()})
+    except Exception as e:
+        logger.warning(f"小屏业务数据查询失败: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
 @app.route("/api/images/file/<path:filename>", methods=["GET"])
 def image_file(filename: str):
     """Serve locally uploaded images for WebUI preview."""
@@ -2015,11 +2175,16 @@ def chat():
         return jsonify({"code": 400, "msg": "message is required"}), 400
 
     try:
+        from src.services.screen_state import update_screen_state
+
+        update_screen_state(status="listen", role="user", text=message, source="web-chat")
+        update_screen_state(status="processing", role="assistant", text="正在处理...", source="web-chat")
         response = _agent.run(
             user_input=message,
             user_id=user_id,
             session_id=session_id,
         )
+        update_screen_state(status="talk", role="assistant", text=str(response or ""), source="web-chat")
         return jsonify({
             "code": 0,
             "data": {
@@ -2029,6 +2194,12 @@ def chat():
             }
         })
     except Exception as e:
+        try:
+            from src.services.screen_state import update_screen_state
+
+            update_screen_state(status="error", role="assistant", text=f"处理异常：{e}", source="web-chat")
+        except Exception:
+            pass
         logger.error(f"Agent 调用异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
 
@@ -2086,11 +2257,16 @@ def chat_stream():
 
     def generate():
         try:
+            from src.services.screen_state import update_screen_state
+
+            update_screen_state(status="listen", role="user", text=message, source="web-chat")
+            update_screen_state(status="processing", role="assistant", text="正在处理...", source="web-chat")
             response = _agent.run(
                 user_input=message,
                 user_id=user_id,
                 session_id=session_id,
             )
+            update_screen_state(status="talk", role="assistant", text=str(response or ""), source="web-chat")
             # 分 token 发送（按自然段落分割，避免单字碎片）
             for line in response.split("\n"):
                 if line.strip():
@@ -2100,6 +2276,12 @@ def chat_stream():
                 yield f"data: {json.dumps({'type': 'token', 'text': token_text}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
         except Exception as e:
+            try:
+                from src.services.screen_state import update_screen_state
+
+                update_screen_state(status="error", role="assistant", text=f"处理异常：{e}", source="web-chat")
+            except Exception:
+                pass
             logger.error(f"Agent 流式调用异常: {e}")
             yield f"data: {json.dumps({'type': 'error', 'text': str(e)}, ensure_ascii=False)}\n\n"
 

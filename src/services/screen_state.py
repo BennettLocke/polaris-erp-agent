@@ -1,0 +1,105 @@
+"""Shared state helpers for the Orange Pi screen page."""
+
+from __future__ import annotations
+
+import os
+import time
+from collections import deque
+from typing import Any
+
+import requests
+
+
+MAX_MESSAGES = int(os.getenv("SJ_SCREEN_MAX_MESSAGES", "8"))
+DEFAULT_SCREEN_STATE_URL = os.getenv("SJ_SCREEN_STATE_URL", "http://127.0.0.1:8080/api/screen/state")
+
+_messages: deque[dict[str, Any]] = deque(maxlen=MAX_MESSAGES)
+_state: dict[str, Any] = {
+    "status": "idle",
+    "expression": "idle",
+    "message": "",
+    "latest": {},
+    "messages": [],
+    "updated_at": int(time.time()),
+    "version": 0,
+}
+
+
+def _normalize_status(status: str | None) -> str:
+    value = (status or "idle").strip().lower()
+    aliases = {
+        "listening": "listen",
+        "speaking": "talk",
+        "processing": "processing",
+        "error": "error",
+    }
+    value = aliases.get(value, value)
+    return value if value in {"idle", "listen", "talk", "processing", "error"} else "idle"
+
+
+def update_screen_state(
+    *,
+    status: str | None = None,
+    role: str | None = None,
+    text: str | None = None,
+    source: str = "api",
+    reset: bool = False,
+) -> dict[str, Any]:
+    """Update the in-process screen state and return a serializable snapshot."""
+
+    if reset:
+        _messages.clear()
+    now = int(time.time())
+    normalized_status = _normalize_status(status)
+    clean_text = (text or "").strip()
+    clean_role = (role or "").strip().lower()
+    if clean_text and clean_role in {"user", "assistant", "system"}:
+        item = {
+            "role": clean_role,
+            "text": clean_text,
+            "source": source,
+            "time": now,
+        }
+        _messages.append(item)
+        _state["latest"] = item
+    _state.update(
+        {
+            "status": normalized_status,
+            "expression": normalized_status,
+            "message": clean_text or _state.get("message", ""),
+            "messages": list(_messages),
+            "updated_at": now,
+            "version": int(_state.get("version") or 0) + 1,
+        }
+    )
+    return get_screen_state()
+
+
+def get_screen_state() -> dict[str, Any]:
+    snapshot = dict(_state)
+    snapshot["messages"] = list(_messages)
+    return snapshot
+
+
+def notify_screen_state(
+    status: str,
+    *,
+    role: str | None = None,
+    text: str | None = None,
+    url: str | None = None,
+    timeout: float = 0.35,
+) -> bool:
+    """Best-effort HTTP update for processes outside the WebUI server."""
+
+    target = url if url is not None else DEFAULT_SCREEN_STATE_URL
+    if not target:
+        return False
+    try:
+        response = requests.post(
+            target,
+            json={"status": status, "role": role, "text": text},
+            timeout=timeout,
+        )
+        return response.status_code < 400
+    except Exception:
+        return False

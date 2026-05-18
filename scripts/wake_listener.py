@@ -31,6 +31,7 @@ from src.services.mimo_tts import synthesize  # noqa: E402
 from src.services.volc_tts import synthesize_stream as synthesize_volc_stream  # noqa: E402
 from src.services.volc_realtime_asr import VolcStreamingRecognizer  # noqa: E402
 from src.services.volc_realtime_asr import recognize_pcm16 as recognize_pcm16_volc  # noqa: E402
+from src.services.screen_state import notify_screen_state  # noqa: E402
 from src.services.voice_prompts import ensure_group, play_file, play_prompt  # noqa: E402
 
 
@@ -657,6 +658,17 @@ def play_prompt_async(group: str, *, device: str = "") -> None:
     threading.Thread(target=lambda: play_prompt(group, device=device), name=f"voice-prompt-{group}", daemon=True).start()
 
 
+def screen_notify(args, status: str, *, role: str | None = None, text: str | None = None) -> None:
+    url = getattr(args, "screen_state_url", "") or ""
+    if not url:
+        return
+    threading.Thread(
+        target=lambda: notify_screen_state(status, role=role, text=text, url=url),
+        name="screen-state-update",
+        daemon=True,
+    ).start()
+
+
 def speak_text(args, text: str, *, stem: str = "response") -> None:
     if not args.speak_results:
         return
@@ -712,9 +724,12 @@ def handle_command(args, command: str) -> bool:
         return False
     if is_unclear_voice_command(command):
         print(f"COMMAND_UNCLEAR {command}", flush=True)
+        screen_notify(args, "error", role="assistant", text="没听清，再说一遍。")
         play_prompt("failed", device=args.output_device)
         return False
     print(f"COMMAND {command}", flush=True)
+    screen_notify(args, "listen", role="user", text=command)
+    screen_notify(args, "processing", role="assistant", text="正在处理...")
     if args.processing_prompt:
         play_prompt_async("processing", device=args.output_device)
     try:
@@ -723,8 +738,10 @@ def handle_command(args, command: str) -> bool:
         result = f"处理异常：{exc}"
     print(f"AGENT {result}", flush=True)
     if is_uncertain_agent_result(result):
+        screen_notify(args, "error", role="assistant", text="没听清，再说一遍。")
         play_prompt("failed", device=args.output_device)
         return False
+    screen_notify(args, "talk", role="assistant", text=str(result or ""))
     speak_text(args, result)
     return True
 
@@ -747,6 +764,7 @@ def run_once(args) -> bool:
 
     print(f"ASR {text}", flush=True)
     if is_wake_text(text):
+        screen_notify(args, "listen", role="assistant", text="我在听。")
         play_prompt("wake", device=args.output_device)
         return True
     return False
@@ -816,6 +834,7 @@ def run_stream(args) -> None:
             print("LOCAL_WAKE detected", flush=True)
             waiting_command_until = time.monotonic() + args.command_window_seconds
             print("command_window=opened", flush=True)
+            screen_notify(args, "listen", role="assistant", text="我在听。")
             play_prompt_async("wake", device=args.output_device)
             ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
             pre_roll.clear()
@@ -916,12 +935,14 @@ def run_stream(args) -> None:
         if woke:
             learn_wake_variants(text)
             if command_tail:
+                screen_notify(args, "listen", role="assistant", text="我在听。")
                 play_prompt_async("wake", device=args.output_device)
                 ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
                 handle_command(args, command_tail)
             elif args.assistant_mode:
                 waiting_command_until = time.monotonic() + args.command_window_seconds
                 print("command_window=opened", flush=True)
+                screen_notify(args, "listen", role="assistant", text="我在听。")
                 play_prompt_async("wake", device=args.output_device)
                 ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
             if not waiting_command_until:
@@ -953,6 +974,7 @@ def main() -> None:
     parser.add_argument("--tts-max-chars", type=int, default=180)
     parser.add_argument("--stream-tts-play", action="store_true")
     parser.add_argument("--stream-tts-player", default="mpg123")
+    parser.add_argument("--screen-state-url", default=os.getenv("SJ_SCREEN_STATE_URL", "http://127.0.0.1:8080/api/screen/state"))
     parser.add_argument("--capture-backend", choices=["alsa", "arecord"], default="arecord")
     parser.add_argument("--local-wake-provider", choices=["none", "porcupine", "openwakeword", "sherpa"], default="none")
     parser.add_argument("--porcupine-access-key", default=os.getenv("PICOVOICE_ACCESS_KEY", ""))
