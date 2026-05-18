@@ -344,8 +344,7 @@ def wav_to_pcm16(path: Path, *, gain: float = 1.0) -> tuple[bytes, int]:
         frames = wav.readframes(wav.getnframes())
 
     if channels >= 2:
-        # INMP441 is wired to left channel (L/R -> GND).
-        frames = audioop.tomono(frames, width, 1, 0)
+        frames = best_stereo_channel(frames, width)
         channels = 1
     if rate != 16000:
         frames, _ = audioop.ratecv(frames, width, channels, rate, 16000, None)
@@ -373,10 +372,16 @@ def activity_rms(frames: bytes, width: int, rate: int, *, window_ms: int = 200) 
     return max(values) if values else audioop.rms(frames, width)
 
 
+def best_stereo_channel(frames: bytes, width: int) -> bytes:
+    left = audioop.tomono(frames, width, 1, 0)
+    right = audioop.tomono(frames, width, 0, 1)
+    return right if audioop.rms(right, width) > audioop.rms(left, width) else left
+
+
 def raw_to_pcm16(raw: bytes, *, gain: float, state) -> tuple[bytes, int, object]:
-    """Convert INMP441 S32_LE stereo 48k raw bytes to debiased PCM16 16k mono."""
+    """Convert I2S S32_LE stereo 48k raw bytes to debiased PCM16 16k mono."""
     width = 4
-    frames = audioop.tomono(raw, width, 1, 0)
+    frames = best_stereo_channel(raw, width)
     frames, state = audioop.ratecv(frames, width, 1, 48000, 16000, state)
     frames = audioop.lin2lin(frames, width, 2)
     if gain and gain != 1.0:
