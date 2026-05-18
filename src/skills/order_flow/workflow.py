@@ -469,13 +469,22 @@ class OrderFlowWorkflow(BaseWorkflow):
                 results = no_color_results
                 color = ""
         if target is None:
+            original_terms = self._product_terms(keyword)
+            original_brand_terms = original_terms[:-1] if len(original_terms) > 1 else []
             llm_keywords = self._llm_product_keywords(name, color)
             for llm_keyword in llm_keywords:
                 if llm_keyword == keyword:
                     continue
                 llm_results = self._search_product_candidates(llm_keyword, color)
-                target = self._select_confirmed_product(llm_results, llm_keyword, color)
-                if target is not None:
+                llm_target = self._select_confirmed_product(llm_results, llm_keyword, color)
+                if llm_target is not None and original_brand_terms and not self._candidate_has_terms(llm_target, original_brand_terms):
+                    logger.warning(
+                        f"[OrderFlow] LLM兜底候选品牌不一致，拒绝自动替换: original={keyword}, "
+                        f"llm={llm_keyword}, target={llm_target.get('title') or llm_target.get('产品名称')}"
+                    )
+                    continue
+                if llm_target is not None:
+                    target = llm_target
                     keyword = llm_keyword
                     results = llm_results
                     break
@@ -829,10 +838,6 @@ class OrderFlowWorkflow(BaseWorkflow):
         if not results:
             return None
 
-        def normalized_title(row: dict) -> str:
-            title = re.sub(r"[【】]", "", str(row.get("title", "")))
-            return self._normalize_product_name(title).replace(" ", "")
-
         candidates = results
         if color:
             normalized_color = self._normalize_color(color)
@@ -850,7 +855,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         if brand_terms:
             brand_matches = [
                 r for r in candidates
-                if all(self._normalize_product_name(term).replace(" ", "") in normalized_title(r) for term in brand_terms)
+                if self._candidate_has_terms(r, brand_terms)
             ]
             if not brand_matches:
                 return None
@@ -858,22 +863,33 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         term_matches = [
             r for r in candidates
-            if all(self._normalize_product_name(term).replace(" ", "") in normalized_title(r) for term in terms)
+            if self._candidate_has_terms(r, terms)
         ]
         if len(term_matches) == 1:
             return term_matches[0]
         if term_matches:
             candidates = term_matches
+        elif len(terms) > 1:
+            return None
 
         exact = [
             r for r in candidates
-            if keyword and self._normalize_product_name(keyword).replace(" ", "") in normalized_title(r)
+            if keyword and self._normalize_product_name(keyword).replace(" ", "") in self._candidate_title_text(r)
         ]
         if len(exact) == 1:
             return exact[0]
         if len(candidates) == 1:
             return candidates[0]
         return None
+
+    def _candidate_title_text(self, row: dict) -> str:
+        title = str(row.get("title") or row.get("产品名称") or "")
+        title = re.sub(r"[【】]", "", title)
+        return self._normalize_product_name(title).replace(" ", "")
+
+    def _candidate_has_terms(self, row: dict, terms: list[str]) -> bool:
+        title = self._candidate_title_text(row)
+        return all(self._normalize_product_name(term).replace(" ", "") in title for term in terms)
 
     def _product_desc(self, product: dict) -> str:
         return (
