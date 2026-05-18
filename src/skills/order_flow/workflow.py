@@ -615,6 +615,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         normalized = re.sub(r"(?:2\s*大盒|两\s*大盒|二\s*大盒)", "两大盒", normalized)
         normalized = re.sub(r"(?:2\s*泡(?:盒|装小盒)?|二\s*泡(?:盒|装小盒)?|两\s*泡(?:盒|装小盒)?)", "两泡装小盒", normalized)
         normalized = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", normalized)
+        normalized = normalized.replace("长 半斤", "长款半斤").replace("长半斤", "长款半斤")
         normalized = re.sub(r"(?:1\s*两|一\s*两)", "一两", normalized)
         replacements = [
             ("2小盒", "二小盒"),
@@ -624,9 +625,10 @@ class OrderFlowWorkflow(BaseWorkflow):
         ]
         for raw, new in replacements:
             normalized = normalized.replace(raw, new)
-        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长款半斤", "长半斤", "半斤", "一两"]
         for spec in specs:
             normalized = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", normalized)
+        normalized = normalized.replace("长款 半斤", "长款半斤")
         return re.sub(r"\s+", " ", normalized).strip()
 
     def _search_product_candidates(self, keyword: str, color: str = "") -> list[dict]:
@@ -674,7 +676,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         return candidates
 
     def _product_keywords(self, name: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长款半斤", "长半斤", "半斤", "一两"]
         normalized = self._normalize_product_name(name)
         keywords = [normalized]
         for spec in specs:
@@ -691,7 +693,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         return list(dict.fromkeys(k for k in keywords if k))
 
     def _product_terms(self, keyword: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长款半斤", "长半斤", "半斤", "一两"]
         normalized = self._normalize_product_name(keyword)
         for spec in specs:
             if spec in normalized:
@@ -827,6 +829,10 @@ class OrderFlowWorkflow(BaseWorkflow):
         if not results:
             return None
 
+        def normalized_title(row: dict) -> str:
+            title = re.sub(r"[【】]", "", str(row.get("title", "")))
+            return self._normalize_product_name(title).replace(" ", "")
+
         candidates = results
         if color:
             normalized_color = self._normalize_color(color)
@@ -840,9 +846,19 @@ class OrderFlowWorkflow(BaseWorkflow):
             candidates = color_matches
 
         terms = self._product_terms(keyword)
+        brand_terms = terms[:-1] if len(terms) > 1 else []
+        if brand_terms:
+            brand_matches = [
+                r for r in candidates
+                if all(self._normalize_product_name(term).replace(" ", "") in normalized_title(r) for term in brand_terms)
+            ]
+            if not brand_matches:
+                return None
+            candidates = brand_matches
+
         term_matches = [
             r for r in candidates
-            if all(term in re.sub(r"[【】]", "", str(r.get("title", ""))) for term in terms)
+            if all(self._normalize_product_name(term).replace(" ", "") in normalized_title(r) for term in terms)
         ]
         if len(term_matches) == 1:
             return term_matches[0]
@@ -851,7 +867,7 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         exact = [
             r for r in candidates
-            if keyword and keyword in str(r.get("title", ""))
+            if keyword and self._normalize_product_name(keyword).replace(" ", "") in normalized_title(r)
         ]
         if len(exact) == 1:
             return exact[0]
@@ -1066,9 +1082,11 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         should_use_piece = order_unit == "套" and per_piece > 1 and is_one_piece_order(product_name)
         if should_use_piece:
-            purchase_qty = calculate_purchase_quantity(shortage_qty, per_piece, product_name)
+            computed_purchase_qty = calculate_purchase_quantity(shortage_qty, per_piece, product_name)
+            purchase_qty = computed_purchase_qty
             purchase_unit = "件"
         else:
+            computed_purchase_qty = shortage_qty
             purchase_qty = shortage_qty
             purchase_unit = order_unit
 
@@ -1077,7 +1095,10 @@ class OrderFlowWorkflow(BaseWorkflow):
         except (TypeError, ValueError):
             edited_purchase_qty = 0
         if edited_purchase_qty > 0:
-            purchase_qty = edited_purchase_qty
+            if should_use_piece and per_piece > 1 and edited_purchase_qty > computed_purchase_qty and edited_purchase_qty >= shortage_qty:
+                purchase_qty = calculate_purchase_quantity(edited_purchase_qty, per_piece, product_name)
+            else:
+                purchase_qty = edited_purchase_qty
 
         product["purchase_qty"] = int(purchase_qty)
         product["purchase_unit"] = purchase_unit

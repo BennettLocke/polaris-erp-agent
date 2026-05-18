@@ -428,6 +428,14 @@ def _pending_price(value, default=0):
         return default
 
 
+def _pending_text(*values) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def _sanitize_pending_state(intent: str | None, new_state: dict, old_state: dict | None) -> dict:
     """Keep edited confirmation forms from corrupting resolved ERP ids."""
     pending_action = new_state.get("pending_action") or (old_state or {}).get("pending_action")
@@ -531,22 +539,43 @@ def _sanitize_pending_state(intent: str | None, new_state: dict, old_state: dict
         if not isinstance(product, dict):
             continue
         old = old_products[index] if index < len(old_products) and isinstance(old_products[index], dict) else {}
-        name = (product.get("name") or product.get("title") or old.get("name") or old.get("title") or "").strip()
-        color = (product.get("color") or old.get("color") or "").strip()
+        name = _pending_text(
+            product.get("name"),
+            product.get("product_name"),
+            product.get("goods_name"),
+            product.get("title"),
+            old.get("name"),
+            old.get("product_name"),
+            old.get("goods_name"),
+            old.get("title"),
+        )
+        color = _pending_text(product.get("color"), product.get("goods_color"), product.get("spec"), old.get("color"), old.get("goods_color"), old.get("spec"))
         qty = _pending_number(product.get("qty", product.get("quantity", old.get("qty", 1))), old.get("qty", 1) or 1)
         edited_price = product.get("price", None)
         price = _pending_price(edited_price, old.get("price", 0) or 0) if edited_price not in (None, "") else old.get("price", 0) or 0
-        old_name = (old.get("name") or old.get("title") or "").strip()
-        old_color = (old.get("color") or "").strip()
+        old_name = _pending_text(old.get("name"), old.get("product_name"), old.get("goods_name"), old.get("title"))
+        old_color = _pending_text(old.get("color"), old.get("goods_color"), old.get("spec"))
         name_changed = bool(name and name != old_name)
         color_changed = color != old_color
 
         if name_changed or color_changed or not old.get("product_id") or not old.get("unit_id"):
-            candidate = dict(old)
-            candidate.update(product)
+            candidate = dict(product)
+            for stale_key in (
+                "id",
+                "product_id",
+                "unit_id",
+                "base",
+                "title",
+                "spec",
+                "simple_desc",
+                "price_overridden",
+            ):
+                candidate.pop(stale_key, None)
             candidate["name"] = name
             candidate["color"] = color
             candidate["qty"] = qty
+            candidate["quantity"] = qty
+            candidate["unit"] = product.get("unit") or old.get("unit") or "套"
             resolved = workflow._search_product(candidate)
             if resolved is None:
                 raise ValueError(f"商品「{name or old_name} {color}」未匹配到，不能确认开单。")
