@@ -1,3 +1,4 @@
 *.sh text eol=lf
 .gitattributes text eol=lf
 scripts/*.conf text eol=lf
+scripts/touch_ft6336.py text eol=lf
