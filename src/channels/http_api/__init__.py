@@ -2087,7 +2087,7 @@ def _screen_dashboard_payload() -> dict:
     }
 
     sales_cards, _sales_total = _db_sales_cards("", 1, 4, None)
-    workflow_cards, _workflow_total = _db_workflow_orders("", 1, 4, "active")
+    workflow_cards, _workflow_total = _db_workflow_orders("", 1, 6, "active")
     inventory_rows = db.search_inventory(keyword="", only_in_stock=True, limit=900)
     inventory_cards = _inventory_cards(inventory_rows if isinstance(inventory_rows, list) else [], 12)
     low_inventory = [card for card in inventory_cards if int(card.get("total_stock") or 0) <= 30][:4]
@@ -2122,7 +2122,7 @@ def _screen_dashboard_payload() -> dict:
         for card in low_inventory[:4]
     ]
     order_items = []
-    for card in workflow_cards[:4]:
+    for card in workflow_cards[:6]:
         order_items.append(
             {
                 "customer_name": card.get("customer_name") or "客户",
