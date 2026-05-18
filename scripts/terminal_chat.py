@@ -26,6 +26,10 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(dotenv_path=ROOT / ".env")
 
+from loguru import logger  # noqa: E402
+
+logger.remove()
+
 from src.core.agent import Agent  # noqa: E402
 from src.services.screen_state import notify_screen_state  # noqa: E402
 
@@ -116,7 +120,10 @@ def main() -> int:
     parser.add_argument("--user-id", default="orangepi_terminal")
     parser.add_argument("--session-id", default="terminal_test")
     parser.add_argument("--screen-state-url", default="http://127.0.0.1:8080/api/screen/state")
+    parser.add_argument("--verbose-logs", action="store_true")
     args = parser.parse_args()
+    if args.verbose_logs:
+        logger.add(sys.stderr, level="INFO")
 
     if args.message:
         return run_once(args, " ".join(args.message).strip())
