@@ -12,8 +12,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 VENV_PYTHON = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 if VENV_PYTHON.exists() and os.environ.get("SJ_TERMINAL_CHAT_NO_REEXEC") != "1":
-    current = Path(sys.executable).resolve()
-    target = VENV_PYTHON.resolve()
+    current = Path(sys.executable).absolute()
+    target = VENV_PYTHON.absolute()
     if current != target:
         env = dict(os.environ)
         env["SJ_TERMINAL_CHAT_NO_REEXEC"] = "1"
