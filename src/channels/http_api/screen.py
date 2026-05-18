@@ -32,6 +32,7 @@ def get_screen_html() -> str:
       width: 480px;
       height: 320px;
       overflow: hidden;
+      contain: strict;
       background:
         radial-gradient(circle at 50% 52%, rgba(0, 109, 255, .08), transparent 42%),
         #000816;
@@ -140,9 +141,10 @@ def get_screen_html() -> str:
       inset: 0;
       z-index: 20;
       overflow: hidden;
+      contain: strict;
       color: rgba(233, 255, 255, .94);
       background:
-        radial-gradient(circle at 50% 52%, rgba(0, 109, 255, .08), transparent 42%),
+        radial-gradient(circle at 50% 52%, rgba(0, 109, 255, .06), transparent 42%),
         #000816;
       display: block;
     }
@@ -165,8 +167,7 @@ def get_screen_html() -> str:
       background:
         linear-gradient(90deg, transparent 0 23px, rgba(0, 109, 255, .055) 23px 24px, transparent 24px 48px),
         linear-gradient(0deg, transparent 0 23px, rgba(0, 109, 255, .04) 23px 24px, transparent 24px 48px);
-      opacity: .32;
-      mask-image: radial-gradient(circle at 50% 52%, black, transparent 76%);
+      opacity: .18;
     }
     .standby-frame { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .standby-frame path { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: miter; }
@@ -174,7 +175,6 @@ def get_screen_html() -> str:
     .standby-frame .frame-line {
       stroke: rgba(14, 76, 142, .95);
       stroke-width: 2;
-      filter: drop-shadow(0 0 3px rgba(0, 216, 255, .34)) drop-shadow(0 0 9px rgba(0, 109, 255, .28));
     }
     .standby-ghost {
       position: absolute;
@@ -196,7 +196,6 @@ def get_screen_html() -> str:
       font-weight: 950;
       line-height: 1;
       white-space: nowrap;
-      text-shadow: 0 0 8px rgba(0, 216, 255, .07), 0 0 18px rgba(0, 109, 255, .08);
     }
     .standby-ghost .g1 { left: 4%; top: 6%; font-size: 27px; opacity: .34; }
     .standby-ghost .g2 { left: 10%; top: 25%; font-size: 38px; opacity: .38; }
@@ -248,7 +247,6 @@ def get_screen_html() -> str:
       border: 1px solid rgba(0, 109, 255, .32);
       border-radius: 7px;
       background: rgba(0, 13, 32, .72);
-      box-shadow: 0 0 8px rgba(0, 109, 255, .16);
     }
     .log-item.user { border-color: rgba(0,216,255,.44); background: rgba(0, 35, 70, .72); }
     .log-item strong { display: block; margin-bottom: 2px; color: rgba(0,216,255,.9); font-size: 9px; line-height: 1; }
@@ -275,8 +273,7 @@ def get_screen_html() -> str:
       object-fit: contain;
       opacity: .58;
       transform: translate(-50%, -50%) scale(.86);
-      filter: drop-shadow(0 0 3px rgba(0, 216, 255, .58)) drop-shadow(0 0 10px rgba(0, 109, 255, .28));
-      animation: standbyTwinkle var(--dur) steps(6) infinite;
+      animation: standbyTwinkle var(--dur) steps(3) infinite;
       animation-delay: var(--delay);
     }
     .standby-star.tall { height: calc(var(--size) * 1.16); }
@@ -301,30 +298,29 @@ def get_screen_html() -> str:
       height: 84px;
       transform: translate(-50%, -50%);
       pointer-events: none;
-      animation: standbyHover 3200ms ease-in-out infinite;
+      will-change: transform;
+      animation: standbyHover 3600ms steps(4) infinite;
     }
-    .standby-orbit { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; mix-blend-mode: screen; }
+    .standby-orbit { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
     .standby-orbit ellipse { fill: none; vector-effect: non-scaling-stroke; stroke-linecap: square; }
     .standby-track {
       stroke: rgba(0, 92, 255, .34);
       stroke-width: 4;
       stroke-dasharray: 18 8 5 12;
-      filter: drop-shadow(0 0 8px rgba(0, 30, 180, .28));
-      animation: standbyTrack 2300ms steps(10) infinite;
+      animation: standbyTrack 3600ms steps(8) infinite;
     }
     .standby-runner {
       stroke: #35eaff;
       stroke-width: 6;
       stroke-dasharray: 30 416;
-      filter: url("#standbyOrbitGlow");
-      animation: standbyOrbit 1800ms steps(16) infinite;
+      animation: standbyOrbit 2800ms steps(10) infinite;
     }
     .standby-runner.b {
       opacity: .72;
       stroke-width: 4;
       stroke: #0078ff;
       stroke-dasharray: 18 428;
-      animation-duration: 2400ms;
+      animation-duration: 3400ms;
       animation-delay: -500ms;
     }
     .standby-robot {
@@ -335,7 +331,8 @@ def get_screen_html() -> str:
       width: 222px;
       height: 222px;
       transform: translate(-50%, -50%);
-      animation: standbyRobot 3200ms ease-in-out infinite;
+      will-change: transform;
+      animation: standbyRobot 3600ms steps(4) infinite;
     }
     .standby-robot img {
       position: absolute;
@@ -343,7 +340,6 @@ def get_screen_html() -> str:
       width: 100%;
       height: 100%;
       object-fit: contain;
-      filter: drop-shadow(0 0 12px rgba(0, 109, 255, .24)) drop-shadow(0 22px 22px rgba(0, 0, 0, .32));
     }
     .standby-face {
       position: absolute;
@@ -399,7 +395,6 @@ def get_screen_html() -> str:
       border-radius: 7px;
       color: rgba(233, 255, 255, .94);
       background: rgba(0, 13, 32, .86);
-      box-shadow: 0 0 9px rgba(0, 109, 255, .26);
       font-size: 12px;
       font-weight: 850;
       line-height: 1.25;
@@ -449,15 +444,15 @@ def get_screen_html() -> str:
       border: 1px solid rgba(0, 109, 255, .44);
       border-radius: 7px;
       background: linear-gradient(180deg, rgba(0, 39, 92, .62), rgba(0, 10, 28, .72));
-      box-shadow: inset 0 0 0 1px rgba(2, 5, 12, .72), 0 0 8px rgba(0, 109, 255, .18);
+      box-shadow: inset 0 0 0 1px rgba(2, 5, 12, .72);
     }
     .standby-card strong { color: rgba(233, 255, 255, .96); font-size: 16px; font-weight: 950; line-height: 1; }
     .standby-card span { color: rgba(233, 255, 255, .68); font-size: 10px; font-weight: 750; line-height: 1; white-space: nowrap; }
 
     @keyframes standbyTrack { to { stroke-dashoffset: -86; } }
     @keyframes standbyOrbit { to { stroke-dashoffset: -446; } }
-    @keyframes standbyHover { 0%, 100% { transform: translate(-50%, -50%) translateY(0); } 50% { transform: translate(-50%, -50%) translateY(-4px); } }
-    @keyframes standbyRobot { 0%, 100% { transform: translate(-50%, -50%) translateY(0); } 50% { transform: translate(-50%, -50%) translateY(-10px); } }
+    @keyframes standbyHover { 0%, 100% { transform: translate(-50%, -50%) translateY(0); } 50% { transform: translate(-50%, -50%) translateY(-2px); } }
+    @keyframes standbyRobot { 0%, 100% { transform: translate(-50%, -50%) translateY(0); } 50% { transform: translate(-50%, -50%) translateY(-5px); } }
     @keyframes standbyBlink { 0%, 88%, 100% { height: 14px; transform: translateY(0); } 90%, 94% { height: 4px; transform: translateY(5px); } }
     @keyframes standbyTalk {
       0%, 100% {
@@ -481,7 +476,7 @@ def get_screen_html() -> str:
       }
     }
     @keyframes standbyListen { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(1px); } }
-    @keyframes standbyBubble { 0%, 100% { box-shadow: 0 0 7px rgba(0, 109, 255, .22); } 50% { box-shadow: 0 0 13px rgba(0, 216, 255, .34); } }
+    @keyframes standbyBubble { 0%, 100% { opacity: .9; } 50% { opacity: 1; } }
     @keyframes standbyTwinkle {
       0% { opacity: .28; transform: translate(-50%, -50%) scale(.72); }
       33% { opacity: .72; transform: translate(-50%, -50%) scale(.95); }
@@ -760,8 +755,8 @@ def get_screen_html() -> str:
     setInterval(updateTime, 1000);
     pollState();
     pollDashboard();
-    setInterval(pollState, 500);
-    setInterval(pollDashboard, 2000);
+    setInterval(pollState, 700);
+    setInterval(pollDashboard, 5000);
     showStandby();
   </script>
 </body>
