@@ -22,6 +22,10 @@ if VENV_PYTHON.exists() and os.environ.get("SJ_TERMINAL_CHAT_NO_REEXEC") != "1":
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(dotenv_path=ROOT / ".env")
+
 from src.core.agent import Agent  # noqa: E402
 from src.services.screen_state import notify_screen_state  # noqa: E402
 
