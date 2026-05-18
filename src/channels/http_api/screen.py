@@ -232,17 +232,18 @@ def get_screen_html() -> str:
       position: absolute;
       z-index: 6;
       left: 30px;
-      top: 122px;
+      top: 112px;
+      bottom: 82px;
       width: 222px;
-      height: 112px;
+      height: auto;
       display: grid;
       align-content: end;
       gap: 5px;
       pointer-events: none;
     }
     .log-item {
-      max-height: 46px;
-      overflow: hidden;
+      max-height: none;
+      overflow: visible;
       padding: 6px 8px;
       border: 1px solid rgba(0, 109, 255, .32);
       border-radius: 7px;
@@ -252,15 +253,14 @@ def get_screen_html() -> str:
     .log-item strong { display: block; margin-bottom: 2px; color: rgba(0,216,255,.9); font-size: 9px; line-height: 1; }
     .log-item.user strong { color: rgba(251,191,36,.92); }
     .log-item span {
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+      display: block;
+      overflow: visible;
       color: rgba(233,255,255,.92);
       font-size: 10px;
-      line-height: 1.25;
+      line-height: 1.28;
       font-weight: 760;
     }
+    .log-item.latest span { font-size: 11px; line-height: 1.25; }
 
     .standby-scene { position: absolute; inset: 0; transform: none; transform-origin: 50% 50%; }
     .standby-star {
@@ -664,14 +664,14 @@ def get_screen_html() -> str:
     }
 
     function renderMessages(messages) {
-      const items = (messages || []).slice(-3);
+      const items = (messages || []).slice(-2);
       if (!items.length) {
         $("screenLog").innerHTML = '<div class="log-item"><strong>小星</strong><span>等待唤醒，查询结果会显示在这里。</span></div>';
         return;
       }
-      $("screenLog").innerHTML = items.map((item) => {
+      $("screenLog").innerHTML = items.map((item, index) => {
         const role = item.role === "user" ? "你" : "小星";
-        const cls = item.role === "user" ? " user" : "";
+        const cls = `${item.role === "user" ? " user" : ""}${index === items.length - 1 ? " latest" : ""}`;
         return `<div class="log-item${cls}"><strong>${role}</strong><span>${escapeHtml(item.text)}</span></div>`;
       }).join("");
     }

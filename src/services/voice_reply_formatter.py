@@ -40,7 +40,11 @@ def _inventory_summary(text: str, *, max_chars: int) -> str | None:
 
     parts = []
     for warehouse, items in grouped.items():
-        details = "，".join(f"{color or '未标颜色'}{qty}套" for color, qty in items)
+        shown = items[:2]
+        details = "，".join(f"{color or '未标颜色'}{qty}套" for color, qty in shown)
+        hidden = len(items) - len(shown)
+        if hidden > 0:
+            details += f"，另{hidden}色"
         parts.append(f"{warehouse}{details}")
     summary = f"{product}：" + "；".join(parts)
     if len(summary) > max_chars:
