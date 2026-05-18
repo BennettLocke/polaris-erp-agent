@@ -213,7 +213,7 @@ def get_screen_html() -> str:
     .standby-time {
       position: absolute;
       z-index: 5;
-      top: 28px;
+      top: 36px;
       left: 30px;
       width: 228px;
       text-shadow: 0 0 6px rgba(0, 216, 255, .26), 0 0 14px rgba(0, 109, 255, .22);
@@ -231,10 +231,10 @@ def get_screen_html() -> str:
     .screen-log {
       position: absolute;
       z-index: 6;
-      left: 22px;
+      left: 30px;
       top: 86px;
       bottom: 86px;
-      width: 214px;
+      width: 222px;
       height: auto;
       display: grid;
       align-content: end;
