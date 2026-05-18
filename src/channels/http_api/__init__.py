@@ -15,6 +15,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from src.core.agent import Agent
 from src.core.features import feature_enabled
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 
 logger = get_logger("sjagent.http_api")
@@ -635,16 +636,7 @@ def _normalize_inventory_keyword(keyword: str) -> str:
     for word in ("库存", "有货", "有库存", "查货", "查一下", "查下", "查询", "看看", "帮我", "礼盒", "盒子", "的", "吗", "呢"):
         text = text.replace(word, " ")
     text = re.sub(r"(^|\s)查(?=\s|[\u4e00-\u9fa5A-Za-z0-9])", " ", text)
-    text = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", text)
-    text = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", text)
-    text = re.sub(r"(?:1\s*两|一\s*两)", "一两", text)
-    text = re.sub(r"3\s*小盒", "三小盒", text)
-    text = re.sub(r"6\s*小盒", "六小盒", text)
-    text = re.sub(r"10\s*小盒", "十小盒", text)
-    specs = ["二三两", "半斤", "一两", "三小盒", "六小盒", "十小盒", "长半斤"]
-    for spec in specs:
-        text = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return normalize_product_name(text, specs=PRODUCT_SPECS)
 
 
 def _image_first(value) -> str:
@@ -3007,7 +2999,7 @@ def product_search():
     商品搜索接口
     GET /api/product/search?keyword=喜悦
     """
-    keyword = request.args.get("keyword", "")
+    keyword = normalize_product_name(request.args.get("keyword", ""), specs=PRODUCT_SPECS)
     if not keyword:
         return jsonify({"code": 400, "msg": "keyword is required"}), 400
 
@@ -3043,7 +3035,7 @@ def product_search():
 @app.route("/api/product/list", methods=["GET"])
 def product_list():
     """商品管理列表，优先走 MySQL 直查，写操作仍走 API。"""
-    keyword = request.args.get("keyword") or ""
+    keyword = normalize_product_name(request.args.get("keyword") or "", specs=PRODUCT_SPECS)
     page = request.args.get("page", default=1, type=int)
     page_size = max(1, min(request.args.get("page_size", default=20, type=int), 200))
     status = request.args.get("status", type=int) if request.args.get("status") not in (None, "") else None

@@ -3,6 +3,7 @@ import re
 
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 from scripts.common.unit_converter import calculate_purchase_quantity, is_one_piece_order
 
@@ -233,22 +234,12 @@ class PurchaseWorkflow(BaseWorkflow):
         return rows[0] if len(rows) == 1 else None
 
     def _normalize_product_name(self, name: str) -> str:
-        normalized = re.sub(r'【[^】]+】', '', str(name or '')).strip()
-        for color in self._colors():
-            normalized = normalized.replace(color, "")
-        normalized = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", normalized)
-        normalized = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", normalized)
-        normalized = re.sub(r"(?:1\s*两|一\s*两)", "一两", normalized)
-        for raw, new in [("2小盒", "二小盒"), ("3小盒", "三小盒"), ("6小盒", "六小盒"), ("10小盒", "十小盒")]:
-            normalized = normalized.replace(raw, new)
-        for spec in ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]:
-            normalized = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", normalized)
-        return re.sub(r"\s+", " ", normalized).strip()
+        return normalize_product_name(name, colors=self._colors(), specs=PRODUCT_SPECS)
 
     def _product_keywords(self, name: str) -> list[str]:
         normalized = self._normalize_product_name(name)
         keywords = [normalized]
-        for spec in ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]:
+        for spec in PRODUCT_SPECS:
             if spec in normalized:
                 brand = normalized.replace(spec, "").strip()
                 if brand:
@@ -263,7 +254,7 @@ class PurchaseWorkflow(BaseWorkflow):
 
     def _product_terms(self, name: str) -> list[str]:
         normalized = self._normalize_product_name(name)
-        for spec in ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]:
+        for spec in PRODUCT_SPECS:
             if spec in normalized:
                 brand = normalized.replace(spec, "").strip()
                 return [term for term in (brand, spec) if term]

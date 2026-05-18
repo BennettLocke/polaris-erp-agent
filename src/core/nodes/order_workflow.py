@@ -19,6 +19,7 @@ from src.core.tools.caller import get_tool_caller
 from src.core.llm import llm_json
 from src.utils import get_logger
 from src.core.customer_name import has_customer_name_craft_noise, normalize_customer_name
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from scripts.common.unit_converter import (
     calculate_order_quantity,
     is_one_piece_order,
@@ -383,7 +384,7 @@ def parse_order_items(text: str) -> list[dict]:
 def product_name_normalize(name: str) -> str:
     """标准化商品名称"""
     # 去除多余空格
-    name = " ".join(name.split())
+    name = normalize_product_name(" ".join(str(name or "").split()), specs=PRODUCT_SPECS)
 
     # 去除常见前缀
     for prefix in ["要", "订", "做", "拿"]:

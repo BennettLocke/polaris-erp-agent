@@ -1,0 +1,108 @@
+"""Shared product-name normalization helpers."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable
+
+
+PRODUCT_SPECS = [
+    "五格短半斤",
+    "短半斤",
+    "二三两",
+    "两大盒",
+    "两泡装小盒",
+    "三小盒",
+    "六小盒",
+    "十小盒",
+    "半斤",
+    "一两",
+]
+
+
+def normalize_half_jin_aliases(text: str) -> str:
+    """Map long-half-jin aliases to half-jin while preserving short-half-jin."""
+    value = str(text or "")
+    if not value:
+        return ""
+
+    short_tokens: list[tuple[str, str]] = []
+
+    def hold_short(match: re.Match) -> str:
+        token = f"__SJ_SHORT_HALF_{len(short_tokens)}__"
+        short_tokens.append((token, match.group(0)))
+        return token
+
+    value = re.sub(r"五格\s*短\s*半\s*斤|短\s*半\s*斤", hold_short, value)
+    value = re.sub(r"长\s*款\s*半\s*斤|长\s*半\s*斤", "半斤", value)
+    value = re.sub(r"0\.5\s*斤|半\s*斤", "半斤", value)
+
+    for token, original in short_tokens:
+        value = value.replace(token, re.sub(r"\s+", "", original))
+    return value
+
+
+def normalize_product_name(
+    name: str,
+    *,
+    colors: Iterable[str] | None = None,
+    strip_brackets: bool = True,
+    remove_colors: bool = True,
+    specs: Iterable[str] | None = None,
+) -> str:
+    """Normalize OCR/order/search product text before matching ERP products."""
+    value = str(name or "").strip()
+    if strip_brackets:
+        value = value.replace("【", "").replace("】", "").strip()
+    if remove_colors and colors:
+        for color in sorted({str(c) for c in colors if c}, key=len, reverse=True):
+            value = value.replace(color, "")
+
+    value = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", value)
+    value = re.sub(r"(?:2\s*大盒|两\s*大盒|二\s*大盒)", "两大盒", value)
+    value = re.sub(r"(?:2\s*泡(?:盒|装小盒)?|二\s*泡(?:盒|装小盒)?|两\s*泡(?:盒|装小盒)?)", "两泡装小盒", value)
+    value = normalize_half_jin_aliases(value)
+    value = re.sub(r"(?:1\s*两|一\s*两)", "一两", value)
+
+    replacements = [
+        ("2小盒", "二小盒"),
+        ("3小盒", "三小盒"),
+        ("6小盒", "六小盒"),
+        ("10小盒", "十小盒"),
+    ]
+    for raw, normalized in replacements:
+        value = value.replace(raw, normalized)
+
+    spec_list = list(specs or PRODUCT_SPECS)
+    spec_pattern = "|".join(re.escape(spec) for spec in sorted(dict.fromkeys(spec_list), key=len, reverse=True))
+    if spec_pattern:
+        value = re.sub(rf"(?<!^)(?<!\s)({spec_pattern})", r" \1", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def product_keywords(name: str, *, specs: Iterable[str] | None = None) -> list[str]:
+    normalized = normalize_product_name(name, specs=specs)
+    spec_list = list(specs or PRODUCT_SPECS)
+    keywords = [normalized]
+    for spec in spec_list:
+        if spec in normalized:
+            brand = normalized.replace(spec, "").strip()
+            if brand:
+                keywords.append(f"{brand} {spec}")
+                keywords.append(brand)
+            keywords.append(spec)
+            break
+    compact = normalized.replace(" ", "")
+    if compact != normalized:
+        keywords.append(compact)
+    return list(dict.fromkeys(k for k in keywords if k))
+
+
+def product_terms(name: str, *, specs: Iterable[str] | None = None) -> list[str]:
+    normalized = normalize_product_name(name, specs=specs)
+    spec_list = list(specs or PRODUCT_SPECS)
+    for spec in spec_list:
+        if spec in normalized:
+            brand = normalized.replace(spec, "").strip()
+            return [term for term in (brand, spec) if term]
+    return [normalized] if normalized else []

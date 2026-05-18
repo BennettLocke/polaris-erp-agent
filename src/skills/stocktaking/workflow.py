@@ -3,6 +3,7 @@ import re
 
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 
 logger = get_logger("sjagent.skills.stocktaking")
@@ -223,25 +224,10 @@ class StocktakingWorkflow(BaseWorkflow):
         return matches
 
     def _normalize_product_name(self, name: str) -> str:
-        name = str(name or "").strip()
-        name = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", name)
-        name = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", name)
-        name = re.sub(r"(?:1\s*两|一\s*两)", "一两", name)
-        replacements = [
-            ("2小盒", "二小盒"),
-            ("3小盒", "三小盒"),
-            ("6小盒", "六小盒"),
-            ("10小盒", "十小盒"),
-        ]
-        for raw, normalized in replacements:
-            name = name.replace(raw, normalized)
-        specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
-        for spec in specs:
-            name = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", name)
-        return re.sub(r"\s+", " ", name).strip()
+        return normalize_product_name(name, specs=PRODUCT_SPECS)
 
     def _product_keywords(self, name: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+        specs = PRODUCT_SPECS
         keywords = [name]
         for spec in specs:
             if spec in name:
@@ -254,7 +240,7 @@ class StocktakingWorkflow(BaseWorkflow):
         return list(dict.fromkeys(k for k in keywords if k))
 
     def _target_terms(self, name: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+        specs = PRODUCT_SPECS
         for spec in specs:
             if spec in name:
                 brand = name.replace(spec, "").strip()

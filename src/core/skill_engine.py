@@ -9,6 +9,7 @@ import re
 from src.core.features import disabled_feature_reply, feature_enabled
 from src.core.tool_agent import classify_and_extract
 from src.core.learning import match_learned, parse_correction, record_example
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.core.session import SessionManager, set_current_session_id
 from src.skills.base import BaseWorkflow
 from src.utils import get_logger
@@ -970,14 +971,7 @@ class SkillEngine:
         return result
 
     def _normalize_inventory_query_keyword(self, text: str) -> str:
-        keyword = text.strip()
-        keyword = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", keyword)
-        keyword = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", keyword)
-        keyword = re.sub(r"(?:1\s*两|一\s*两)", "一两", keyword)
-        specs = ["二三两", "半斤", "一两", "三小盒", "六小盒", "十小盒", "长半斤"]
-        for spec in specs:
-            keyword = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", keyword)
-        return re.sub(r"\s+", " ", keyword).strip()
+        return normalize_product_name(text.strip(), specs=PRODUCT_SPECS)
 
     def _is_order_request(self, user_input: str) -> bool:
         if self._is_transfer_request(user_input):

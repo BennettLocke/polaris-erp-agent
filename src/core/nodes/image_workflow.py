@@ -21,6 +21,7 @@ from typing import Optional
 from src.core.state import AgentState
 from src.core.config import get_config
 from src.core.tools.caller import get_tool_caller
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 from scripts.image_processor import ImageProcessor
 from scripts.common.color_filter import STANDARD_COLORS, filter_uv, extract_color_from_text
@@ -351,7 +352,7 @@ def _parse_quantity(line: str) -> tuple[int, str] | None:
 
 
 def _goods_word_pattern() -> str:
-    return r"(长半斤|短半斤|半斤|[一二三四五六七八九十\d]+两|[一二三四五六七八九十\d]+小盒|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
+    return r"(长款半斤|长半斤|短半斤|半斤|[一二三四五六七八九十\d]+两|[一二三四五六七八九十\d]+小盒|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
 
 
 def _looks_like_goods_text(text: str) -> bool:
@@ -470,7 +471,7 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
             match = re.search(r"【[^】]+】[^\s，,。]+", line)
             if match:
                 result["goods_name"] = match.group()
-        elif not result["goods_name"] and re.search(r"(长半斤|半斤|小盒|中盒|大盒|礼盒|茶派|茶派长)", line):
+        elif not result["goods_name"] and re.search(r"(长款半斤|长半斤|半斤|小盒|中盒|大盒|礼盒|茶派|茶派长)", line):
             remark_goods = _extract_goods_from_remark(line)
             if remark_goods and not re.fullmatch(r"下单|客户", remark_goods):
                 result["goods_name"] = remark_goods
@@ -656,29 +657,12 @@ def find_product_by_goods_name(goods_name: str, caller, color: str = "") -> dict
 
 
 def _normalize_goods_keyword(goods_name: str) -> str:
-    keyword = re.sub(r'【[^】]+】', '', goods_name or '').strip()
-    for color in sorted(STANDARD_COLORS, key=len, reverse=True):
-        keyword = keyword.replace(color, "")
-    keyword = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", keyword)
-    keyword = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", keyword)
-    keyword = re.sub(r"(?:1\s*两|一\s*两)", "一两", keyword)
-    replacements = [
-        ("2小盒", "二小盒"),
-        ("3小盒", "三小盒"),
-        ("6小盒", "六小盒"),
-        ("10小盒", "十小盒"),
-    ]
-    for raw, normalized in replacements:
-        keyword = keyword.replace(raw, normalized)
-    specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
-    for spec in specs:
-        keyword = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", keyword)
-    return re.sub(r"\s+", " ", keyword).strip()
+    return normalize_product_name(goods_name, colors=STANDARD_COLORS, specs=PRODUCT_SPECS)
 
 
 def _product_search_keywords(goods_name: str) -> list[str]:
     normalized = _normalize_goods_keyword(goods_name)
-    specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+    specs = PRODUCT_SPECS
     keywords = [normalized]
     for spec in specs:
         if spec in normalized:
@@ -696,7 +680,7 @@ def _product_search_keywords(goods_name: str) -> list[str]:
 
 def _keyword_terms(keyword: str) -> list[str]:
     normalized = _normalize_goods_keyword(keyword)
-    specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "长半斤", "半斤", "一两"]
+    specs = PRODUCT_SPECS
     for spec in specs:
         if spec in normalized:
             brand = normalized.replace(spec, "").strip()

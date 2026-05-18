@@ -6,6 +6,7 @@ from typing import Any, Optional
 from src.engine.db_client import get_db_client
 from src.engine.api_client import ERPSystemClient
 from src.core.customer_name import normalize_customer_name
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.core.tools.registry import tool
 from src.utils import get_logger
 
@@ -127,6 +128,7 @@ def inventory_search(
         [{"product_id": ..., "产品名称": ..., "【颜色】": ..., "【仓库】": ..., "库存数量": ...}]
     """
     db = get_db_client()
+    keyword = normalize_product_name(keyword, specs=PRODUCT_SPECS)
     try:
         results = db.search_inventory(
             keyword=keyword,
@@ -152,6 +154,7 @@ def product_search(keyword: str) -> list[dict]:
         [{"id": ..., "title": ..., "spec": ..., "simple_desc": ..., "unit_id": ..., "price": ...}]
     """
     db = get_db_client()
+    keyword = normalize_product_name(keyword, specs=PRODUCT_SPECS)
     try:
         results = db.search_products(keyword)
         logger.info(f"商品搜索: keyword={keyword}, 结果={len(results)}条")

@@ -14,6 +14,7 @@ from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
 from src.core.config import get_config
 from src.core.customer_name import has_customer_name_craft_noise, normalize_customer_name
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 from scripts.common.unit_converter import calculate_purchase_quantity, is_one_piece_order
 
@@ -617,28 +618,7 @@ class OrderFlowWorkflow(BaseWorkflow):
 
     def _normalize_product_name(self, name: str) -> str:
         """Normalize common OCR/order aliases before DB lookup."""
-        normalized = re.sub(r'【[^】]+】', '', name or '').strip()
-        for color in self._colors():
-            normalized = normalized.replace(color, "")
-        normalized = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", normalized)
-        normalized = re.sub(r"(?:2\s*大盒|两\s*大盒|二\s*大盒)", "两大盒", normalized)
-        normalized = re.sub(r"(?:2\s*泡(?:盒|装小盒)?|二\s*泡(?:盒|装小盒)?|两\s*泡(?:盒|装小盒)?)", "两泡装小盒", normalized)
-        normalized = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", normalized)
-        normalized = normalized.replace("长 半斤", "长款半斤").replace("长半斤", "长款半斤")
-        normalized = re.sub(r"(?:1\s*两|一\s*两)", "一两", normalized)
-        replacements = [
-            ("2小盒", "二小盒"),
-            ("3小盒", "三小盒"),
-            ("6小盒", "六小盒"),
-            ("10小盒", "十小盒"),
-        ]
-        for raw, new in replacements:
-            normalized = normalized.replace(raw, new)
-        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长款半斤", "长半斤", "半斤", "一两"]
-        for spec in specs:
-            normalized = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", normalized)
-        normalized = normalized.replace("长款 半斤", "长款半斤")
-        return re.sub(r"\s+", " ", normalized).strip()
+        return normalize_product_name(name, colors=self._colors(), specs=PRODUCT_SPECS)
 
     def _search_product_candidates(self, keyword: str, color: str = "") -> list[dict]:
         field_candidates = self._field_product_candidates(keyword, color)
@@ -696,11 +676,6 @@ class OrderFlowWorkflow(BaseWorkflow):
         brand = self._normalize_product_name(terms[0]).replace(" ", "")
         spec = self._normalize_product_name(terms[-1]).replace(" ", "")
         spec_aliases = [spec]
-        if spec == "长款半斤":
-            spec_aliases.append("长半斤")
-        elif spec == "长半斤":
-            spec_aliases.append("长款半斤")
-        spec_aliases = list(dict.fromkeys(spec_aliases))
 
         title_expr = "REPLACE(REPLACE(REPLACE(title, '【', ''), '】', ''), ' ', '')"
         spec_filters = " OR ".join([f"{title_expr} LIKE %s" for _ in spec_aliases])
@@ -728,7 +703,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         return rows
 
     def _product_keywords(self, name: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长款半斤", "长半斤", "半斤", "一两"]
+        specs = PRODUCT_SPECS
         normalized = self._normalize_product_name(name)
         keywords = [normalized]
         for spec in specs:
@@ -745,7 +720,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         return list(dict.fromkeys(k for k in keywords if k))
 
     def _product_terms(self, keyword: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长款半斤", "长半斤", "半斤", "一两"]
+        specs = PRODUCT_SPECS
         normalized = self._normalize_product_name(keyword)
         for spec in specs:
             if spec in normalized:

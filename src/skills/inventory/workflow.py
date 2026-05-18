@@ -2,6 +2,7 @@
 import re
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 
 logger = get_logger("sjagent.skills.inventory")
@@ -188,16 +189,5 @@ class InventoryWorkflow(BaseWorkflow):
         for word in ("吗", "嘛", "呢"):
             keyword = keyword.replace(word, "")
 
-        keyword = re.sub(r"(?:3\s*两|2\s*两|(?<!二)三两|二两)", "二三两", keyword)
-        keyword = re.sub(r"(?:0\.5\s*斤|半\s*斤)", "半斤", keyword)
-        keyword = re.sub(r"(?:1\s*两|一\s*两)", "一两", keyword)
-        keyword = re.sub(r"3\s*小盒", "三小盒", keyword)
-        keyword = re.sub(r"6\s*小盒", "六小盒", keyword)
-        keyword = re.sub(r"10\s*小盒", "十小盒", keyword)
-
-        specs = ["二三两", "半斤", "一两", "三小盒", "六小盒", "十小盒", "长半斤"]
-        for spec in specs:
-            keyword = re.sub(rf"(?<!^)(?<!\s)({re.escape(spec)})", r" \1", keyword)
-        keyword = keyword.strip()
-        keyword = re.sub(r"\s+", " ", keyword)
+        keyword = normalize_product_name(keyword, specs=PRODUCT_SPECS)
         return keyword or product_name

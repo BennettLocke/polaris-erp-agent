@@ -2,6 +2,7 @@
 import re
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 
 logger = get_logger("sjagent.skills.transfer")
@@ -298,23 +299,10 @@ class TransferWorkflow(BaseWorkflow):
         return None
 
     def _normalize_product_name(self, name: str) -> str:
-        name = str(name or "").strip()
-        if "二三两" not in name:
-            for raw in ("2两", "二两", "3两", "三两"):
-                name = name.replace(raw, "二三两")
-        replacements = [
-            ("1两", "一两"),
-            ("2小盒", "二小盒"),
-            ("3小盒", "三小盒"),
-            ("6小盒", "六小盒"),
-            ("10小盒", "十小盒"),
-        ]
-        for raw, normalized in replacements:
-            name = name.replace(raw, normalized)
-        return name.strip()
+        return normalize_product_name(name, specs=PRODUCT_SPECS)
 
     def _product_keywords(self, name: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "半斤", "一两"]
+        specs = PRODUCT_SPECS
         keywords = [name]
         for spec in specs:
             if spec in name:
@@ -357,7 +345,7 @@ class TransferWorkflow(BaseWorkflow):
         return matches
 
     def _target_terms(self, name: str) -> list[str]:
-        specs = ["五格短半斤", "短半斤", "二三两", "三小盒", "六小盒", "十小盒", "半斤", "一两"]
+        specs = PRODUCT_SPECS
         for spec in specs:
             if spec in name:
                 brand = name.replace(spec, "").strip()
