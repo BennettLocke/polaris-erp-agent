@@ -641,6 +641,10 @@ class OrderFlowWorkflow(BaseWorkflow):
         return re.sub(r"\s+", " ", normalized).strip()
 
     def _search_product_candidates(self, keyword: str, color: str = "") -> list[dict]:
+        field_candidates = self._field_product_candidates(keyword, color)
+        if field_candidates:
+            return field_candidates
+
         for kw in self._product_keywords(keyword):
             candidates = []
             seen = set()
@@ -683,6 +687,45 @@ class OrderFlowWorkflow(BaseWorkflow):
             if candidates:
                 return candidates
         return candidates
+
+    def _field_product_candidates(self, keyword: str, color: str = "") -> list[dict]:
+        terms = self._product_terms(keyword)
+        if len(terms) < 2:
+            return []
+
+        brand = self._normalize_product_name(terms[0]).replace(" ", "")
+        spec = self._normalize_product_name(terms[-1]).replace(" ", "")
+        spec_aliases = [spec]
+        if spec == "长款半斤":
+            spec_aliases.append("长半斤")
+        elif spec == "长半斤":
+            spec_aliases.append("长款半斤")
+        spec_aliases = list(dict.fromkeys(spec_aliases))
+
+        title_expr = "REPLACE(REPLACE(REPLACE(title, '【', ''), '】', ''), ' ', '')"
+        spec_filters = " OR ".join([f"{title_expr} LIKE %s" for _ in spec_aliases])
+        sql = f"""
+        SELECT id, title, spec, simple_desc, price
+        FROM sxo_plugins_erp_product
+        WHERE {title_expr} LIKE %s
+          AND ({spec_filters})
+        """
+        params: list = [f"%{brand}%"] + [f"%{item}%" for item in spec_aliases]
+
+        normalized_color = self._normalize_color(color)
+        if normalized_color:
+            sql += " AND (spec = %s OR spec LIKE %s)"
+            params.extend([normalized_color, f"%{normalized_color}%"])
+        sql += " ORDER BY id DESC LIMIT 30"
+
+        try:
+            rows = self.caller.call("db_query", sql=sql, params=tuple(params))
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 字段商品匹配失败: {e}")
+            return []
+        rows = [row for row in rows or [] if isinstance(row, dict) and not row.get("error")]
+        logger.info(f"[OrderFlow] 字段商品匹配: brand={brand}, spec={spec}, color={normalized_color}, 结果={len(rows)}条")
+        return rows
 
     def _product_keywords(self, name: str) -> list[str]:
         specs = ["五格短半斤", "短半斤", "二三两", "两大盒", "两泡装小盒", "三小盒", "六小盒", "十小盒", "长款半斤", "长半斤", "半斤", "一两"]
