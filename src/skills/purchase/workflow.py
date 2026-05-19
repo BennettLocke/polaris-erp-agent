@@ -229,7 +229,11 @@ class PurchaseWorkflow(BaseWorkflow):
         if terms:
             rows = [
                 row for row in rows
-                if all(term in re.sub(r"[【】]", "", str(row.get("title", ""))) for term in terms)
+                if all(
+                    self._normalize_product_name(term).replace(" ", "")
+                    in self._normalize_product_name(str(row.get("title", ""))).replace(" ", "")
+                    for term in terms
+                )
             ]
         return rows[0] if len(rows) == 1 else None
 

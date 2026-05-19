@@ -696,7 +696,11 @@ def _select_image_product(results: list[dict], keyword: str, color: str = "") ->
     if terms:
         candidates = [
             row for row in candidates
-            if all(term in re.sub(r"[【】]", "", str(row.get("title", ""))) for term in terms)
+            if all(
+                _normalize_goods_keyword(term).replace(" ", "")
+                in _normalize_goods_keyword(str(row.get("title", ""))).replace(" ", "")
+                for term in terms
+            )
         ]
     return candidates[0] if len(candidates) == 1 else None
 
@@ -709,7 +713,11 @@ def _select_image_inventory_product(rows: list[dict], keyword: str, color: str =
     if terms:
         candidates = [
             row for row in candidates
-            if all(term in re.sub(r"[【】]", "", str(row.get("产品名称", ""))) for term in terms)
+            if all(
+                _normalize_goods_keyword(term).replace(" ", "")
+                in _normalize_goods_keyword(str(row.get("产品名称", ""))).replace(" ", "")
+                for term in terms
+            )
         ]
     seen = set()
     unique = []

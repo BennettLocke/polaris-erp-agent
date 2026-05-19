@@ -318,7 +318,8 @@ class TransferWorkflow(BaseWorkflow):
         target_terms = self._target_terms(target_name)
         matches = []
         for row in rows or []:
-            title = str(row.get("产品名称", ""))
+            title = self._normalize_product_name(str(row.get("产品名称", ""))).replace(" ", "")
+            terms = [self._normalize_product_name(term).replace(" ", "") for term in target_terms]
             spec = str(row.get("【颜色】", ""))
             wh = str(row.get("【仓库】", ""))
             stock = int(row.get("库存数量", 0) or 0)
@@ -328,7 +329,7 @@ class TransferWorkflow(BaseWorkflow):
                 continue
             if stock < qty:
                 continue
-            if all(term in title for term in target_terms):
+            if all(term in title for term in terms):
                 matches.append(row)
         return matches
 
@@ -336,11 +337,12 @@ class TransferWorkflow(BaseWorkflow):
         target_terms = self._target_terms(target_name)
         matches = []
         for p in candidates or []:
-            title = str(p.get("title", ""))
+            title = self._normalize_product_name(str(p.get("title", ""))).replace(" ", "")
+            terms = [self._normalize_product_name(term).replace(" ", "") for term in target_terms]
             spec = str(p.get("spec", ""))
             if color and color not in spec:
                 continue
-            if all(term in title for term in target_terms):
+            if all(term in title for term in terms):
                 matches.append(p)
         return matches
 
