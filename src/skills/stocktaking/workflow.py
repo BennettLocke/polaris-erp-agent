@@ -3,6 +3,8 @@ import re
 
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.colors import extract_color_from_text as extract_known_color
+from src.core.colors import known_colors
 from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
@@ -199,7 +201,7 @@ class StocktakingWorkflow(BaseWorkflow):
         return matches
 
     def _normalize_product_name(self, name: str) -> str:
-        return normalize_product_name(name, specs=PRODUCT_SPECS)
+        return normalize_product_name(name, colors=known_colors(), specs=PRODUCT_SPECS)
 
     def _product_keywords(self, name: str) -> list[str]:
         specs = PRODUCT_SPECS
@@ -234,11 +236,7 @@ class StocktakingWorkflow(BaseWorkflow):
         return unique
 
     def _extract_color(self, text: str) -> str:
-        colors = ["橄榄绿", "深咖色", "古铜色", "红色", "黄色", "金色", "橙色", "蓝色", "绿色", "咖色", "黑色", "白色", "银色", "灰色", "紫色", "粉色"]
-        for color in colors:
-            if color in str(text or ""):
-                return color
-        return ""
+        return extract_known_color(text)
 
     def _product_desc(self, product: dict) -> str:
         name = product.get("name", "")

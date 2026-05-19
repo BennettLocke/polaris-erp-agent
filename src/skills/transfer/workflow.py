@@ -2,6 +2,8 @@
 import re
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.colors import extract_color_from_text as extract_known_color
+from src.core.colors import known_colors
 from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
@@ -260,11 +262,7 @@ class TransferWorkflow(BaseWorkflow):
         return enriched
 
     def _extract_color(self, text: str) -> str:
-        colors = ["红色", "黄色", "橙色", "蓝色", "绿色", "橄榄绿", "咖色", "深咖色", "古铜色", "黑色", "白色", "紫色", "粉色", "灰色", "金色"]
-        for color in colors:
-            if color in text:
-                return color
-        return ""
+        return extract_known_color(text)
 
     def _resolve_product(self, product: dict, from_wh: int) -> dict | None:
         name = self._normalize_product_name(product.get("name", ""))
@@ -294,7 +292,7 @@ class TransferWorkflow(BaseWorkflow):
         return None
 
     def _normalize_product_name(self, name: str) -> str:
-        return normalize_product_name(name, specs=PRODUCT_SPECS)
+        return normalize_product_name(name, colors=known_colors(), specs=PRODUCT_SPECS)
 
     def _product_keywords(self, name: str) -> list[str]:
         specs = PRODUCT_SPECS

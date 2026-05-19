@@ -7,11 +7,13 @@ class FakeCaller:
             {"id": 153, "title": "【茶派】3小盒", "spec": "红色", "simple_desc": "规格28套/件", "price": 0},
             {"id": 154, "title": "【茶派】3小盒", "spec": "黄色", "simple_desc": "规格28套/件", "price": 0},
             {"id": 23, "title": "【茶派】半斤", "spec": "红色", "simple_desc": "规格20套/件", "price": 0},
+            {"id": 301, "title": "【岩彩】3小盒", "spec": "卡其色", "simple_desc": "规格28套/件", "price": 0},
         ]
         self.inventory = [
             {"product_id": 153, "产品名称": "【茶派】3小盒", "【颜色】": "红色", "【仓库】": "自己店里", "库存数量": 0},
             {"product_id": 154, "产品名称": "【茶派】3小盒", "【颜色】": "黄色", "【仓库】": "自己店里", "库存数量": 5},
             {"product_id": 23, "产品名称": "【茶派】半斤", "【颜色】": "红色", "【仓库】": "百鑫仓库", "库存数量": 10},
+            {"product_id": 301, "产品名称": "【岩彩】3小盒", "【颜色】": "卡其色", "【仓库】": "自己店里", "库存数量": 39},
         ]
 
     def call(self, tool_name, **kwargs):
@@ -68,3 +70,14 @@ def test_matcher_honors_warehouse_and_min_stock():
         allow_llm=False,
     )
     assert missing.product is None
+
+
+def test_matcher_extracts_color_from_name_when_llm_misses_it():
+    matcher = ProductMatcher(FakeCaller())
+    result = matcher.match(
+        "岩彩3小盒卡其色",
+        warehouse_name="自己店里",
+        allow_llm=False,
+    )
+    assert result.product["id"] == 301
+    assert result.product["spec"] == "卡其色"

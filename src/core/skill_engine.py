@@ -9,6 +9,8 @@ import re
 from src.core.features import disabled_feature_reply, feature_enabled
 from src.core.tool_agent import classify_and_extract
 from src.core.learning import match_learned, parse_correction, record_example
+from src.core.colors import extract_color_from_text as extract_known_color
+from src.core.colors import known_colors
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.core.session import SessionManager, set_current_session_id
 from src.skills.base import BaseWorkflow
@@ -949,11 +951,7 @@ class SkillEngine:
         return result
 
     def _extract_color_from_text(self, text: str) -> str:
-        colors = ["橄榄绿", "深咖色", "古铜色", "红色", "黄色", "金色", "橙色", "蓝色", "绿色", "咖色", "黑色", "白色", "银色", "灰色", "紫色", "粉色"]
-        for color in colors:
-            if color in text:
-                return color
-        return ""
+        return extract_known_color(text)
 
     def _extract_inventory_params(self, user_input: str) -> dict:
         result = {"intent": "inventory"}
@@ -971,7 +969,7 @@ class SkillEngine:
         return result
 
     def _normalize_inventory_query_keyword(self, text: str) -> str:
-        return normalize_product_name(text.strip(), specs=PRODUCT_SPECS)
+        return normalize_product_name(text.strip(), colors=known_colors(), specs=PRODUCT_SPECS)
 
     def _is_order_request(self, user_input: str) -> bool:
         if self._is_transfer_request(user_input):

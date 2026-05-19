@@ -8,15 +8,13 @@ from src.core.config import get_config
 
 _config = get_config()
 
-# 标准颜色列表（用于验证和标准化）
-STANDARD_COLORS = _config.get("business_rules.color_filter.standard_colors", [
+_DEFAULT_STANDARD_COLORS = [
     "橙色", "红色", "绿色", "蓝色", "黄色", "黑色", "白色",
     "灰色", "咖色", "金色", "银色", "香槟金", "深咖色",
-    "古铜色", "古铜红", "橄榄绿", "卡其色", "深绿",
-])
+    "古铜色", "古铜红", "橄榄绿", "卡其色", "深绿", "紫色", "粉色",
+]
 
-# 颜色别名映射（统一标准化）
-COLOR_ALIASES = _config.get("business_rules.color_filter.aliases", {
+_DEFAULT_COLOR_ALIASES = {
     "桔色": "橙色",
     "黄": "黄色",
     "红": "红色",
@@ -29,7 +27,22 @@ COLOR_ALIASES = _config.get("business_rules.color_filter.aliases", {
     "棕色": "咖色",
     "深棕": "深咖色",
     "铜色": "古铜色",
-})
+    "深咖": "咖色",
+    "咖啡色": "咖色",
+    "棕咖色": "咖色",
+}
+
+# 标准颜色列表（用于验证和标准化）
+STANDARD_COLORS = list(dict.fromkeys([
+    *_config.get("business_rules.color_filter.standard_colors", []),
+    *_DEFAULT_STANDARD_COLORS,
+]))
+
+# 颜色别名映射（统一标准化）
+COLOR_ALIASES = {
+    **_DEFAULT_COLOR_ALIASES,
+    **_config.get("business_rules.color_filter.aliases", {}),
+}
 
 
 def filter_uv(color: str) -> str:
@@ -74,12 +87,12 @@ def extract_color_from_text(text: str) -> str | None:
     """
     text_normalized = normalize_color(text)
 
-    for color in STANDARD_COLORS:
+    for color in sorted(STANDARD_COLORS, key=len, reverse=True):
         if color in text_normalized:
             return color
 
     # 检查别名
-    for alias, standard in COLOR_ALIASES.items():
+    for alias, standard in sorted(COLOR_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
         if alias in text_normalized:
             return standard
 

@@ -3,6 +3,8 @@ import re
 
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.colors import extract_color_from_text as extract_known_color
+from src.core.colors import known_colors
 from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
@@ -229,13 +231,10 @@ class PurchaseWorkflow(BaseWorkflow):
         return [normalized] if normalized else []
 
     def _extract_color(self, text: str) -> str:
-        for color in self._colors():
-            if color in str(text or ""):
-                return color
-        return ""
+        return extract_known_color(text)
 
     def _colors(self) -> list[str]:
-        return ["香槟金", "橄榄绿", "深咖色", "古铜色", "红色", "黄色", "金色", "橙色", "蓝色", "绿色", "咖色", "黑色", "白色", "银色", "灰色", "紫色", "粉色"]
+        return known_colors()
 
     def _looks_like_gift_box(self, name: str) -> bool:
         return any(word in str(name or "") for word in ["两", "斤", "盒", "礼盒"])

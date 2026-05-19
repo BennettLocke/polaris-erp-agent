@@ -14,6 +14,8 @@ from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
 from src.core.config import get_config
 from src.core.customer_name import has_customer_name_craft_noise, normalize_customer_name
+from src.core.colors import extract_color_from_text as extract_known_color
+from src.core.colors import known_colors, normalize_color as normalize_known_color
 from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
@@ -802,24 +804,14 @@ class OrderFlowWorkflow(BaseWorkflow):
             return []
 
     def _colors(self) -> list[str]:
-        return ["香槟金", "橄榄绿", "深咖色", "古铜色", "红色", "黄色", "金色", "橙色", "蓝色", "绿色", "咖色", "黑色", "白色", "银色", "灰色", "紫色", "粉色"]
+        return known_colors()
 
 
     def _normalize_color(self, color: str) -> str:
-        value = str(color or "").strip()
-        aliases = {
-            "深咖色": "咖色",
-            "深咖": "咖色",
-            "咖啡色": "咖色",
-            "棕咖色": "咖色",
-        }
-        return aliases.get(value, value)
+        return normalize_known_color(color)
 
     def _extract_color(self, text: str) -> str:
-        for color in self._colors():
-            if color in str(text or ""):
-                return self._normalize_color(color)
-        return ""
+        return extract_known_color(text)
 
     def _extract_colors_in_text(self, text: str) -> list[str]:
         value = str(text or "")

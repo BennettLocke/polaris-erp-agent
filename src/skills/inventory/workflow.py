@@ -2,6 +2,8 @@
 import re
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.colors import extract_color_from_text as extract_known_color
+from src.core.colors import known_colors, normalize_color
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 
@@ -79,12 +81,13 @@ class InventoryWorkflow(BaseWorkflow):
             except Exception:
                 # fallback: 去掉常见前缀，尝试提取颜色
                 product_name = processed_input.replace("查", "").replace("库存", "").replace("一下", "").strip()
-                colors = ["红色", "黄色", "橙色", "蓝色", "绿色", "橄榄绿", "咖色", "深咖色", "古铜色", "黑色", "白色", "紫色", "粉色"]
-                for c in colors:
-                    if c in product_name:
-                        color_filter = c
-                        product_name = product_name.replace(c, "").strip()
-                        break
+                color_filter = extract_known_color(product_name)
+
+        color_filter = normalize_color(color_filter)
+        if product_name and not color_filter:
+            color_filter = extract_known_color(f"{product_name} {user_input}")
+        if product_name and color_filter:
+            product_name = product_name.replace(color_filter, "").strip()
 
         if not product_name:
             return self._reply("请告诉我您要查询哪个商品的库存，例如：查下岩味库存")
@@ -189,5 +192,5 @@ class InventoryWorkflow(BaseWorkflow):
         for word in ("吗", "嘛", "呢"):
             keyword = keyword.replace(word, "")
 
-        keyword = normalize_product_name(keyword, specs=PRODUCT_SPECS)
+        keyword = normalize_product_name(keyword, colors=known_colors(), specs=PRODUCT_SPECS)
         return keyword or product_name

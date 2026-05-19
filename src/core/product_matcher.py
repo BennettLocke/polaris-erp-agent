@@ -5,39 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.core.colors import extract_color_from_text, known_colors, normalize_color
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name, product_keywords, product_terms
 from src.utils import get_logger
 
 logger = get_logger("sjagent.product_matcher")
 
 
-COLOR_ALIASES = {
-    "深咖色": "咖色",
-    "深咖": "咖色",
-    "咖啡色": "咖色",
-    "棕咖色": "咖色",
-}
-
-
-DEFAULT_COLORS = [
-    "香槟金",
-    "橄榄绿",
-    "深咖色",
-    "古铜色",
-    "红色",
-    "黄色",
-    "金色",
-    "橙色",
-    "蓝色",
-    "绿色",
-    "咖色",
-    "黑色",
-    "白色",
-    "银色",
-    "灰色",
-    "紫色",
-    "粉色",
-]
+DEFAULT_COLORS = known_colors()
 
 
 @dataclass
@@ -57,7 +32,7 @@ class ProductMatcher:
 
     def __init__(self, caller, colors: list[str] | None = None):
         self.caller = caller
-        self.colors = colors or DEFAULT_COLORS
+        self.colors = list(dict.fromkeys([*(colors or []), *DEFAULT_COLORS]))
 
     def match(
         self,
@@ -72,8 +47,9 @@ class ProductMatcher:
         allow_product_fallback: bool = True,
         allow_llm: bool = True,
     ) -> ProductMatch:
+        detected_color = color or self.extract_color(name)
         normalized_name = self.normalize_name(name)
-        normalized_color = self.normalize_color(color)
+        normalized_color = self.normalize_color(detected_color)
         keywords = self.keywords(normalized_name)
         terms = self.terms(normalized_name)
         if not normalized_name:
@@ -118,8 +94,10 @@ class ProductMatcher:
         return normalize_product_name(name, colors=self.colors, specs=PRODUCT_SPECS)
 
     def normalize_color(self, color: str) -> str:
-        value = str(color or "").strip()
-        return COLOR_ALIASES.get(value, value)
+        return normalize_color(color)
+
+    def extract_color(self, text: str) -> str:
+        return extract_color_from_text(text)
 
     def keywords(self, name: str) -> list[str]:
         return product_keywords(name, specs=PRODUCT_SPECS)
