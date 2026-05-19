@@ -14,6 +14,7 @@ from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
 from src.core.config import get_config
 from src.core.customer_name import has_customer_name_craft_noise, normalize_customer_name
+from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 from scripts.common.unit_converter import calculate_purchase_quantity, is_one_piece_order
@@ -33,6 +34,7 @@ class OrderFlowWorkflow(BaseWorkflow):
     def __init__(self):
         self.caller = get_tool_caller()
         self.config = get_config()
+        self.product_matcher = ProductMatcher(self.caller, colors=self._colors())
 
     def execute(self, user_input: str, params: dict = None) -> dict:
         """
@@ -458,40 +460,36 @@ class OrderFlowWorkflow(BaseWorkflow):
         price_override = self._parse_price(product.get("price") or product.get("unit_price"))
 
         keyword = self._normalize_product_name(name)
-        results = self._search_product_candidates(keyword, color)
-        logger.info(f"[OrderFlow] 搜索 '{keyword}', color={color} → {len(results)} 条候选")
+        match = self.product_matcher.match(
+            keyword,
+            color=color,
+            use_inventory=True,
+            allow_product_fallback=True,
+            product_limit=100,
+            inventory_limit=80,
+            allow_llm=True,
+        )
+        results = match.candidates
+        target = match.product
+        logger.info(f"[OrderFlow] 商品匹配 '{keyword}', color={color} → {match.reason}, 候选={len(results)}")
 
-        target = self._select_confirmed_product(results, keyword, color)
         if target is None and color and self._is_non_gift(keyword):
-            no_color_results = self._search_product_candidates(keyword, "")
-            no_color_target = self._select_confirmed_product(no_color_results, keyword, "")
-            if no_color_target is not None:
-                target = no_color_target
-                results = no_color_results
+            no_color_match = self.product_matcher.match(
+                keyword,
+                color="",
+                use_inventory=True,
+                allow_product_fallback=True,
+                product_limit=100,
+                inventory_limit=80,
+                allow_llm=True,
+            )
+            if no_color_match.product is not None:
+                target = no_color_match.product
+                results = no_color_match.candidates
                 color = ""
         if target is None:
-            original_terms = self._product_terms(keyword)
-            original_brand_terms = original_terms[:-1] if len(original_terms) > 1 else []
-            llm_keywords = self._llm_product_keywords(name, color)
-            for llm_keyword in llm_keywords:
-                if llm_keyword == keyword:
-                    continue
-                llm_results = self._search_product_candidates(llm_keyword, color)
-                llm_target = self._select_confirmed_product(llm_results, llm_keyword, color)
-                if llm_target is not None and original_brand_terms and not self._candidate_has_terms(llm_target, original_brand_terms):
-                    logger.warning(
-                        f"[OrderFlow] LLM兜底候选品牌不一致，拒绝自动替换: original={keyword}, "
-                        f"llm={llm_keyword}, target={llm_target.get('title') or llm_target.get('产品名称')}"
-                    )
-                    continue
-                if llm_target is not None:
-                    target = llm_target
-                    keyword = llm_keyword
-                    results = llm_results
-                    break
-            if target is None:
-                logger.warning(f"[OrderFlow] 商品未唯一确认: name={name}, color={color}, results={len(results)}")
-                return None
+            logger.warning(f"[OrderFlow] 商品未唯一确认: name={name}, color={color}, reason={match.reason}, results={len(results)}")
+            return None
 
         product_id = target.get("id") or target.get("product_id")
         if product_id and ("产品名称" in target or not target.get("price")):
@@ -754,16 +752,16 @@ class OrderFlowWorkflow(BaseWorkflow):
         name = product.get("name", "")
         color = product.get("color", "")
         keyword = self._normalize_product_name(name)
-        candidates = self._search_product_candidates(keyword, color)
-        if candidates:
-            return candidates
+        match = self.product_matcher.match(keyword, color=color, use_inventory=True, allow_llm=False)
+        if match.candidates:
+            return match.candidates
         compact = keyword.replace(" ", "")
         for fallback in [compact[:2]]:
             if len(fallback) < 2 or fallback == keyword:
                 continue
-            candidates = self._search_product_candidates(fallback, color)
-            if candidates:
-                return candidates
+            match = self.product_matcher.match(fallback, color=color, use_inventory=True, allow_llm=False)
+            if match.candidates:
+                return match.candidates
         return []
 
     def _product_detail(self, product_id) -> dict | None:
@@ -901,13 +899,10 @@ class OrderFlowWorkflow(BaseWorkflow):
         return None
 
     def _candidate_title_text(self, row: dict) -> str:
-        title = str(row.get("title") or row.get("产品名称") or "")
-        title = re.sub(r"[【】]", "", title)
-        return self._normalize_product_name(title).replace(" ", "")
+        return self.product_matcher.candidate_title(row)
 
     def _candidate_has_terms(self, row: dict, terms: list[str]) -> bool:
-        title = self._candidate_title_text(row)
-        return all(self._normalize_product_name(term).replace(" ", "") in title for term in terms)
+        return self.product_matcher.candidate_has_terms(row, terms)
 
     def _product_desc(self, product: dict) -> str:
         return (

@@ -3,6 +3,7 @@ import re
 
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 
@@ -14,6 +15,7 @@ class StocktakingWorkflow(BaseWorkflow):
 
     def __init__(self):
         self.caller = get_tool_caller()
+        self.product_matcher = ProductMatcher(self.caller)
 
     def execute(self, user_input: str, params: dict = None) -> dict:
         params = self._ensure_params(user_input, params)
@@ -144,56 +146,27 @@ class StocktakingWorkflow(BaseWorkflow):
     def _resolve_product(self, product: dict, warehouse_name: str) -> dict | None:
         name = self._normalize_product_name(product.get("name", ""))
         color = product.get("color", "")
-
-        inventory_matches = []
-        for keyword in self._product_keywords(name):
-            try:
-                rows = self.caller.call(
-                    "inventory_search",
-                    keyword=keyword,
-                    color=color,
-                    only_in_stock=False,
-                    limit=80,
-                )
-            except Exception:
-                rows = []
-            inventory_matches.extend(self._filter_inventory_rows(rows, name, color, warehouse_name))
-
-        unique_inventory = self._unique_matches(inventory_matches, id_key="product_id")
-        if len(unique_inventory) == 1:
-            row = unique_inventory[0]
+        match = self.product_matcher.match(
+            name,
+            color=color,
+            warehouse_name=warehouse_name,
+            use_inventory=True,
+            allow_product_fallback=True,
+            product_limit=100,
+            inventory_limit=100,
+            allow_llm=True,
+        )
+        if match.product:
+            row = match.product
+            stock = row.get("库存数量")
             return {
-                "id": row.get("product_id"),
-                "title": row.get("产品名称"),
-                "spec": row.get("【颜色】"),
-                "stock": int(row.get("库存数量", 0) or 0),
+                "id": row.get("id") or row.get("product_id"),
+                "title": row.get("title") or row.get("产品名称"),
+                "spec": row.get("spec") or row.get("【颜色】"),
+                "stock": int(stock) if stock not in (None, "") else "",
             }
-        if len(unique_inventory) > 1:
-            return {"candidates": unique_inventory}
-
-        product_matches = []
-        for keyword in self._product_keywords(name):
-            try:
-                candidates = self.caller.call("product_search", keyword=keyword)
-            except Exception:
-                candidates = []
-            product_matches.extend(self._filter_products(candidates, name, color))
-
-        unique_products = self._unique_matches(product_matches, id_key="id")
-        if len(unique_products) == 1:
-            p = unique_products[0]
-            return {"id": p.get("id"), "title": p.get("title"), "spec": p.get("spec"), "stock": ""}
-        if len(unique_products) > 1:
-            return {"candidates": [
-                {
-                    "product_id": p.get("id"),
-                    "产品名称": p.get("title"),
-                    "【颜色】": p.get("spec"),
-                    "【仓库】": warehouse_name,
-                    "库存数量": "",
-                }
-                for p in unique_products
-            ]}
+        if match.candidates:
+            return {"candidates": match.candidates}
         return None
 
     def _filter_inventory_rows(self, rows: list[dict], target_name: str, color: str, warehouse_name: str) -> list[dict]:

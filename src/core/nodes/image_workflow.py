@@ -21,6 +21,7 @@ from typing import Optional
 from src.core.state import AgentState
 from src.core.config import get_config
 from src.core.tools.caller import get_tool_caller
+from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 from scripts.image_processor import ImageProcessor
@@ -627,33 +628,32 @@ def _infer_customer_from_ocr_lines(lines: list[str], goods_name: str, caller) ->
 
 def find_product_by_goods_name(goods_name: str, caller, color: str = "") -> dict | None:
     """
-    在 MySQL 中查找匹配的商品
-    按商品名模糊匹配，返回第一个匹配结果
+    在 ERP 商品库中查找唯一可信商品。
     """
     if not goods_name:
         return None
 
-    keywords = _product_search_keywords(goods_name)
-    for keyword in keywords:
+    matcher = ProductMatcher(caller, colors=list(STANDARD_COLORS))
+    match = matcher.match(
+        goods_name,
+        color=color,
+        use_inventory=True,
+        allow_product_fallback=True,
+        product_limit=100,
+        inventory_limit=80,
+        allow_llm=True,
+    )
+    if not match.product:
+        return None
+    product = match.product
+    if not product.get("simple_desc"):
         try:
-            results = caller.call("product_search", keyword=keyword)
-            matched = _select_image_product(results, keyword, color)
-            if matched:
-                return matched
+            detail = caller.call("product_info", product_id=int(product["id"]))
+            if detail:
+                product = {**product, **detail}
         except Exception as e:
-            logger.error(f"商品查找失败: {e}")
-
-        if color:
-            try:
-                rows = caller.call("inventory_search", keyword=keyword, color=color, only_in_stock=False, limit=50)
-                matched = _select_image_inventory_product(rows, keyword, color)
-                if matched:
-                    detail = caller.call("product_info", product_id=int(matched["id"]))
-                    return detail or matched
-            except Exception as e:
-                logger.error(f"库存反查商品失败: {e}")
-
-    return None
+            logger.warning(f"OCR商品详情补全失败: {e}")
+    return product
 
 
 def _normalize_goods_keyword(goods_name: str) -> str:

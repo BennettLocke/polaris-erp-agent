@@ -2,6 +2,7 @@
 import re
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 
@@ -13,6 +14,7 @@ class TransferWorkflow(BaseWorkflow):
 
     def __init__(self):
         self.caller = get_tool_caller()
+        self.product_matcher = ProductMatcher(self.caller)
 
     def execute(self, user_input: str, params: dict = None) -> dict:
         # 优先使用 LLM 预提取的参数
@@ -269,33 +271,26 @@ class TransferWorkflow(BaseWorkflow):
         color = product.get("color", "")
         qty = int(product.get("quantity", 1) or 1)
         warehouse_name = "自己店里" if from_wh == 1 else "百鑫"
-
-        all_matches = []
-        for keyword in self._product_keywords(name):
-            try:
-                rows = self.caller.call(
-                    "inventory_search",
-                    keyword=keyword,
-                    color=color,
-                    only_in_stock=True,
-                    limit=50,
-                )
-            except Exception:
-                rows = []
-            matches = self._filter_inventory_rows(rows, name, color, warehouse_name, qty)
-            if matches:
-                all_matches.extend(matches)
-        unique = self._unique_inventory_matches(all_matches)
-        if len(unique) == 1:
-            row = unique[0]
+        match = self.product_matcher.match(
+            name,
+            color=color,
+            warehouse_name=warehouse_name,
+            min_stock=qty,
+            use_inventory=True,
+            allow_product_fallback=False,
+            inventory_limit=100,
+            allow_llm=False,
+        )
+        if match.product:
+            row = match.product
             return {
-                "id": row.get("product_id"),
-                "title": row.get("产品名称"),
-                "spec": row.get("【颜色】"),
+                "id": row.get("id") or row.get("product_id"),
+                "title": row.get("title") or row.get("产品名称"),
+                "spec": row.get("spec") or row.get("【颜色】"),
                 "stock": int(row.get("库存数量", 0) or 0),
             }
-        if len(unique) > 1:
-            return {"candidates": unique}
+        if match.candidates:
+            return {"candidates": match.candidates}
         return None
 
     def _normalize_product_name(self, name: str) -> str:

@@ -19,6 +19,7 @@ from src.core.tools.caller import get_tool_caller
 from src.core.llm import llm_json
 from src.utils import get_logger
 from src.core.customer_name import has_customer_name_craft_noise, normalize_customer_name
+from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from scripts.common.unit_converter import (
     calculate_order_quantity,
@@ -121,6 +122,7 @@ def order_workflow_node(state: AgentState) -> AgentState:
     state["node_name"] = "order_workflow"
 
     caller = get_tool_caller()
+    product_matcher = ProductMatcher(caller)
 
     # 1. 用 LLM 解析客户和商品（传入对话历史）
     history = state.get("recent_turns", [])
@@ -151,11 +153,20 @@ def order_workflow_node(state: AgentState) -> AgentState:
 
     for item in items:
         product_name = item.get("product_name", "")
+        color = item.get("color", "")
+        if not color:
+            color = extract_color_from_text(user_input) or ""
+        color = filter_uv(color)
 
-        # 模糊搜索商品
-        products = caller.call("product_search", keyword=product_name)
+        match = product_matcher.match(
+            product_name,
+            color=color,
+            use_inventory=True,
+            allow_product_fallback=True,
+            allow_llm=True,
+        )
 
-        if not products:
+        if not match.product:
             product_warnings.append(f"商品未找到: {product_name}")
             matched_products.append({
                 "product_name": product_name,
@@ -167,18 +178,11 @@ def order_workflow_node(state: AgentState) -> AgentState:
             })
             continue
 
-        # 取第一个匹配结果
-        matched = products[0]
+        matched = match.product
         product_id = matched.get("id")
 
         # 查询完整商品信息
         product_detail = caller.call("product_info", product_id=product_id)
-
-        # 提取颜色
-        color = item.get("color", "")
-        if not color:
-            color = extract_color_from_text(user_input) or ""
-        color = filter_uv(color)  # UV 过滤
 
         # 件套换算
         order_qty = item.get("quantity", 1)

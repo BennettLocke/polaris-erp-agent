@@ -3,6 +3,7 @@ import re
 
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
+from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 from scripts.common.unit_converter import calculate_purchase_quantity, is_one_piece_order
@@ -15,6 +16,7 @@ class PurchaseWorkflow(BaseWorkflow):
 
     def __init__(self):
         self.caller = get_tool_caller()
+        self.product_matcher = ProductMatcher(self.caller, colors=self._colors())
 
     def execute(self, user_input: str, params: dict = None) -> dict:
         if not params or not params.get("products"):
@@ -180,62 +182,24 @@ class PurchaseWorkflow(BaseWorkflow):
     def _resolve_product(self, product: dict) -> dict | None:
         name = self._normalize_product_name(product.get("name", ""))
         color = product.get("color", "")
-        candidates = []
-        seen = set()
-
-        for keyword in self._product_keywords(name):
-            try:
-                rows = self.caller.call("product_search", keyword=keyword)
-            except Exception as e:
-                logger.warning(f"搜索商品失败: {e}")
-                rows = []
-            for row in rows or []:
-                key = (row.get("id"), row.get("spec"))
-                if key in seen:
-                    continue
-                seen.add(key)
-                candidates.append(row)
-
-            if color:
-                try:
-                    inv_rows = self.caller.call("inventory_search", keyword=keyword, color=color, only_in_stock=False, limit=60)
-                except Exception:
-                    inv_rows = []
-                for row in inv_rows or []:
-                    key = (row.get("product_id"), row.get("【颜色】"))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    candidates.append({
-                        "id": row.get("product_id"),
-                        "title": row.get("产品名称"),
-                        "spec": row.get("【颜色】"),
-                        "simple_desc": row.get("simple_desc", ""),
-                        "price": 0,
-                    })
-
-        selected = self._select_product(candidates, name, color)
-        if selected:
-            return selected
-        if candidates:
-            return {"candidates": candidates}
+        match = self.product_matcher.match(
+            name,
+            color=color,
+            use_inventory=True,
+            allow_product_fallback=True,
+            product_limit=100,
+            inventory_limit=80,
+            allow_llm=True,
+        )
+        if match.product:
+            return match.product
+        if match.candidates:
+            return {"candidates": match.candidates}
         return None
 
     def _select_product(self, candidates: list[dict], keyword: str, color: str = "") -> dict | None:
-        rows = candidates or []
-        if color:
-            rows = [row for row in rows if color in str(row.get("spec", ""))]
-        terms = self._product_terms(keyword)
-        if terms:
-            rows = [
-                row for row in rows
-                if all(
-                    self._normalize_product_name(term).replace(" ", "")
-                    in self._normalize_product_name(str(row.get("title", ""))).replace(" ", "")
-                    for term in terms
-                )
-            ]
-        return rows[0] if len(rows) == 1 else None
+        match = self.product_matcher.match(keyword, color=color, use_inventory=False, allow_llm=False)
+        return match.product
 
     def _normalize_product_name(self, name: str) -> str:
         return normalize_product_name(name, colors=self._colors(), specs=PRODUCT_SPECS)
