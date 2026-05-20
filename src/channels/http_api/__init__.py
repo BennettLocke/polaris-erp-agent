@@ -1459,42 +1459,43 @@ def _piece_text(simple_desc: str) -> str:
     return text.replace("规格：", "")
 
 
-def _inventory_cards(rows: list[dict], limit: int) -> list[dict]:
+def _inventory_cards(
+    rows: list[dict],
+    limit: int,
+    *,
+    only_in_stock: bool = True,
+    product_rows: list[dict] | None = None,
+) -> list[dict]:
     cards: dict[str, dict] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+
+    def ensure_card(row: dict) -> dict | None:
         product_id = row.get("product_id") or row.get("产品ID") or row.get("id")
         title = row.get("产品名称") or row.get("title") or row.get("name") or "商品"
         if not _is_gift_box_title(title):
-            continue
-        color = row.get("【颜色】") or row.get("spec") or row.get("color") or ""
+            return None
         key = _clean_product_title(title)
-        stock = row.get("库存数量") or row.get("inventory") or row.get("stock") or 0
-        try:
-            stock = int(float(stock))
-        except (TypeError, ValueError):
-            stock = 0
-        if stock <= 0:
-            continue
-        warehouse = _normalize_warehouse_name(row.get("【仓库】") or row.get("warehouse_name") or row.get("warehouse") or "仓库")
         if key not in cards:
             cards[key] = {
                 "product_id": product_id,
                 "title": key,
                 "piece_text": _piece_text(row.get("simple_desc") or row.get("simple_desc_text") or ""),
                 "total_stock": 0,
-                "status_text": "有库存",
+                "status_text": "缺货",
                 "colors": [],
                 "_color_map": {},
             }
-        cards[key]["total_stock"] += stock
+        elif product_id and not cards[key].get("product_id"):
+            cards[key]["product_id"] = product_id
         if not cards[key].get("piece_text"):
             cards[key]["piece_text"] = _piece_text(row.get("simple_desc") or "")
+        return cards[key]
+
+    def ensure_color(card: dict, row: dict, color: str) -> dict:
+        product_id = row.get("product_id") or row.get("产品ID") or row.get("id")
         color_key = str(color or "默认")
-        if color_key not in cards[key]["_color_map"]:
-            cards[key]["_color_map"][color_key] = {
-                "product_id": product_id,
+        if color_key not in card["_color_map"]:
+            card["_color_map"][color_key] = {
+                "product_id": product_id or card.get("product_id"),
                 "color": color_key,
                 "total_stock": 0,
                 "warehouses": {
@@ -1502,16 +1503,47 @@ def _inventory_cards(rows: list[dict], limit: int) -> list[dict]:
                     "店里仓库": 0,
                 },
             }
-            cards[key]["colors"].append(cards[key]["_color_map"][color_key])
-        color_row = cards[key]["_color_map"][color_key]
-        if not color_row.get("product_id") and product_id:
+            card["colors"].append(card["_color_map"][color_key])
+        color_row = card["_color_map"][color_key]
+        if product_id and not color_row.get("product_id"):
             color_row["product_id"] = product_id
+        return color_row
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        color = row.get("【颜色】") or row.get("spec") or row.get("color") or ""
+        stock = row.get("库存数量") or row.get("inventory") or row.get("stock") or 0
+        try:
+            stock = int(float(stock))
+        except (TypeError, ValueError):
+            stock = 0
+        if only_in_stock and stock <= 0:
+            continue
+        card = ensure_card(row)
+        if not card:
+            continue
+        warehouse = _normalize_warehouse_name(row.get("【仓库】") or row.get("warehouse_name") or row.get("warehouse") or "仓库")
+        card["total_stock"] += stock
+        color_row = ensure_color(card, row, str(color or "默认"))
         color_row["total_stock"] += stock
         color_row["warehouses"][warehouse] = color_row["warehouses"].get(warehouse, 0) + stock
+
+    if not only_in_stock:
+        for row in product_rows or []:
+            if not isinstance(row, dict):
+                continue
+            card = ensure_card(row)
+            if not card:
+                continue
+            color = row.get("【颜色】") or row.get("spec") or row.get("color") or "默认"
+            ensure_color(card, row, str(color or "默认"))
+
     result = list(cards.values())
     for card in result:
         card.pop("_color_map", None)
-        card["colors"] = [item for item in card.get("colors", []) if item.get("total_stock", 0) > 0]
+        if only_in_stock:
+            card["colors"] = [item for item in card.get("colors", []) if item.get("total_stock", 0) > 0]
         total = card["total_stock"]
         if total <= 0:
             card["status_text"] = "缺货"
@@ -1519,7 +1551,7 @@ def _inventory_cards(rows: list[dict], limit: int) -> list[dict]:
             card["status_text"] = "库存紧张"
         else:
             card["status_text"] = "有库存"
-    result.sort(key=lambda item: item.get("total_stock", 0), reverse=True)
+    result.sort(key=lambda item: (-int(item.get("total_stock", 0) or 0), str(item.get("title") or "")))
     return result[:limit]
 
 
@@ -2690,12 +2722,20 @@ def inventory_cards():
     limit = request.args.get("limit", 30, type=int)
     limit = max(1, min(limit, 200))
     try:
+        product_rows = []
+        if not only_in_stock:
+            product_rows, _ = _db_product_list_flat(keyword, 1, max(limit * 30, 1200))
         rows = _db_client().search_inventory(
             keyword=keyword,
             only_in_stock=only_in_stock,
             limit=max(limit * 30, 1200),
         )
-        cards = _inventory_cards(rows if isinstance(rows, list) else [], limit)
+        cards = _inventory_cards(
+            rows if isinstance(rows, list) else [],
+            limit,
+            only_in_stock=only_in_stock,
+            product_rows=product_rows,
+        )
         return jsonify({
             "code": 0,
             "data": {
@@ -2714,7 +2754,18 @@ def inventory_cards():
                 only_in_stock=only_in_stock,
                 limit=max(limit * 30, 1200),
             )
-            cards = _inventory_cards(rows if isinstance(rows, list) else [], limit)
+            product_rows = []
+            if not only_in_stock:
+                try:
+                    product_rows = caller.call("product_search", keyword=keyword) or []
+                except Exception as product_error:
+                    logger.warning(f"库存卡片商品颜色补充失败: {product_error}")
+            cards = _inventory_cards(
+                rows if isinstance(rows, list) else [],
+                limit,
+                only_in_stock=only_in_stock,
+                product_rows=product_rows if isinstance(product_rows, list) else [],
+            )
             return jsonify({"code": 0, "data": {"list": cards, "source": "api"}})
         except Exception as api_error:
             logger.error(f"库存卡片查询失败: {api_error}")

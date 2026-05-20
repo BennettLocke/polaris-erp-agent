@@ -2036,7 +2036,7 @@ async function loadInventory(keywordOverride, page) {
   if (page !== undefined) state.inventoryPage = page;
   else if (keywordOverride !== undefined) state.inventoryPage = 1;
   const keyword = (keywordOverride ?? (($("inventoryKeyword") && $("inventoryKeyword").value) || "")).trim();
-  const only = 1;
+  const only = 0;
   const target = $("inventoryList");
   if (target) target.innerHTML = skeletonCards(6);
   if (keyword) {
@@ -2060,7 +2060,7 @@ async function loadContextInventory(keyword) {
   const cleanKeyword = String(keyword || "").trim();
   state.contextInventory = { keyword: cleanKeyword, list: [], loading: true, updatedAt: Date.now() };
   renderBusinessContext();
-  const res = await api(`/api/inventory/cards?${query({ keyword: cleanKeyword, only_in_stock: 1, limit: LIST_LIMITS.inventory })}`);
+  const res = await api(`/api/inventory/cards?${query({ keyword: cleanKeyword, only_in_stock: 0, limit: LIST_LIMITS.inventory })}`);
   const list = normalizeList(res);
   state.contextInventory = { keyword: cleanKeyword, list, loading: false, updatedAt: Date.now() };
   showInventoryPopup(cleanKeyword, list);
@@ -2126,8 +2126,7 @@ function stockOf(item, name) {
 }
 
 function inventoryCardHtml(card, compact = false) {
-  const onlyInStock = true;
-  const colors = (card.colors || []).filter((color) => !onlyInStock || Number(color.total_stock ?? color.stock ?? 0) > 0 || Number(stockOf(color, "百鑫")) > 0 || Number(stockOf(color, "店里")) > 0);
+  const colors = card.colors || [];
   const total = Number(card.total_stock ?? colors.reduce((sum, color) => sum + Number(color.total_stock ?? color.stock ?? (Number(stockOf(color, "百鑫")) + Number(stockOf(color, "店里")))), 0));
   const title = card.title || card.name || "库存";
   const displayColors = compact ? colors.slice(0, 8) : colors;
