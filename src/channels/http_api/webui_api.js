@@ -1088,11 +1088,14 @@ function openDrawer(mode = "ai", row = {}) {
     setProductDetailImages(htmlToImages(row.content || ""));
   } else if (mode === "inventory_action") {
     const isPurchase = row.type === "purchase";
-    if (title) title.textContent = isPurchase ? "进货入库" : "调货";
-    if (subtitle) subtitle.textContent = isPurchase ? "确认商品、颜色、数量和入库仓库。" : "确认商品、颜色、数量和仓库方向。";
+    const isStocktaking = row.type === "stocktaking";
+    if (title) title.textContent = isPurchase ? "进货入库" : (isStocktaking ? "盘点库存" : "调货");
+    if (subtitle) subtitle.textContent = isPurchase
+      ? "确认商品、颜色、数量和入库仓库。"
+      : (isStocktaking ? "填写盘点后的目标库存数量。" : "确认商品、颜色、数量和仓库方向。");
     if (save) {
       save.style.display = "";
-      save.textContent = isPurchase ? "确认进货" : "确认调货";
+      save.textContent = isPurchase ? "确认进货" : (isStocktaking ? "确认盘点" : "确认调货");
     }
     body.innerHTML = inventoryActionForm(row);
   } else if (mode === "sales_detail") {
@@ -1882,6 +1885,15 @@ async function saveInventoryActionFromDrawer() {
   const type = $("drawerInvType").value;
   const qty = Number($("drawerInvQty").value || 0);
   const color = $("drawerInvColor").value.trim() || product.spec || product.color || "";
+  if (type === "stocktaking") {
+    if (qty < 0) throw new Error("盘点数量不能小于0");
+    await api("/api/inventory/stocktaking", {
+      method: "POST",
+      body: { product_id: product.product_id || product.id, unit_id: product.unit_id || 1, quantity: qty, warehouse_id: Number($("drawerInvWarehouse").value || 2), color }
+    });
+    toast("盘点已提交");
+    return;
+  }
   if (qty <= 0) throw new Error("数量必须大于0");
   if (type === "purchase") {
     await api("/api/inventory/purchase", {
@@ -2137,7 +2149,7 @@ function inventoryCardHtml(card, compact = false) {
             <td>${escapeHtml(bx)}</td>
             <td>${escapeHtml(store)}</td>
             <td><strong>${escapeHtml(rowTotal)}</strong></td>
-            ${compact ? "" : `<td><div class="inventory-actions"><button class="primary" onclick="prepareInventoryAction('${escapeAttr(title)}', '${escapeAttr(colorName)}', 'transfer', '${escapeAttr(productId)}')">调</button><button onclick="prepareInventoryAction('${escapeAttr(title)}', '${escapeAttr(colorName)}', 'purchase', '${escapeAttr(productId)}')">进</button></div></td>`}
+            ${compact ? "" : `<td><div class="inventory-actions"><button class="primary" onclick="prepareInventoryAction('${escapeAttr(title)}', '${escapeAttr(colorName)}', 'transfer', '${escapeAttr(productId)}')">调</button><button onclick="prepareInventoryAction('${escapeAttr(title)}', '${escapeAttr(colorName)}', 'purchase', '${escapeAttr(productId)}')">进</button><button onclick="prepareInventoryAction('${escapeAttr(title)}', '${escapeAttr(colorName)}', 'stocktaking', '${escapeAttr(productId)}')">盘</button></div></td>`}
           </tr>`;
         }).join("")}
         ${colors.length > displayColors.length ? `<tr><td colspan="${compact ? 4 : 5}" class="muted">还有 ${escapeHtml(colors.length - displayColors.length)} 个颜色，可到库存页查看</td></tr>` : ""}
@@ -2155,15 +2167,17 @@ function renderInventory(list) {
 
 function inventoryActionForm(row = {}) {
   const isPurchase = row.type === "purchase";
+  const isStocktaking = row.type === "stocktaking";
+  const type = isPurchase ? "purchase" : (isStocktaking ? "stocktaking" : "transfer");
   return `
-    <input id="drawerInvType" type="hidden" value="${escapeAttr(row.type || "transfer")}">
+    <input id="drawerInvType" type="hidden" value="${escapeAttr(type)}">
     <input id="drawerInvProductId" type="hidden" value="${escapeAttr(row.product_id || "")}">
     <label>商品</label><input id="drawerInvTitle" value="${escapeAttr(row.title || "")}">
     <div class="two-col">
       <div><label>颜色</label><input id="drawerInvColor" value="${escapeAttr(row.color || "")}"></div>
-      <div><label>数量</label><input id="drawerInvQty" type="number" min="1" value="1"></div>
+      <div><label>${isStocktaking ? "盘点后数量" : "数量"}</label><input id="drawerInvQty" type="number" min="${isStocktaking ? "0" : "1"}" value="${isStocktaking ? "0" : "1"}"></div>
     </div>
-    ${isPurchase ? `<label>入库仓库</label><select id="drawerInvWarehouse"><option value="2">百鑫仓库</option><option value="1">自己店里</option></select>` : `
+    ${isPurchase || isStocktaking ? `<label>${isStocktaking ? "盘点仓库" : "入库仓库"}</label><select id="drawerInvWarehouse"><option value="2">百鑫仓库</option><option value="1">自己店里</option></select>` : `
       <div class="two-col">
         <div><label>调出仓库</label><select id="drawerInvOutWarehouse"><option value="2">百鑫仓库</option><option value="1">自己店里</option></select></div>
         <div><label>调入仓库</label><select id="drawerInvEnterWarehouse"><option value="1">自己店里</option><option value="2">百鑫仓库</option></select></div>
@@ -2173,8 +2187,9 @@ function inventoryActionForm(row = {}) {
 }
 
 function prepareInventoryAction(title, color, type, productId = "") {
+  const actionType = type === "purchase" ? "purchase" : (type === "stocktaking" ? "stocktaking" : "transfer");
   state.inventoryAction = {
-    type: type === "purchase" ? "purchase" : "transfer",
+    type: actionType,
     title,
     color,
     product_id: productId

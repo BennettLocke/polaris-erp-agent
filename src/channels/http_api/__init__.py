@@ -2824,6 +2824,43 @@ def inventory_purchase_api():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+@app.route("/api/inventory/stocktaking", methods=["POST"])
+def inventory_stocktaking_api():
+    """Set target inventory for one product in one warehouse."""
+    from src.core.tools.caller import get_tool_caller
+    caller = get_tool_caller()
+    body = request.get_json() or {}
+    product_id = body.get("product_id")
+    quantity = body.get("quantity")
+    color = (body.get("color") or "").strip()
+    warehouse_id = int(body.get("warehouse_id") or 2)
+    if not product_id:
+        return jsonify({"code": 400, "msg": "product_id is required"}), 400
+    try:
+        quantity = int(quantity or 0)
+    except (TypeError, ValueError):
+        quantity = -1
+    if quantity < 0:
+        return jsonify({"code": 400, "msg": "quantity must be greater than or equal to 0"}), 400
+    try:
+        result = caller.call(
+            "inventory_sync",
+            warehouse_id=warehouse_id,
+            products=[{
+                "product_id": int(product_id),
+                "unit_id": int(body.get("unit_id") or 1),
+                "number": quantity,
+            }],
+            note=(body.get("note") or f"WebUI盘点{f'（{color}）' if color else ''}").strip(),
+        )
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error")}), 500
+        return jsonify({"code": 0, "data": result})
+    except Exception as e:
+        logger.error(f"库存盘点失败: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
 @app.route("/api/workflow/orders", methods=["GET", "POST"])
 def workflow_orders():
     """
