@@ -2238,6 +2238,18 @@ async function purchaseInventory() {
   loadInventory(undefined, state.inventoryPage);
 }
 
+function saleCustomerId(customer = {}) {
+  return Number(customer.id || customer.customer_id || customer.company_id || 0);
+}
+
+function saleCustomerName(customer = {}) {
+  return customer.name || customer.customer_name || customer.company_name || customer.title || "客户";
+}
+
+function saleCustomerMobile(customer = {}) {
+  return customer.mobile || customer.contacts_mobile || customer.contacts_tel || customer.tel || customer.telephone || customer.phone || "";
+}
+
 async function searchSaleCustomers() {
   if (!$("saleCustomer")) throw new Error("开单页面未加载");
   const keyword = $("saleCustomer").value.trim();
@@ -2245,14 +2257,14 @@ async function searchSaleCustomers() {
   const list = normalizeList(await api(`/api/customer/list?${query({ keyword })}`));
   state.saleCustomerResults = list;
   $("saleCustomerChoices").innerHTML = list.length ? list.slice(0, LIST_LIMITS.choice).map((customer) => {
-    const name = customer.name || customer.customer_name || customer.company_name || customer.title || "客户";
-    const mobile = customer.mobile || customer.tel || customer.telephone || customer.phone || "";
-    const id = Number(customer.id || customer.customer_id || 0);
+    const name = saleCustomerName(customer);
+    const mobile = saleCustomerMobile(customer);
+    const id = saleCustomerId(customer);
     return `<button class="choice" data-sale-customer-id="${id}" data-sale-customer-name="${escapeAttr(name)}"><strong>${escapeHtml(name)}</strong><div class="muted">${mobile ? escapeHtml(mobile) + " · " : ""}ID ${escapeHtml(id || "")}</div></button>`;
-  }).join("") : '<div class="empty">没有客户结果</div>';
+  }).join("") : '<div class="empty">没有客户结果，可以直接创建新客户。</div>';
   if (list.length === 1) {
     const customer = list[0];
-    selectSaleCustomer(customer.id || customer.customer_id, customer.name || customer.customer_name || customer.company_name || customer.title || "客户");
+    selectSaleCustomer(saleCustomerId(customer), saleCustomerName(customer));
   }
   return list;
 }
@@ -2264,6 +2276,83 @@ function selectSaleCustomer(id, name) {
   $("saleSelectedCustomer").textContent = name;
   $("saleCustomerChoices").innerHTML = "";
   renderSaleLines();
+}
+
+function openSaleCustomerCreateDialog() {
+  if (!$("saleCustomer")) return;
+  const prefill = $("saleCustomer").value.trim();
+  let mask = $("saleCustomerCreateMask");
+  if (!mask) {
+    mask = document.createElement("div");
+    mask.id = "saleCustomerCreateMask";
+    mask.className = "confirm-mask";
+    mask.innerHTML = `
+      <div class="confirm-box" role="dialog" aria-modal="true">
+        <h3 class="confirm-title">创建客户</h3>
+        <div class="confirm-message">客户创建成功后会自动选中，可直接继续开单。</div>
+        <div class="customer-create-form">
+          <label>客户名称<input id="createCustomerName" autocomplete="off"></label>
+          <label>联系人<input id="createCustomerContact" autocomplete="off" placeholder="可不填"></label>
+          <label>电话<input id="createCustomerPhone" autocomplete="off" placeholder="可不填"></label>
+        </div>
+        <div class="confirm-actions" style="margin-top:16px;">
+          <button id="saleCustomerCreateCancel">取消</button>
+          <button class="danger-confirm" id="saleCustomerCreateOk">创建并选中</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+    mask.addEventListener("click", (event) => {
+      if (event.target === mask) closeSaleCustomerCreateDialog();
+    });
+  }
+  $("createCustomerName").value = prefill;
+  $("createCustomerContact").value = "";
+  $("createCustomerPhone").value = "";
+  $("saleCustomerCreateCancel").onclick = closeSaleCustomerCreateDialog;
+  $("saleCustomerCreateOk").onclick = () => createSaleCustomerFromDialog().catch((err) => toast(err.message, true));
+  requestAnimationFrame(() => {
+    mask.classList.add("open");
+    $("createCustomerName").focus();
+    $("createCustomerName").select();
+  });
+}
+
+function closeSaleCustomerCreateDialog() {
+  const mask = $("saleCustomerCreateMask");
+  if (mask) mask.classList.remove("open");
+}
+
+async function createSaleCustomerFromDialog() {
+  const name = $("createCustomerName")?.value.trim() || "";
+  const contactsName = $("createCustomerContact")?.value.trim() || "";
+  const contactsTel = $("createCustomerPhone")?.value.trim() || "";
+  if (!name) throw new Error("请输入客户名称");
+  const ok = $("saleCustomerCreateOk");
+  if (ok) {
+    ok.disabled = true;
+    ok.classList.add("loading");
+  }
+  try {
+    const res = await api("/api/customer/create", {
+      method: "POST",
+      body: { name, contacts_name: contactsName, contacts_tel: contactsTel }
+    });
+    const customer = res.data || {};
+    const id = saleCustomerId(customer);
+    const customerName = saleCustomerName(customer) || name;
+    if (!id) throw new Error("客户已创建，但没有取到客户ID，请搜索客户后再选择");
+    closeSaleCustomerCreateDialog();
+    selectSaleCustomer(id, customerName);
+    if ($("saleCustomerChoices")) {
+      $("saleCustomerChoices").innerHTML = `<div class="empty">${customer.existed ? "客户已存在，已选中。" : "客户创建成功，已选中。"}</div>`;
+    }
+    toast(customer.existed ? "客户已存在，已选中" : "客户创建成功，已选中");
+  } finally {
+    if (ok) {
+      ok.disabled = false;
+      ok.classList.remove("loading");
+    }
+  }
 }
 
 async function searchSaleProducts() {
@@ -3289,6 +3378,7 @@ function bindEvents() {
   bind("transferBtn", "click", () => transferInventory().catch((err) => toast(err.message, true)));
   bind("purchaseBtn", "click", () => purchaseInventory().catch((err) => toast(err.message, true)));
   bind("saleCustomerSearchBtn", "click", () => searchSaleCustomers().catch((err) => toast(err.message, true)));
+  bind("saleCustomerCreateBtn", "click", openSaleCustomerCreateDialog);
   bind("saleProductSearchBtn", "click", () => searchSaleProducts().catch((err) => toast(err.message, true)));
   bind("saleAddLineBtn", "click", () => addSaleLine().catch((err) => toast(err.message, true)));
   bind("saleClearBtn", "click", clearSaleForm);

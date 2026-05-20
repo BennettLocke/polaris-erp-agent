@@ -139,6 +139,7 @@ EXTRA_CSS = """
   .sale-readonly { width: 100%; height: 42px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; background: #fff; color: var(--text); font-size: 14px; box-sizing: border-box; display: flex; align-items: center; }
   .sale-readonly { background: #f8fafc; font-weight: 760; }
   .sale-search-row { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 10px; }
+  .sale-customer-row { grid-template-columns: minmax(0, 1fr) 112px 112px; }
   .sale-search-row input,
   .sale-product-search-cell input { min-width: 0; height: 42px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; background: #fff; color: var(--text); font-size: 14px; }
   .sale-field > input:focus,
@@ -192,6 +193,10 @@ EXTRA_CSS = """
   .sale-variant-card strong { color: var(--text); font-size: 15px; }
   .sale-variant-meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; }
   .sale-variant-meta span { padding: 3px 7px; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
+  .customer-create-form { display: grid; gap: 12px; margin-top: 12px; }
+  .customer-create-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+  .customer-create-form input { width: 100%; height: 40px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 0 11px; background: #fff; color: var(--text); font-size: 14px; box-sizing: border-box; }
+  .customer-create-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(31,138,112,.12); }
   @media (max-width: 1180px) {
     .sale-basic-grid { grid-template-columns: 1fr 1fr; }
     .sale-submit-bar { grid-template-columns: 1fr 1fr; position: static; }

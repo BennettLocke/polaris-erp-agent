@@ -3231,6 +3231,120 @@ def customer_list():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+@app.route("/api/customer/create", methods=["POST"])
+def customer_create_api():
+    """Create an ERP customer for the WebUI sales form."""
+    from src.core.customer_name import normalize_customer_name
+    from src.core.tools.caller import get_tool_caller
+
+    body = request.get_json(silent=True)
+    if body is None:
+        body = request.form.to_dict(flat=True)
+    body = body or {}
+    name = normalize_customer_name(
+        body.get("name")
+        or body.get("customer_name")
+        or body.get("customer")
+        or ""
+    )
+    contacts_name = str(body.get("contacts_name") or body.get("contact") or "").strip()
+    contacts_tel = str(body.get("contacts_tel") or body.get("phone") or body.get("mobile") or "").strip()
+
+    if not name:
+        return jsonify({"code": 400, "msg": "客户名称不能为空"}), 400
+
+    def display_name(row: dict) -> str:
+        return str(
+            row.get("name")
+            or row.get("customer_name")
+            or row.get("company_name")
+            or row.get("title")
+            or row.get("contacts_name")
+            or ""
+        ).strip()
+
+    def normalize_row(row: dict, *, existed: bool = False) -> dict:
+        cid = row.get("id") or row.get("customer_id") or row.get("company_id") or ""
+        row_name = display_name(row) or name
+        return {
+            "id": cid,
+            "customer_id": cid,
+            "name": row_name,
+            "customer_name": row_name,
+            "company_name": row.get("company_name") or "",
+            "contacts_name": row.get("contacts_name") or contacts_name,
+            "mobile": row.get("mobile") or row.get("contacts_mobile") or row.get("contacts_tel") or contacts_tel,
+            "address": row.get("address") or "",
+            "existed": existed,
+        }
+
+    def exact_customer(rows: list[dict]) -> dict | None:
+        target = normalize_customer_name(name)
+        for row in rows or []:
+            if normalize_customer_name(display_name(row)) == target:
+                return row
+        return None
+
+    try:
+        existing = exact_customer(_db_customer_list(name, limit=20))
+        if existing:
+            return jsonify({
+                "code": 0,
+                "msg": "客户已存在，已选中",
+                "data": normalize_row(existing, existed=True),
+            })
+    except Exception as e:
+        logger.warning(f"创建客户前数据库查重失败，继续走 API: {e}")
+
+    caller = get_tool_caller()
+    try:
+        result = caller.call(
+            "customer_create",
+            name=name,
+            contacts_name=contacts_name,
+            contacts_tel=contacts_tel,
+        )
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        if isinstance(result, dict) and result.get("code") not in (None, 0):
+            return jsonify({"code": 500, "msg": result.get("msg", "创建客户失败"), "data": result}), 500
+
+        created = None
+        try:
+            created = exact_customer(_db_customer_list(name, limit=20))
+        except Exception as e:
+            logger.warning(f"创建客户后数据库回查失败，回退 API: {e}")
+        if not created:
+            rows = caller.call("customer_query", keyword=name) or []
+            created = exact_customer(rows) or (rows[0] if len(rows) == 1 else None)
+
+        if created:
+            return jsonify({"code": 0, "msg": "客户创建成功", "data": normalize_row(created)})
+
+        data = result.get("data") if isinstance(result, dict) else {}
+        fallback_id = ""
+        if isinstance(data, dict):
+            fallback_id = data.get("id") or data.get("customer_id") or data.get("company_id") or ""
+        elif isinstance(data, (str, int)):
+            fallback_id = data
+        return jsonify({
+            "code": 0,
+            "msg": "客户创建成功",
+            "data": {
+                "id": fallback_id,
+                "customer_id": fallback_id,
+                "name": name,
+                "customer_name": name,
+                "contacts_name": contacts_name,
+                "mobile": contacts_tel,
+                "existed": False,
+            },
+        })
+    except Exception as e:
+        logger.error(f"客户创建异常: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/warehouse/list", methods=["GET"])
 def warehouse_list():
     """
