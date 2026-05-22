@@ -74,6 +74,7 @@ const state = {
   miniappDesignSettings: null,
   miniappDesignDraft: null,
   miniappSelectedIndex: 0,
+  miniappInspectorTab: "content",
   saleCustomer: null,
   saleProduct: null,
   saleProductGroups: [],
@@ -375,9 +376,6 @@ function setView(name) {
   });
   if (name === "sale-create") {
     setDefaultSaleCreateTime();
-    if (state.saleCustomer) {
-      refreshSaleCustomerMonthlyRule(state.saleCustomer.id, state.saleCustomer.name).catch((err) => console.warn("月结客户校验失败", err));
-    }
     syncSalePaymentUi();
     renderSaleLines();
   }
@@ -1167,12 +1165,36 @@ function collectImageSettings() {
   };
 }
 
+const MINIAPP_DESIGN_ASSET_BASE = "/api/miniapp-design/assets/images";
+const MINIAPP_MODULE_GROUPS = [
+  { key: "base", label: "基础组件" },
+  { key: "goods", label: "商品组件" },
+  { key: "marketing", label: "营销组件" },
+  { key: "tool", label: "工具组件" }
+];
 const MINIAPP_MODULE_TYPES = [
-  { type: "banner", label: "轮播", desc: "顶部轮播图" },
-  { type: "nav", label: "导航", desc: "快捷入口" },
-  { type: "image", label: "图片", desc: "单图广告" },
-  { type: "hot_zone", label: "热区", desc: "图片热区" },
-  { type: "product_shelf", label: "商品区", desc: "商品列表" }
+  { type: "search", key: "search", label: "搜索", desc: "商品关键词搜索", group: "base" },
+  { type: "banner", key: "carousel", label: "轮播图", desc: "首页广告轮播", group: "base" },
+  { type: "nav", key: "nav-group", label: "导航组", desc: "快捷入口", group: "base" },
+  { type: "image", key: "img-magic", label: "图片魔方", desc: "单图/多图展示", group: "base" },
+  { type: "hot_zone", key: "hot-zone", label: "热区", desc: "图片热区跳转", group: "base" },
+  { type: "title", key: "title", label: "标题", desc: "标题栏", group: "base" },
+  { type: "notice", key: "notice", label: "公告", desc: "滚动通知", group: "base" },
+  { type: "rich_text", key: "rich-text", label: "富文本", desc: "图文内容", group: "base" },
+  { type: "video", key: "video", label: "视频", desc: "视频展示", group: "base" },
+  { type: "row_line", key: "row-line", label: "辅助线", desc: "分割线", group: "base" },
+  { type: "blank", key: "auxiliary-blank", label: "辅助空白", desc: "留白间距", group: "base" },
+  { type: "product_shelf", key: "goods-list", label: "商品列表", desc: "产品列表", group: "goods" },
+  { type: "goods_magic", key: "goods-magic", label: "商品魔方", desc: "商品组合展示", group: "goods" },
+  { type: "goods_tabs", key: "goods-tabs", label: "商品选项卡", desc: "分组商品", group: "goods" },
+  { type: "coupon", key: "coupon", label: "优惠券", desc: "优惠券模块", group: "marketing" },
+  { type: "seckill", key: "seckill", label: "秒杀", desc: "限时活动", group: "marketing" },
+  { type: "activity", key: "activity", label: "活动", desc: "活动入口", group: "marketing" },
+  { type: "tabs", key: "tabs", label: "选项卡", desc: "页面分组", group: "tool" },
+  { type: "tabs_carousel", key: "tabs-carousel", label: "选项卡轮播", desc: "组合轮播", group: "tool" },
+  { type: "data_magic", key: "data-magic", label: "数据魔方", desc: "自定义数据", group: "tool" },
+  { type: "data_tabs", key: "data-tabs", label: "数据选项卡", desc: "数据分组", group: "tool" },
+  { type: "float_window", key: "float-window", label: "浮动窗口", desc: "悬浮入口", group: "tool" }
 ];
 
 async function loadMiniappDesignSettings(force = false) {
@@ -1182,6 +1204,64 @@ async function loadMiniappDesignSettings(force = false) {
 function miniappModuleTypeLabel(type) {
   const row = MINIAPP_MODULE_TYPES.find((item) => item.type === type);
   return row ? row.label : "模块";
+}
+
+function miniappModuleMeta(type) {
+  return MINIAPP_MODULE_TYPES.find((item) => item.type === type) || MINIAPP_MODULE_TYPES[0];
+}
+
+function miniappModuleIcon(type) {
+  const meta = miniappModuleMeta(type);
+  return `${MINIAPP_DESIGN_ASSET_BASE}/layout/siderbar/${meta.key}.png`;
+}
+
+function miniappInspectorTab() {
+  return state.miniappInspectorTab === "style" ? "style" : "content";
+}
+
+function miniappInspectorTabsHtml() {
+  const tab = miniappInspectorTab();
+  return `<div class="radio-group">
+    <button class="${tab === "content" ? "active" : ""}" type="button" data-miniapp-inspector-tab="content">内容</button>
+    <button class="${tab === "style" ? "active" : ""}" type="button" data-miniapp-inspector-tab="style">样式</button>
+  </div>`;
+}
+
+function miniappStyleObject(target = {}) {
+  if (!target.style || typeof target.style !== "object" || Array.isArray(target.style)) target.style = {};
+  return target.style;
+}
+
+function miniappStyleValue(target = {}, field = "", fallback = "") {
+  const style = target.style && typeof target.style === "object" && !Array.isArray(target.style) ? target.style : {};
+  return style[field] ?? fallback;
+}
+
+function miniappModuleStyleAttr(module = {}) {
+  const style = module.style && typeof module.style === "object" && !Array.isArray(module.style) ? module.style : {};
+  const rules = [];
+  if (style.background) rules.push(`--miniapp-module-bg:${String(style.background).slice(0, 40)}`);
+  if (style.radius !== undefined && style.radius !== "") rules.push(`--miniapp-module-radius:${Math.min(Math.max(Number(style.radius || 0), 0), 40)}px`);
+  if (style.margin_top !== undefined && style.margin_top !== "") rules.push(`--miniapp-module-margin-top:${Math.min(Math.max(Number(style.margin_top || 0), 0), 80)}px`);
+  if (style.margin_bottom !== undefined && style.margin_bottom !== "") rules.push(`--miniapp-module-margin-bottom:${Math.min(Math.max(Number(style.margin_bottom || 0), 0), 80)}px`);
+  return rules.length ? ` style="${escapeAttr(rules.join(";"))}"` : "";
+}
+
+function defaultMiniappTabbar() {
+  return {
+    style: {
+      color: "#606266",
+      selected_color: "#2a94ff",
+      background_color: "#ffffff",
+      border_style: "black"
+    },
+    items: [
+      { text: "首页", page_path: "/pages/index/index", icon: "static/images/common/tabbar/home.png", selected_icon: "static/images/black/tabbar/home.png", enabled: 1 },
+      { text: "分类", page_path: "/pages/goods-category/goods-category", icon: "static/images/common/tabbar/category.png", selected_icon: "static/images/black/tabbar/category.png", enabled: 1 },
+      { text: "订单", page_path: "/pages/order/order", icon: "static/images/common/tabbar/cart.png", selected_icon: "static/images/black/tabbar/cart.png", enabled: 1 },
+      { text: "我的", page_path: "/pages/user/user", icon: "static/images/common/tabbar/user.png", selected_icon: "static/images/black/tabbar/user.png", enabled: 1 }
+    ]
+  };
 }
 
 function miniappModuleTypeOptions(current = "nav") {
@@ -1194,12 +1274,22 @@ function miniappDraft() {
   if (!state.miniappDesignDraft) {
     state.miniappDesignDraft = {
       version: 1,
-      home: { title: "肆计包装", subtitle: "茶包装产品展示", modules: [] }
+      home: { title: "肆计包装", subtitle: "茶包装产品展示", modules: [] },
+      tabbar: defaultMiniappTabbar()
     };
   }
   const home = state.miniappDesignDraft.home || {};
   if (!Array.isArray(home.modules)) home.modules = [];
   state.miniappDesignDraft.home = home;
+  if (!state.miniappDesignDraft.tabbar || typeof state.miniappDesignDraft.tabbar !== "object" || Array.isArray(state.miniappDesignDraft.tabbar)) {
+    state.miniappDesignDraft.tabbar = defaultMiniappTabbar();
+  }
+  if (!Array.isArray(state.miniappDesignDraft.tabbar.items)) {
+    state.miniappDesignDraft.tabbar.items = defaultMiniappTabbar().items;
+  }
+  if (!state.miniappDesignDraft.tabbar.style || typeof state.miniappDesignDraft.tabbar.style !== "object") {
+    state.miniappDesignDraft.tabbar.style = defaultMiniappTabbar().style;
+  }
   return state.miniappDesignDraft;
 }
 
@@ -1209,6 +1299,15 @@ function miniappHome() {
 
 function miniappModules() {
   return miniappHome().modules || [];
+}
+
+function miniappTabbar() {
+  return miniappDraft().tabbar;
+}
+
+function miniappTabbarItems() {
+  const tabbar = miniappTabbar();
+  return Array.isArray(tabbar.items) ? tabbar.items : [];
 }
 
 function defaultMiniappModule(type = "nav") {
@@ -1221,6 +1320,30 @@ function defaultMiniappModule(type = "nav") {
   }
   if (type === "image" || type === "hot_zone") {
     return { id, type, enabled: 1, title: miniappModuleTypeLabel(type), items: [{ title: "肆计包装", url: "/pages/goods-category/goods-category", image: "" }] };
+  }
+  if (type === "search") {
+    return { id, type, enabled: 1, title: "搜索", placeholder: "请输入搜索内容", items: [] };
+  }
+  if (type === "notice") {
+    return { id, type, enabled: 1, title: "公告", content: "欢迎来到肆计包装", items: [{ title: "新品已更新", url: "/pages/goods-category/goods-category", image: "" }] };
+  }
+  if (type === "title") {
+    return { id, type, enabled: 1, title: "推荐专区", subtitle: "精选产品", items: [] };
+  }
+  if (type === "row_line") {
+    return { id, type, enabled: 1, title: "辅助线", height: 16, items: [] };
+  }
+  if (type === "blank") {
+    return { id, type, enabled: 1, title: "辅助空白", height: 24, items: [] };
+  }
+  if (type === "rich_text") {
+    return { id, type, enabled: 1, title: "富文本", content: "肆计包装产品展示", items: [] };
+  }
+  if (type === "video") {
+    return { id, type, enabled: 1, title: "视频", items: [{ title: "视频封面", url: "", image: "" }] };
+  }
+  if (["goods_magic", "goods_tabs", "coupon", "seckill", "activity", "tabs", "tabs_carousel", "data_magic", "data_tabs", "float_window"].includes(type)) {
+    return { id, type, enabled: 1, title: miniappModuleTypeLabel(type), items: [] };
   }
   return {
     id,
@@ -1242,21 +1365,26 @@ function miniappItemIcon(item = {}, fallback = "") {
 
 function miniappPreviewModule(module = {}, index = 0) {
   const type = module.type || "nav";
-  const active = Number(state.miniappSelectedIndex || 0) === index ? "active" : "";
+  const active = Number(state.miniappSelectedIndex || 0) === index ? "main-border" : "";
   const disabled = Number(module.enabled ?? 1) ? "" : "disabled";
   const title = module.title || miniappModuleTypeLabel(type);
   if (type === "banner") {
     const items = Array.isArray(module.items) && module.items.length ? module.items : [{ title: "轮播图" }];
-    return `<button type="button" class="miniapp-preview-module ${active} ${disabled} banner" data-miniapp-select-module="${index}">
-      <div class="miniapp-preview-banner">
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled} banner" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-banner" style="${items[0].image ? `background-image: linear-gradient(180deg, rgba(0,0,0,.08), rgba(0,0,0,.36)), url('${escapeAttr(items[0].image)}')` : ""}">
         <strong>${escapeHtml(items[0].title || title || "首页轮播")}</strong>
         <span>${escapeHtml(items.length)} 张轮播</span>
       </div>
     </button>`;
   }
+  if (type === "search") {
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-search"><span>⌕</span><em>${escapeHtml(module.placeholder || "请输入搜索内容")}</em></div>
+    </button>`;
+  }
   if (type === "nav") {
     const items = Array.isArray(module.items) ? module.items : [];
-    return `<button type="button" class="miniapp-preview-module ${active} ${disabled}" data-miniapp-select-module="${index}">
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
       <div class="miniapp-preview-nav">
         ${items.slice(0, 8).map((item) => `<span><i>${miniappItemIcon(item)}</i>${escapeHtml(item.title || "导航")}</span>`).join("") || "<em>暂无导航</em>"}
       </div>
@@ -1264,7 +1392,7 @@ function miniappPreviewModule(module = {}, index = 0) {
   }
   if (type === "product_shelf") {
     const products = Array.isArray(module.products) ? module.products : [];
-    return `<button type="button" class="miniapp-preview-module ${active} ${disabled}" data-miniapp-select-module="${index}">
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
       <div class="miniapp-preview-title">${escapeHtml(title || "商品区")}</div>
       <div class="miniapp-preview-products">
         ${(products.length ? products.slice(0, 4) : [{ title: "商品卡片" }, { title: "商品卡片" }, { title: "商品卡片" }, { title: "商品卡片" }]).map((item) => `
@@ -1273,8 +1401,39 @@ function miniappPreviewModule(module = {}, index = 0) {
       </div>
     </button>`;
   }
+  if (type === "title") {
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-heading"><strong>${escapeHtml(title || "标题")}</strong><span>${escapeHtml(module.subtitle || "副标题")}</span></div>
+    </button>`;
+  }
+  if (type === "notice") {
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-notice"><strong>公告</strong><span>${escapeHtml(module.content || title || "新品已更新")}</span></div>
+    </button>`;
+  }
+  if (type === "row_line") {
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-line"></div>
+    </button>`;
+  }
+  if (type === "blank") {
+    const height = Math.min(Math.max(Number(module.height || 24), 12), 96);
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-blank" style="height:${height}px"></div>
+    </button>`;
+  }
+  if (type === "video") {
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-video"><span>▶</span><strong>${escapeHtml(title || "视频")}</strong></div>
+    </button>`;
+  }
+  if (type === "rich_text") {
+    return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
+      <div class="miniapp-preview-rich"><strong>${escapeHtml(title || "富文本")}</strong><p>${escapeHtml(module.content || "图文内容")}</p></div>
+    </button>`;
+  }
   const item = Array.isArray(module.items) && module.items.length ? module.items[0] : {};
-  return `<button type="button" class="miniapp-preview-module ${active} ${disabled}" data-miniapp-select-module="${index}">
+  return `<button type="button" class="miniapp-preview-module plug-in-table ${active} ${disabled}" data-miniapp-select-module="${index}"${miniappModuleStyleAttr(module)}>
     <div class="miniapp-preview-image ${type === "hot_zone" ? "hot" : ""}">
       <strong>${escapeHtml(item.title || title || miniappModuleTypeLabel(type))}</strong>
       <span>${escapeHtml(miniappModuleTypeLabel(type))}</span>
@@ -1283,12 +1442,14 @@ function miniappPreviewModule(module = {}, index = 0) {
 }
 
 function miniappOutlineRow(module = {}, index = 0, total = 0) {
-  const active = Number(state.miniappSelectedIndex || 0) === index ? "active" : "";
+  const active = Number(state.miniappSelectedIndex || 0) === index ? "drawer-drag-bg" : "";
   const off = Number(module.enabled ?? 1) ? "" : "off";
-  return `<div class="miniapp-outline-row ${active} ${off}" data-miniapp-select-module="${index}">
+  return `<div class="miniapp-outline-row drawer-drag ${active} ${off}" data-miniapp-select-module="${index}">
     <button type="button" class="miniapp-outline-main" data-miniapp-select-module="${index}">
+      <span class="iconfont icon-drag">☰</span>
+      <img src="${miniappModuleIcon(module.type)}" alt="">
       <strong>${escapeHtml(module.title || miniappModuleTypeLabel(module.type))}</strong>
-      <span>${escapeHtml(miniappModuleTypeLabel(module.type))}${off ? " / 已隐藏" : ""}</span>
+      <small>${escapeHtml(miniappModuleTypeLabel(module.type))}${off ? " / 已隐藏" : ""}</small>
     </button>
     <button type="button" data-miniapp-module-move="-1" data-miniapp-index="${index}" ${index <= 0 ? "disabled" : ""}>↑</button>
     <button type="button" data-miniapp-module-move="1" data-miniapp-index="${index}" ${index >= total - 1 ? "disabled" : ""}>↓</button>
@@ -1300,14 +1461,14 @@ function miniappItemsEditor(module = {}) {
   const type = module.type || "nav";
   const items = Array.isArray(module.items) ? module.items : [];
   const label = type === "banner" ? "轮播项" : type === "nav" ? "导航项" : "图片入口";
-  return `<div class="setting-block full">
-    <div class="setting-block-title"><span>${escapeHtml(label)}</span><button type="button" data-miniapp-add-item>新增一项</button></div>
+  return `<div class="shopxo-form-card full">
+    <div class="shopxo-card-title"><span>${escapeHtml(label)}</span><button type="button" class="shopxo-el-button shopxo-el-button--small" data-miniapp-add-item>+添加</button></div>
     <div class="miniapp-item-editor">
       ${items.map((item, index) => `
         <div class="miniapp-item-row" data-miniapp-item-index="${index}">
-          <input data-miniapp-item-field="title" value="${escapeAttr(item.title || "")}" placeholder="标题">
-          <input data-miniapp-item-field="url" value="${escapeAttr(item.url || "")}" placeholder="跳转路径">
-          <input data-miniapp-item-field="image" value="${escapeAttr(item.image || "")}" placeholder="图片地址">
+          <input class="shopxo-input" data-miniapp-item-field="title" value="${escapeAttr(item.title || "")}" placeholder="标题">
+          <input class="shopxo-input" data-miniapp-item-field="url" value="${escapeAttr(item.url || "")}" placeholder="跳转路径">
+          <input class="shopxo-input" data-miniapp-item-field="image" value="${escapeAttr(item.image || "")}" placeholder="图片地址">
           <button type="button" class="setting-delete" data-miniapp-remove-item="${index}" title="删除">×</button>
         </div>
       `).join("") || '<div class="empty">还没有内容项</div>'}
@@ -1315,38 +1476,139 @@ function miniappItemsEditor(module = {}) {
   </div>`;
 }
 
+function miniappTabbarEditor() {
+  const tabbar = miniappTabbar();
+  const style = tabbar.style || {};
+  const items = miniappTabbarItems();
+  return `
+    <div class="shopxo-form-card">
+      <div class="shopxo-card-title">底部导航</div>
+      <label class="shopxo-form-item"><span>默认颜色</span><input class="shopxo-input" data-miniapp-tabbar-style-field="color" value="${escapeAttr(style.color || "#606266")}"></label>
+      <label class="shopxo-form-item"><span>选中颜色</span><input class="shopxo-input" data-miniapp-tabbar-style-field="selected_color" value="${escapeAttr(style.selected_color || "#2a94ff")}"></label>
+      <label class="shopxo-form-item"><span>背景颜色</span><input class="shopxo-input" data-miniapp-tabbar-style-field="background_color" value="${escapeAttr(style.background_color || "#ffffff")}"></label>
+      <label class="shopxo-form-item"><span>边框样式</span>
+        <select class="shopxo-input" data-miniapp-tabbar-style-field="border_style">
+          <option value="black" ${style.border_style !== "white" ? "selected" : ""}>黑色</option>
+          <option value="white" ${style.border_style === "white" ? "selected" : ""}>白色</option>
+        </select>
+      </label>
+    </div>
+    <div class="shopxo-form-card">
+      <div class="shopxo-card-title"><span>导航项</span><button type="button" class="shopxo-el-button shopxo-el-button--small" data-miniapp-reset-tabbar>重置</button></div>
+      <div class="miniapp-tabbar-editor">
+        ${items.map((item, index) => `
+          <div class="miniapp-tabbar-row" data-miniapp-tabbar-index="${index}">
+            <label><span>名称</span><input class="shopxo-input" data-miniapp-tabbar-field="text" value="${escapeAttr(item.text || "")}"></label>
+            <label><span>页面</span>
+              <select class="shopxo-input" data-miniapp-tabbar-field="page_path">
+                <option value="/pages/index/index" ${item.page_path === "/pages/index/index" ? "selected" : ""}>首页</option>
+                <option value="/pages/goods-category/goods-category" ${item.page_path === "/pages/goods-category/goods-category" ? "selected" : ""}>分类</option>
+                <option value="/pages/order/order" ${item.page_path === "/pages/order/order" ? "selected" : ""}>订单</option>
+                <option value="/pages/user/user" ${item.page_path === "/pages/user/user" ? "selected" : ""}>我的</option>
+              </select>
+            </label>
+            <label><span>默认图标</span><input class="shopxo-input" data-miniapp-tabbar-field="icon" value="${escapeAttr(item.icon || "")}"></label>
+            <label><span>选中图标</span><input class="shopxo-input" data-miniapp-tabbar-field="selected_icon" value="${escapeAttr(item.selected_icon || "")}"></label>
+          </div>
+        `).join("")}
+      </div>
+    </div>`;
+}
+
 function miniappInspectorHtml() {
   const modules = miniappModules();
   const selected = modules[Number(state.miniappSelectedIndex || 0)];
+  if (Number(state.miniappSelectedIndex) < 0) {
+    const home = miniappHome();
+    const tab = miniappInspectorTab();
+    return `
+      <div class="settings-title">
+        <div class="title">页面设置</div>
+        ${miniappInspectorTabsHtml()}
+      </div>
+      <div class="setting-content">
+        ${tab === "style" ? `
+          <div class="shopxo-form-card">
+            <div class="shopxo-card-title">页面样式</div>
+            <label class="shopxo-form-item"><span>背景颜色</span><input class="shopxo-input" data-miniapp-home-style-field="background" value="${escapeAttr(miniappStyleValue(home, "background", "#f5f5f5"))}"></label>
+            <label class="shopxo-form-item"><span>主题颜色</span><input class="shopxo-input" data-miniapp-home-style-field="primary" value="${escapeAttr(miniappStyleValue(home, "primary", "#2a94ff"))}"></label>
+          </div>
+        ` : `
+          <div class="shopxo-form-card">
+            <div class="shopxo-card-title">页面内容</div>
+            <label class="shopxo-form-item"><span>页面标题</span><input class="shopxo-input" data-miniapp-home-field="title" value="${escapeAttr(home.title || "肆计包装")}"></label>
+            <label class="shopxo-form-item"><span>副标题</span><input class="shopxo-input" data-miniapp-home-field="subtitle" value="${escapeAttr(home.subtitle || "茶包装产品展示")}"></label>
+          </div>
+          ${miniappTabbarEditor()}
+        `}
+      </div>`;
+  }
   if (!selected) {
-    return `<div class="miniapp-inspector-empty">从左侧新增模块，或在中间预览里选择一个模块。</div>`;
+    return `<div class="settings-title"><div class="title">组件设置</div></div><div class="setting-content"><div class="miniapp-inspector-empty">从左侧新增模块，或在中间预览里选择一个模块。</div></div>`;
   }
   const type = selected.type || "nav";
+  const genericFields = ["search", "notice", "title", "blank", "row_line", "rich_text", "video", "goods_magic", "goods_tabs", "coupon", "seckill", "activity", "tabs", "tabs_carousel", "data_magic", "data_tabs", "float_window"].includes(type);
+  const tab = miniappInspectorTab();
   return `
-    <div class="miniapp-inspector-head">
-      <strong>${escapeHtml(selected.title || miniappModuleTypeLabel(type))}</strong>
-      <span>${escapeHtml(miniappModuleTypeLabel(type))}设置</span>
+    <div class="settings-title">
+      <div class="title">${escapeHtml(selected.title || miniappModuleTypeLabel(type))}</div>
+      ${miniappInspectorTabsHtml()}
     </div>
-    <div class="settings-grid miniapp-inspector-grid">
-      <label class="setting-field">模块类型
-        <select data-miniapp-module-field="type">${miniappModuleTypeOptions(type)}</select>
-      </label>
-      <label class="print-toggle"><input type="checkbox" data-miniapp-module-field="enabled" ${checkedAttr(selected.enabled ?? 1)}> 显示模块</label>
-      <label class="setting-field full">模块标题
-        <input data-miniapp-module-field="title" value="${escapeAttr(selected.title || "")}" placeholder="例如：推荐产品">
-      </label>
+    <div class="setting-content">
+      ${tab === "style" ? `
+        <div class="shopxo-form-card">
+          <div class="shopxo-card-title">模块样式</div>
+          <label class="shopxo-form-item"><span>背景颜色</span><input class="shopxo-input" data-miniapp-module-style-field="background" value="${escapeAttr(miniappStyleValue(selected, "background", ""))}" placeholder="#ffffff"></label>
+          <label class="shopxo-form-item"><span>上间距</span><input class="shopxo-input" type="number" min="0" max="80" data-miniapp-module-style-field="margin_top" value="${escapeAttr(miniappStyleValue(selected, "margin_top", 0))}"></label>
+          <label class="shopxo-form-item"><span>下间距</span><input class="shopxo-input" type="number" min="0" max="80" data-miniapp-module-style-field="margin_bottom" value="${escapeAttr(miniappStyleValue(selected, "margin_bottom", 0))}"></label>
+          <label class="shopxo-form-item"><span>圆角</span><input class="shopxo-input" type="number" min="0" max="40" data-miniapp-module-style-field="radius" value="${escapeAttr(miniappStyleValue(selected, "radius", 0))}"></label>
+        </div>
+      ` : `
+      <div class="shopxo-form-card">
+        <div class="shopxo-card-title">基础设置</div>
+        <label class="shopxo-form-item"><span>模块类型</span><select class="shopxo-input" data-miniapp-module-field="type">${miniappModuleTypeOptions(type)}</select></label>
+        <label class="shopxo-form-item"><span>模块标题</span><input class="shopxo-input" data-miniapp-module-field="title" value="${escapeAttr(selected.title || "")}" placeholder="例如：推荐产品"></label>
+        <label class="shopxo-switch-row"><span>显示模块</span><input type="checkbox" data-miniapp-module-field="enabled" ${checkedAttr(selected.enabled ?? 1)}><i></i></label>
+      </div>
       ${type === "product_shelf" ? `
-        <label class="setting-field">搜索关键词
-          <input data-miniapp-module-field="keywords" value="${escapeAttr(selected.keywords || "")}" placeholder="例如：半斤礼盒">
-        </label>
-        <label class="setting-field">分类 ID
-          <input data-miniapp-module-field="category_id" value="${escapeAttr(selected.category_id || "")}" placeholder="留空为全部">
-        </label>
-        <label class="setting-field">展示数量
-          <input type="number" min="1" max="30" data-miniapp-module-field="limit" value="${escapeAttr(selected.limit || 8)}">
-        </label>
-      ` : miniappItemsEditor(selected)}
+        <div class="shopxo-form-card">
+          <div class="shopxo-card-title">商品设置</div>
+          <label class="shopxo-form-item"><span>搜索关键词</span><input class="shopxo-input" data-miniapp-module-field="keywords" value="${escapeAttr(selected.keywords || "")}" placeholder="例如：半斤礼盒"></label>
+          <label class="shopxo-form-item"><span>分类 ID</span><input class="shopxo-input" data-miniapp-module-field="category_id" value="${escapeAttr(selected.category_id || "")}" placeholder="留空为全部"></label>
+          <label class="shopxo-form-item"><span>展示数量</span><input class="shopxo-input" type="number" min="1" max="30" data-miniapp-module-field="limit" value="${escapeAttr(selected.limit || 8)}"></label>
+        </div>
+      ` : ""}
+      ${genericFields ? `
+        <div class="shopxo-form-card">
+          <div class="shopxo-card-title">内容设置</div>
+          ${type === "search" ? `<label class="shopxo-form-item"><span>提示文字</span><input class="shopxo-input" data-miniapp-module-field="placeholder" value="${escapeAttr(selected.placeholder || "请输入搜索内容")}"></label>` : ""}
+          ${["notice", "rich_text"].includes(type) ? `<label class="shopxo-form-item"><span>内容</span><textarea class="shopxo-input" data-miniapp-module-field="content">${escapeHtml(selected.content || "")}</textarea></label>` : ""}
+          ${type === "title" ? `<label class="shopxo-form-item"><span>副标题</span><input class="shopxo-input" data-miniapp-module-field="subtitle" value="${escapeAttr(selected.subtitle || "")}"></label>` : ""}
+          ${["blank", "row_line"].includes(type) ? `<label class="shopxo-form-item"><span>高度</span><input class="shopxo-input" type="number" min="1" max="120" data-miniapp-module-field="height" value="${escapeAttr(selected.height || 24)}"></label>` : ""}
+        </div>
+      ` : ""}
+      ${["banner", "nav", "image", "hot_zone", "video"].includes(type) ? miniappItemsEditor(selected) : ""}
+      `}
     </div>`;
+}
+
+function miniappComponentGroupHtml(group) {
+  const items = MINIAPP_MODULE_TYPES.filter((item) => item.group === group.key);
+  if (!items.length) return "";
+  return `<div class="shopxo-collapse-item">
+    <div class="shopxo-collapse-title">${escapeHtml(group.label)}</div>
+    <div class="component flex-row flex-wrap">
+      ${items.map((item) => `
+        <button type="button" class="item is-drag" data-miniapp-add-module="${escapeAttr(item.type)}">
+          <div class="main-border siderbar-hidden main-show tc">释放鼠标将组件添加到此处</div>
+          <div class="siderbar-show">
+            <img class="img radius-xs" src="${MINIAPP_DESIGN_ASSET_BASE}/layout/siderbar/${escapeAttr(item.key)}.png" alt="">
+            <div>${escapeHtml(item.label)}</div>
+          </div>
+        </button>
+      `).join("")}
+    </div>
+  </div>`;
 }
 
 function renderMiniappDesignSettings(data = {}) {
@@ -1355,12 +1617,18 @@ function renderMiniappDesignSettings(data = {}) {
   state.miniappDesignSettings = data;
   const value = data.value || {};
   const home = value.home || {};
+  const tabbar = value.tabbar && typeof value.tabbar === "object" && !Array.isArray(value.tabbar) ? value.tabbar : defaultMiniappTabbar();
   state.miniappDesignDraft = {
     version: Number(value.version || 1),
     home: {
       title: home.title || "肆计包装",
       subtitle: home.subtitle || "茶包装产品展示",
+      style: home.style && typeof home.style === "object" && !Array.isArray(home.style) ? JSON.parse(JSON.stringify(home.style)) : {},
       modules: Array.isArray(home.modules) ? JSON.parse(JSON.stringify(home.modules)) : []
+    },
+    tabbar: {
+      style: tabbar.style && typeof tabbar.style === "object" && !Array.isArray(tabbar.style) ? JSON.parse(JSON.stringify(tabbar.style)) : defaultMiniappTabbar().style,
+      items: Array.isArray(tabbar.items) ? JSON.parse(JSON.stringify(tabbar.items)) : defaultMiniappTabbar().items
     }
   };
   if (state.miniappSelectedIndex === undefined || state.miniappSelectedIndex >= miniappModules().length) {
@@ -1374,57 +1642,75 @@ function renderMiniappDesigner() {
   if (!panel) return;
   const home = miniappHome();
   const modules = miniappModules();
+  const homeStyle = home.style && typeof home.style === "object" && !Array.isArray(home.style) ? home.style : {};
+  const pageBackground = homeStyle.background || "#f5f5f5";
+  const pagePrimary = homeStyle.primary || "#2a94ff";
+  const tabbarStyle = (miniappTabbar().style && typeof miniappTabbar().style === "object") ? miniappTabbar().style : {};
+  const tabbarItems = miniappTabbarItems();
   panel.innerHTML = `
-    <section class="settings-panel miniapp-design-panel">
-      <div class="settings-panel-head">
-        <div>
-          <h3>小程序首页设计</h3>
-          <p>左侧选组件，中间看手机预览，右侧改属性。保存后小程序首页接口直接读取这份设计。</p>
+    <section class="settings-panel miniapp-design-panel shopxo-diy" style="--miniapp-page-bg:${escapeAttr(pageBackground)};--miniapp-page-primary:${escapeAttr(pagePrimary)};--miniapp-tabbar-bg:${escapeAttr(tabbarStyle.background_color || "#ffffff")};--miniapp-tabbar-color:${escapeAttr(tabbarStyle.color || "#606266")};--miniapp-tabbar-selected:${escapeAttr(tabbarStyle.selected_color || pagePrimary)};">
+      <div class="shopxo-app-wrapper">
+        <div class="shopxo-app-content">
+          <aside class="siderbar">
+            <div class="shopxo-side-head">组件库</div>
+            ${MINIAPP_MODULE_GROUPS.map((group) => miniappComponentGroupHtml(group)).join("")}
+          </aside>
+          <div class="drawer-container" style="width:${modules.length ? "128px" : "0"}">
+            <div class="drawer-content">
+              <div class="drawer-title">已选组件(${Number(modules.length || 0)})</div>
+              <div class="drawer-drag-area">
+                <div class="miniapp-outline">
+                  ${modules.map((module, index) => miniappOutlineRow(module, index, modules.length)).join("") || '<div class="empty">还没有模块</div>'}
+                </div>
+              </div>
+            </div>
+          </div>
+          <main class="main">
+            ${modules.length ? `<div class="layout-toggle-bar layout-toggle-bar-close"><div class="layout-toggle-bar-top"></div><div class="layout-toggle-bar-bottom"></div></div>` : ""}
+            <div class="model">
+              <div class="model-content">
+                <div class="acticons">
+                  <button type="button" class="shopxo-el-button shopxo-el-button--large" data-miniapp-page-settings>页面设置</button>
+                  <button type="button" class="shopxo-el-button shopxo-el-button--large" data-miniapp-designer-action="export">导出</button>
+                  <button type="button" class="shopxo-el-button shopxo-el-button--large" data-miniapp-designer-action="import">导入</button>
+                  <button type="button" class="shopxo-el-button shopxo-el-button--large" data-miniapp-designer-action="clear">清空</button>
+                </div>
+                <div class="model-drag">
+                  <div class="page-bg h"></div>
+                  <button type="button" class="model-top ${Number(state.miniappSelectedIndex) < 0 ? "page-settings-border" : ""}" data-miniapp-page-settings>
+                    <div class="roll">
+                      <div class="status-bar"><img class="img" src="${MINIAPP_DESIGN_ASSET_BASE}/layout/main/main-top.png" alt=""></div>
+                      <div class="model-head">
+                        <div class="model-head-content">${escapeHtml(home.title || "肆计包装")}</div>
+                        <div class="model-head-subtitle">${escapeHtml(home.subtitle || "茶包装产品展示")}</div>
+                      </div>
+                    </div>
+                  </button>
+                  <div class="model-wall">
+                    <div class="model-wall-content">
+                      <div class="drag-area re">
+                        ${modules.map((module, index) => miniappPreviewModule(module, index)).join("") || '<div class="miniapp-preview-empty">从左侧添加首页组件</div>'}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="model-bottom"><div class="roll"></div></div>
+                  <button type="button" class="footer-nav" data-miniapp-page-settings>
+                    <div class="footer-nav-content">
+                      ${tabbarItems.map((item, index) => `<span class="${index === 0 ? "active" : ""}">${escapeHtml(item.text || "")}</span>`).join("") || '<span class="active">首页</span><span>分类</span><span>订单</span><span>我的</span>'}
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </main>
+          <aside class="settings">
+            ${miniappInspectorHtml()}
+          </aside>
         </div>
-        <span class="tag green-outline">${Number(modules.length || 0)} 个模块</span>
-      </div>
-      <div class="miniapp-designer">
-        <aside class="miniapp-palette">
-          <div class="miniapp-pane-title"><strong>组件库</strong><span>添加到首页</span></div>
-          <div class="miniapp-palette-grid">
-            ${MINIAPP_MODULE_TYPES.map((item) => `<button type="button" data-miniapp-add-module="${escapeAttr(item.type)}"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.desc)}</span></button>`).join("")}
-          </div>
-          <div class="miniapp-pane-title"><strong>页面结构</strong><span>点击选择</span></div>
-          <div class="miniapp-outline">
-            ${modules.map((module, index) => miniappOutlineRow(module, index, modules.length)).join("") || '<div class="empty">还没有模块</div>'}
-          </div>
-        </aside>
-        <main class="miniapp-canvas-wrap">
-          <div class="miniapp-phone">
-            <div class="miniapp-phone-bar"></div>
-            <div class="miniapp-phone-nav">
-              <strong>${escapeHtml(home.title || "肆计包装")}</strong>
-              <span>${escapeHtml(home.subtitle || "茶包装产品展示")}</span>
-            </div>
-            <div class="miniapp-phone-scroll">
-              ${modules.map((module, index) => miniappPreviewModule(module, index)).join("") || '<div class="miniapp-preview-empty">从左侧添加首页组件</div>'}
-            </div>
-            <div class="miniapp-phone-tabs"><span>首页</span><span>分类</span><span>订单</span><span>我的</span></div>
-          </div>
-        </main>
-        <aside class="miniapp-inspector">
-          <div class="miniapp-pane-title"><strong>页面设置</strong><span>首页基础信息</span></div>
-          <div class="settings-grid miniapp-page-grid">
-            <label class="setting-field full">首页标题
-              <input data-miniapp-home-field="title" value="${escapeAttr(home.title || "肆计包装")}">
-            </label>
-            <label class="setting-field full">副标题
-              <input data-miniapp-home-field="subtitle" value="${escapeAttr(home.subtitle || "茶包装产品展示")}">
-            </label>
-          </div>
-          <div class="miniapp-pane-title"><strong>组件属性</strong><span>当前选中模块</span></div>
-          ${miniappInspectorHtml()}
-        </aside>
-      </div>
-      <div class="print-template-note">跳转路径只保存首页、分类、订单、我的、商品搜索；旧购物车/支付路径会被后端清掉。</div>
-      <div class="print-settings-actions">
-        <button type="button" onclick="loadMiniappDesignSettings(true)">刷新</button>
-        <button class="primary" id="saveMiniappDesignSettings" type="button">保存首页设计</button>
+        <div class="shopxo-app-footer">
+          <button type="button" class="shopxo-el-button" onclick="loadMiniappDesignSettings(true)">刷新</button>
+          <button class="shopxo-el-button shopxo-el-button--primary footer-save" id="saveMiniappDesignSettings" type="button">保存</button>
+        </div>
       </div>
     </section>`;
 }
@@ -1444,6 +1730,40 @@ function selectMiniappHomeModule(index = 0) {
   const modules = miniappModules();
   state.miniappSelectedIndex = Math.min(Math.max(Number(index || 0), 0), Math.max(modules.length - 1, 0));
   renderMiniappDesigner();
+}
+
+function selectMiniappPageSettings() {
+  state.miniappSelectedIndex = -1;
+  renderMiniappDesigner();
+}
+
+function setMiniappInspectorTab(tab = "content") {
+  state.miniappInspectorTab = tab === "style" ? "style" : "content";
+  renderMiniappDesigner();
+}
+
+function handleMiniappDesignerAction(action = "") {
+  if (action === "clear") {
+    miniappHome().modules = [];
+    state.miniappSelectedIndex = -1;
+    renderMiniappDesigner();
+    return;
+  }
+  if (action === "export") {
+    const blob = new Blob([JSON.stringify(collectMiniappDesignSettings(), null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `miniapp-home-design-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  if (action === "import") {
+    toast("导入先按 ShopXO 入口占位，后面接 JSON 文件选择。");
+  }
 }
 
 function moveMiniappHomeModule(index, delta) {
@@ -1471,6 +1791,44 @@ function updateMiniappHomeField(field, value) {
   renderMiniappDesigner();
 }
 
+function applyMiniappHomeStyle() {
+  const home = miniappHome();
+  const shell = document.querySelector(".shopxo-diy");
+  if (!shell) return;
+  shell.style.setProperty("--miniapp-page-bg", miniappStyleValue(home, "background", "#f5f5f5"));
+  shell.style.setProperty("--miniapp-page-primary", miniappStyleValue(home, "primary", "#2a94ff"));
+}
+
+function updateMiniappHomeStyleField(field, value, rerender = true) {
+  if (!["background", "primary"].includes(field)) return;
+  miniappStyleObject(miniappHome())[field] = value;
+  if (rerender) renderMiniappDesigner();
+  else applyMiniappHomeStyle();
+}
+
+function updateMiniappTabbarStyleField(field, value) {
+  if (!["color", "selected_color", "background_color", "border_style"].includes(field)) return;
+  const tabbar = miniappTabbar();
+  if (!tabbar.style || typeof tabbar.style !== "object" || Array.isArray(tabbar.style)) {
+    tabbar.style = {};
+  }
+  tabbar.style[field] = value;
+  renderMiniappDesigner();
+}
+
+function updateMiniappTabbarItemField(index, field, value) {
+  if (!["text", "page_path", "icon", "selected_icon"].includes(field)) return;
+  const item = miniappTabbarItems()[Number(index || 0)];
+  if (!item) return;
+  item[field] = value;
+  renderMiniappDesigner();
+}
+
+function resetMiniappTabbar() {
+  miniappDraft().tabbar = defaultMiniappTabbar();
+  renderMiniappDesigner();
+}
+
 function updateMiniappModuleField(field, value, checked = false) {
   const module = miniappModules()[Number(state.miniappSelectedIndex || 0)];
   if (!module) return;
@@ -1479,10 +1837,38 @@ function updateMiniappModuleField(field, value, checked = false) {
   else if (field === "type") {
     const next = { ...defaultMiniappModule(value), id: module.id, title: module.title, enabled: module.enabled };
     Object.assign(module, next);
-  } else if (["title", "keywords", "category_id"].includes(field)) {
+  } else if (field === "height") {
+    module.height = Number(value || 0);
+  } else if (["title", "keywords", "category_id", "placeholder", "content", "subtitle"].includes(field)) {
     module[field] = value;
   }
   renderMiniappDesigner();
+}
+
+function applyMiniappSelectedModuleStyle() {
+  const index = Number(state.miniappSelectedIndex || 0);
+  const module = miniappModules()[index];
+  const button = document.querySelector(`.shopxo-diy .miniapp-preview-module[data-miniapp-select-module="${index}"]`);
+  if (!module || !button) return;
+  const style = module.style && typeof module.style === "object" && !Array.isArray(module.style) ? module.style : {};
+  button.style.removeProperty("--miniapp-module-bg");
+  button.style.removeProperty("--miniapp-module-radius");
+  button.style.removeProperty("--miniapp-module-margin-top");
+  button.style.removeProperty("--miniapp-module-margin-bottom");
+  if (style.background) button.style.setProperty("--miniapp-module-bg", String(style.background).slice(0, 40));
+  if (style.radius !== undefined && style.radius !== "") button.style.setProperty("--miniapp-module-radius", `${Math.min(Math.max(Number(style.radius || 0), 0), 40)}px`);
+  if (style.margin_top !== undefined && style.margin_top !== "") button.style.setProperty("--miniapp-module-margin-top", `${Math.min(Math.max(Number(style.margin_top || 0), 0), 80)}px`);
+  if (style.margin_bottom !== undefined && style.margin_bottom !== "") button.style.setProperty("--miniapp-module-margin-bottom", `${Math.min(Math.max(Number(style.margin_bottom || 0), 0), 80)}px`);
+}
+
+function updateMiniappModuleStyleField(field, value, rerender = true) {
+  const module = miniappModules()[Number(state.miniappSelectedIndex || 0)];
+  if (!module) return;
+  const style = miniappStyleObject(module);
+  if (["margin_top", "margin_bottom", "radius"].includes(field)) style[field] = Math.min(Math.max(Number(value || 0), 0), field === "radius" ? 40 : 80);
+  else if (field === "background") style[field] = value;
+  if (rerender) renderMiniappDesigner();
+  else applyMiniappSelectedModuleStyle();
 }
 
 function addMiniappItem() {
@@ -4291,31 +4677,6 @@ function saleCustomerMonthly(customer = {}) {
   return Number(customer.is_monthly_customer || customer.monthly_customer || 0) === 1;
 }
 
-function applySaleCustomerPaymentRule(isMonthly) {
-  if ($("salePaymentStatus")) $("salePaymentStatus").value = isMonthly ? "monthly" : "paid";
-  if ($("salePayType")) $("salePayType").value = "wechat";
-  syncSalePaymentUi();
-}
-
-async function refreshSaleCustomerMonthlyRule(customerId, customerName = "") {
-  if (!customerId || !customerName) return false;
-  const res = await api(`/api/customer/list?${query({ keyword: customerName })}`);
-  const list = normalizeList(res);
-  const matched = list.find((customer) => Number(saleCustomerId(customer)) === Number(customerId));
-  if (!matched || !saleCustomerMonthly(matched)) return false;
-  if (!state.saleCustomer || Number(state.saleCustomer.id || 0) !== Number(customerId)) return false;
-  state.saleCustomer = {
-    ...state.saleCustomer,
-    name: saleCustomerName(matched) || state.saleCustomer.name || customerName,
-    is_monthly_customer: 1
-  };
-  if ($("saleSelectedCustomer")) $("saleSelectedCustomer").textContent = `${state.saleCustomer.name} · 月结客户`;
-  if ($("salePaymentStatus") && $("salePaymentStatus").value === "paid") {
-    applySaleCustomerPaymentRule(true);
-  }
-  return true;
-}
-
 async function searchSaleCustomers() {
   if (!$("saleCustomer")) throw new Error("开单页面未加载");
   const keyword = $("saleCustomer").value.trim();
@@ -4341,10 +4702,11 @@ function selectSaleCustomer(id, name, isMonthly = false) {
   if (!$("saleCustomer")) return;
   $("saleCustomer").value = name;
   $("saleSelectedCustomer").textContent = isMonthly ? `${name} · 月结客户` : name;
-  applySaleCustomerPaymentRule(isMonthly);
+  if ($("salePaymentStatus")) $("salePaymentStatus").value = isMonthly ? "monthly" : "paid";
+  if ($("salePayType")) $("salePayType").value = "wechat";
+  syncSalePaymentUi();
   $("saleCustomerChoices").innerHTML = "";
   renderSaleLines();
-  if (!isMonthly) refreshSaleCustomerMonthlyRule(id, name).catch((err) => console.warn("月结客户校验失败", err));
 }
 
 function openSaleCustomerCreateDialog() {
@@ -4642,9 +5004,6 @@ function clearSaleForm() {
 }
 
 function salePaymentPayload() {
-  if (state.saleCustomer && Number(state.saleCustomer.is_monthly_customer || 0) === 1) {
-    return { pay_status: "monthly", pay_type: "monthly" };
-  }
   const status = ($("salePaymentStatus") && $("salePaymentStatus").value) || "paid";
   if (status === "monthly") return { pay_status: "monthly", pay_type: "monthly" };
   if (status === "unpaid") return { pay_status: "unpaid", pay_type: "" };
@@ -4662,7 +5021,6 @@ async function quickSale() {
   if (!$('saleCustomer')) throw new Error('开单页面未加载');
   if (!state.saleCustomer) await searchSaleCustomers();
   if (!state.saleCustomer) throw new Error('请先选择客户');
-  await refreshSaleCustomerMonthlyRule(state.saleCustomer.id, state.saleCustomer.name).catch((err) => console.warn("月结客户校验失败", err));
   if (!state.saleLines.length) await addSaleLine();
   const warehouseId = Number($('saleWarehouse').value || 2);
   const createTime = saleCreateTimeText();
@@ -6352,6 +6710,28 @@ function bindEvents() {
       toggleSettingSegment(stockValueButton);
       return;
     }
+    const miniappInspectorTabButton = event.target.closest("[data-miniapp-inspector-tab]");
+    if (miniappInspectorTabButton) {
+      event.preventDefault();
+      setMiniappInspectorTab(miniappInspectorTabButton.dataset.miniappInspectorTab || "content");
+      return;
+    }
+    if (event.target.closest("[data-miniapp-page-settings]")) {
+      event.preventDefault();
+      selectMiniappPageSettings();
+      return;
+    }
+    const miniappDesignerActionButton = event.target.closest("[data-miniapp-designer-action]");
+    if (miniappDesignerActionButton) {
+      event.preventDefault();
+      handleMiniappDesignerAction(miniappDesignerActionButton.dataset.miniappDesignerAction || "");
+      return;
+    }
+    if (event.target.closest("[data-miniapp-reset-tabbar]")) {
+      event.preventDefault();
+      resetMiniappTabbar();
+      return;
+    }
     const addMiniappModuleButton = event.target.closest("[data-miniapp-add-module]");
     if (addMiniappModuleButton) {
       event.preventDefault();
@@ -6456,6 +6836,17 @@ function bindEvents() {
       rejectWebUser(Number(rejectButton.dataset.rejectUserId)).catch((err) => toast(err.message, true));
     }
   });
+  document.addEventListener("input", (event) => {
+    const miniappHomeStyleField = event.target.closest("[data-miniapp-home-style-field]");
+    if (miniappHomeStyleField) {
+      updateMiniappHomeStyleField(miniappHomeStyleField.dataset.miniappHomeStyleField || "", miniappHomeStyleField.value, false);
+      return;
+    }
+    const miniappModuleStyleField = event.target.closest("[data-miniapp-module-style-field]");
+    if (miniappModuleStyleField) {
+      updateMiniappModuleStyleField(miniappModuleStyleField.dataset.miniappModuleStyleField || "", miniappModuleStyleField.value, false);
+    }
+  });
   document.addEventListener("change", (event) => {
     const lineInput = event.target.closest("[data-sale-line-index][data-sale-line-field]");
     if (lineInput) {
@@ -6469,6 +6860,26 @@ function bindEvents() {
       updateMiniappHomeField(miniappHomeField.dataset.miniappHomeField || "", miniappHomeField.value);
       return;
     }
+    const miniappHomeStyleField = event.target.closest("[data-miniapp-home-style-field]");
+    if (miniappHomeStyleField) {
+      updateMiniappHomeStyleField(miniappHomeStyleField.dataset.miniappHomeStyleField || "", miniappHomeStyleField.value);
+      return;
+    }
+    const miniappTabbarStyleField = event.target.closest("[data-miniapp-tabbar-style-field]");
+    if (miniappTabbarStyleField) {
+      updateMiniappTabbarStyleField(miniappTabbarStyleField.dataset.miniappTabbarStyleField || "", miniappTabbarStyleField.value);
+      return;
+    }
+    const miniappTabbarField = event.target.closest("[data-miniapp-tabbar-field]");
+    if (miniappTabbarField) {
+      const row = miniappTabbarField.closest("[data-miniapp-tabbar-index]");
+      updateMiniappTabbarItemField(
+        row ? Number(row.dataset.miniappTabbarIndex || 0) : 0,
+        miniappTabbarField.dataset.miniappTabbarField || "",
+        miniappTabbarField.value
+      );
+      return;
+    }
     const miniappModuleField = event.target.closest("[data-miniapp-module-field]");
     if (miniappModuleField) {
       updateMiniappModuleField(
@@ -6476,6 +6887,11 @@ function bindEvents() {
         miniappModuleField.value,
         miniappModuleField.checked
       );
+      return;
+    }
+    const miniappModuleStyleField = event.target.closest("[data-miniapp-module-style-field]");
+    if (miniappModuleStyleField) {
+      updateMiniappModuleStyleField(miniappModuleStyleField.dataset.miniappModuleStyleField || "", miniappModuleStyleField.value);
       return;
     }
     const miniappItemField = event.target.closest("[data-miniapp-item-field]");
@@ -6657,7 +7073,7 @@ window.removeWorkflowImage = (index) => actions.removeWorkflowImage(index);
 window.uploadWorkflowImages = (files) => actions.uploadWorkflowImages(files);
 window.prepareInventoryAction = (title, color, type, productId) => actions.prepareInventoryAction(title, color, type, productId);
 window.selectMoveProduct = (id) => actions.selectMoveProduct(id);
-window.selectSaleCustomer = (id, name, isMonthly = false) => actions.selectSaleCustomer(id, name, isMonthly);
+window.selectSaleCustomer = (id, name) => actions.selectSaleCustomer(id, name);
 window.selectSaleProduct = (id) => actions.selectSaleProduct(id).catch((err) => toast(err.message, true));
 window.updateSaleLine = (index, field, value) => actions.updateSaleLine(index, field, value);
 window.removeSaleLine = (index) => actions.removeSaleLine(index);

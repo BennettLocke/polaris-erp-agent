@@ -3172,6 +3172,44 @@ class NativeDBClient:
                         },
                     ],
                 },
+                "tabbar": {
+                    "style": {
+                        "color": "#606266",
+                        "selected_color": "#2a94ff",
+                        "background_color": "#ffffff",
+                        "border_style": "black",
+                    },
+                    "items": [
+                        {
+                            "text": "首页",
+                            "page_path": "/pages/index/index",
+                            "icon": "static/images/common/tabbar/home.png",
+                            "selected_icon": "static/images/black/tabbar/home.png",
+                            "enabled": 1,
+                        },
+                        {
+                            "text": "分类",
+                            "page_path": "/pages/goods-category/goods-category",
+                            "icon": "static/images/common/tabbar/category.png",
+                            "selected_icon": "static/images/black/tabbar/category.png",
+                            "enabled": 1,
+                        },
+                        {
+                            "text": "订单",
+                            "page_path": "/pages/order/order",
+                            "icon": "static/images/common/tabbar/cart.png",
+                            "selected_icon": "static/images/black/tabbar/cart.png",
+                            "enabled": 1,
+                        },
+                        {
+                            "text": "我的",
+                            "page_path": "/pages/user/user",
+                            "icon": "static/images/common/tabbar/user.png",
+                            "selected_icon": "static/images/black/tabbar/user.png",
+                            "enabled": 1,
+                        },
+                    ],
+                },
             },
         }
         return json.loads(json.dumps(defaults.get(key, {}), ensure_ascii=False))
@@ -3195,6 +3233,62 @@ class NativeDBClient:
         )
         return url if any(url.startswith(prefix) for prefix in allowed_prefixes) else ""
 
+    def _miniapp_design_style(self, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        clean: dict[str, Any] = {}
+        for field in ("background", "primary"):
+            if field in value:
+                clean[field] = self._miniapp_design_text(value.get(field), 40)
+        for field, max_value in {"margin_top": 80, "margin_bottom": 80, "radius": 40}.items():
+            if field not in value:
+                continue
+            try:
+                clean[field] = min(max(int(value.get(field) or 0), 0), max_value)
+            except Exception:
+                clean[field] = 0
+        return clean
+
+    def _miniapp_tabbar_setting(self, value: Any, default: dict[str, Any]) -> dict[str, Any]:
+        clean = json.loads(json.dumps(default or {}, ensure_ascii=False))
+        if not isinstance(value, dict):
+            return clean
+        style = value.get("style")
+        if isinstance(style, dict):
+            clean_style = dict(clean.get("style") or {})
+            for field in ("color", "selected_color", "background_color"):
+                if field in style:
+                    clean_style[field] = self._miniapp_design_text(style.get(field), 40)
+            border_style = str(style.get("border_style") or clean_style.get("border_style") or "black").strip().lower()
+            clean_style["border_style"] = border_style if border_style in {"black", "white"} else "black"
+            clean["style"] = clean_style
+        allowed_pages = {
+            "/pages/index/index",
+            "/pages/goods-category/goods-category",
+            "/pages/order/order",
+            "/pages/user/user",
+        }
+        items = value.get("items")
+        if not isinstance(items, list):
+            return clean
+        clean_items: list[dict[str, Any]] = []
+        for item in items[:4]:
+            if not isinstance(item, dict):
+                continue
+            page_path = self._miniapp_design_link(item.get("page_path") or item.get("url"))
+            if page_path not in allowed_pages:
+                continue
+            clean_items.append({
+                "text": self._miniapp_design_text(item.get("text") or item.get("title"), 8),
+                "page_path": page_path,
+                "icon": self._miniapp_design_text(item.get("icon"), 500),
+                "selected_icon": self._miniapp_design_text(item.get("selected_icon"), 500),
+                "enabled": 1 if int(item.get("enabled") or 0) else 0,
+            })
+        if clean_items:
+            clean["items"] = clean_items
+        return clean
+
     def _sanitize_miniapp_design_setting(self, value: dict) -> dict:
         default = self._default_system_setting("miniapp_design")
         clean = json.loads(json.dumps(default, ensure_ascii=False))
@@ -3204,10 +3298,40 @@ class NativeDBClient:
         clean["version"] = 1
         clean["home"]["title"] = self._miniapp_design_text(home.get("title") or clean["home"].get("title"), 40)
         clean["home"]["subtitle"] = self._miniapp_design_text(home.get("subtitle") or clean["home"].get("subtitle"), 80)
+        home_style = self._miniapp_design_style(home.get("style"))
+        if home_style:
+            clean["home"]["style"] = home_style
+        clean["tabbar"] = self._miniapp_tabbar_setting(
+            value.get("tabbar") if isinstance(value, dict) else None,
+            clean.get("tabbar") or {},
+        )
         modules = home.get("modules")
         if not isinstance(modules, list):
             modules = clean["home"].get("modules") or []
-        allowed_types = {"banner", "nav", "image", "hot_zone", "product_shelf"}
+        allowed_types = {
+            "banner",
+            "nav",
+            "image",
+            "hot_zone",
+            "product_shelf",
+            "search",
+            "notice",
+            "title",
+            "rich_text",
+            "video",
+            "row_line",
+            "blank",
+            "goods_magic",
+            "goods_tabs",
+            "coupon",
+            "seckill",
+            "activity",
+            "tabs",
+            "tabs_carousel",
+            "data_magic",
+            "data_tabs",
+            "float_window",
+        }
         clean_modules: list[dict[str, Any]] = []
         for index, module in enumerate(modules[:30]):
             if not isinstance(module, dict):
@@ -3221,7 +3345,10 @@ class NativeDBClient:
                 "enabled": 1 if int(module.get("enabled") or 0) else 0,
                 "title": self._miniapp_design_text(module.get("title"), 60),
             }
-            if module_type in {"banner", "nav", "image", "hot_zone"}:
+            module_style = self._miniapp_design_style(module.get("style"))
+            if module_style:
+                clean_module["style"] = module_style
+            if module_type in {"banner", "nav", "image", "hot_zone", "video"}:
                 items = module.get("items")
                 if not isinstance(items, list):
                     items = []
@@ -3243,6 +3370,14 @@ class NativeDBClient:
                 clean_module["keywords"] = self._miniapp_design_text(module.get("keywords"), 80)
                 clean_module["category_id"] = self._miniapp_design_text(module.get("category_id"), 20)
                 clean_module["limit"] = min(max(limit, 1), 30)
+            for field, limit in {"placeholder": 80, "content": 500, "subtitle": 80}.items():
+                if field in module:
+                    clean_module[field] = self._miniapp_design_text(module.get(field), limit)
+            if "height" in module:
+                try:
+                    clean_module["height"] = min(max(int(module.get("height") or 0), 0), 200)
+                except Exception:
+                    clean_module["height"] = 0
             clean_modules.append(clean_module)
         if clean_modules:
             clean["home"]["modules"] = clean_modules

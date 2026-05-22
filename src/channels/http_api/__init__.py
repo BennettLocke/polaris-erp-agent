@@ -507,6 +507,18 @@ def _miniapp_auth_guard():
         return None
     if path.startswith("/api/auth/"):
         return None
+    public_mini_paths = {
+        "/api/mini/home",
+        "/api/mini/goods/category",
+        "/api/mini/search/index",
+        "/api/mini/search/datalist",
+        "/api/mini/disabled",
+        "/api/mini/cart/empty",
+        "/api/mini/order/index",
+        "/api/mini/order/detail",
+    }
+    if path in public_mini_paths:
+        return None
     if request.headers.get("X-SJ-Client") != "miniapp":
         return None
     token = _auth_token_from_request()
@@ -542,6 +554,7 @@ def _webui_auth_guard():
         path in public_paths
         or path.startswith("/api/auth/")
         or path.startswith("/api/screen/")
+        or path.startswith("/api/miniapp-design/assets/")
         or path.startswith("/api/mini/")
         or path.startswith("/api/print-agent/")
     ):
@@ -570,6 +583,8 @@ def _api_permission_guard():
 @app.before_request
 def _native_operator_context():
     path = request.path or ""
+    if path.startswith("/api/miniapp-design/assets/"):
+        return None
     user_id = None
     if path == "/web" or path.startswith("/api/"):
         native_user = getattr(request, "native_user", None)
@@ -3380,15 +3395,24 @@ def mini_home_api():
             items, _total = _db_product_list("", 1, 8, status=0, group=True)
             first_products = [_mini_product_payload(item, list_item=True) for item in items]
         design["home"] = {**home, "modules": prepared_modules}
+        tabbar = design.get("tabbar") if isinstance(design.get("tabbar"), dict) else {}
         banners = _mini_home_first_items(prepared_modules, "banner")
         navs = _mini_home_first_items(prepared_modules, "nav")
         return jsonify({
             "code": 0,
             "data": {
                 "design": design,
+                "tabbar": tabbar,
                 "banners": banners,
+                "banner_list": banners,
                 "navs": navs,
+                "navigation": navs,
                 "products": first_products,
+                "data_mode": 0,
+                "data_list": design,
+                "article_list": [],
+                "right_icon_list": [],
+                "message_total": 0,
                 "cart_total": _mini_empty_cart_total(),
                 "source": "sjagent_core",
             },
@@ -3465,6 +3489,14 @@ def mini_disabled_api():
     """Explicitly stop removed ShopXO mall functions from falling back."""
     payload = _mini_request_payload()
     feature = str(_mini_value(payload, "feature", "route", default="")).strip()
+    if feature == "legacy_order":
+        try:
+            if _mini_int(_mini_value(payload, "id", "order_id", "sales_id", default=0), 0):
+                return _mini_legacy_order_detail_response()
+            return _mini_legacy_order_index_response()
+        except Exception as e:
+            logger.error(f"mini legacy order compatibility failed: {e}")
+            return _api_exception_response(e)
     return jsonify({
         "code": 410,
         "msg": "该功能已停用，新小程序不再使用购物车、支付或旧商城订单。",
@@ -3617,6 +3649,441 @@ def mini_orderflow_list_api():
             "source": "sjagent_core",
         },
     })
+
+
+def _mini_legacy_currency_data() -> dict:
+    return {"currency_symbol": "\u00a5", "currency_code": "CNY"}
+
+
+def _mini_legacy_operate_data() -> dict:
+    return {
+        "is_cancel": 0,
+        "is_pay": 0,
+        "is_collect": 0,
+        "is_comments": 0,
+        "is_delete": 0,
+    }
+
+
+def _mini_legacy_order_status_filter(value) -> str | None:
+    text = str(value or "").strip()
+    if text in {"", "-1", "0"}:
+        return None
+    if text == "1":
+        return "draft"
+    if text == "2":
+        return "confirmed"
+    if text in {"3", "4"}:
+        return "completed"
+    if text in {"5", "6", "5,6"}:
+        return "canceled"
+    return None
+
+
+def _mini_legacy_order_status_code(status) -> int:
+    text = str(status or "").strip()
+    if text == "canceled":
+        return 5
+    if text == "deleted":
+        return 6
+    if text == "completed":
+        return 4
+    if text == "confirmed":
+        return 3
+    return 1
+
+
+def _mini_legacy_spec(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return [{"value": text}]
+
+
+def _mini_legacy_order_item(product: dict, index: int = 0) -> dict:
+    product = product if isinstance(product, dict) else {}
+    product_id = product.get("product_id") or product.get("goods_id") or product.get("sku_id") or product.get("id") or (index + 1)
+    quantity = product.get("buy_number") or product.get("quantity") or product.get("num") or 0
+    return {
+        "id": product.get("id") or product_id or (index + 1),
+        "goods_id": product_id,
+        "title": product.get("title") or product.get("name") or product.get("goods_name") or "商品",
+        "images": _image_first(product.get("images") or product.get("image") or product.get("main_image_url")),
+        "spec": _mini_legacy_spec(product.get("spec") or product.get("color") or product.get("color_snapshot")),
+        "price": _as_money(product.get("price") or product.get("unit_price") or 0),
+        "buy_number": str(quantity or "0"),
+        "total_price": _as_money(product.get("total_price") or product.get("amount") or 0),
+        "orderaftersale_btn_text": None,
+        "goods_url": "",
+        "base_data": [],
+        "goods_params": [],
+        "goods_content_web": None,
+        "goods_content_app": [],
+    }
+
+
+def _mini_legacy_order_card(card: dict) -> dict:
+    card = card if isinstance(card, dict) else {}
+    products = card.get("products") if isinstance(card.get("products"), list) else []
+    items = [_mini_legacy_order_item(product, index) for index, product in enumerate(products)]
+    if not items:
+        items = [_mini_legacy_order_item({"title": card.get("product_summary") or "商品", "quantity": card.get("buy_number_count") or 0}, 0)]
+    status = card.get("status")
+    return {
+        "id": card.get("id"),
+        "order_no": card.get("sales_no") or str(card.get("id") or ""),
+        "warehouse_url": "",
+        "warehouse_icon": "",
+        "warehouse_name": card.get("customer_name") or "sjagent",
+        "customer_name": card.get("customer_name") or "",
+        "status": _mini_legacy_order_status_code(status),
+        "status_name": card.get("status_text") or str(status or ""),
+        "pay_status_name": card.get("pay_status_text") or "",
+        "is_under_line_text": None,
+        "items": items,
+        "currency_data": _mini_legacy_currency_data(),
+        "buy_number_count": str(card.get("buy_number_count") or card.get("total_quantity") or len(items)),
+        "total_price": _as_money(card.get("total_price") or card.get("receivable_amount") or 0),
+        "price": _as_money(card.get("goods_amount") or card.get("total_price") or 0),
+        "pay_price": _as_money(card.get("receivable_amount") or card.get("total_price") or 0),
+        "payment_id": 0,
+        "order_model": 2,
+        "order_model_name": "sjagent",
+        "is_can_launch_aftersale": 0,
+        "operate_data": _mini_legacy_operate_data(),
+        "plugins_is_order_allot_button": 0,
+        "plugins_is_order_batch_button": 0,
+        "plugins_is_order_frequencycard_button": 0,
+        "plugins_delivery_data": 0,
+        "plugins_ordergoodsform_data": 0,
+        "plugins_orderresources_data": 0,
+        "plugins_is_orderfeed_button": 0,
+        "plugins_express_data": 0,
+        "plugins_intellectstools_data": None,
+        "express_data": None,
+        "weixin_collect_data": None,
+        "source": "sjagent_core",
+    }
+
+
+def _mini_legacy_order_detail(detail: dict) -> dict:
+    detail = detail if isinstance(detail, dict) else {}
+    products = detail.get("items") or detail.get("products") or detail.get("detail") or []
+    if not isinstance(products, list):
+        products = []
+    items = [_mini_legacy_order_item(product, index) for index, product in enumerate(products)]
+    status = detail.get("status")
+    created_at = detail.get("created_at") or detail.get("sales_at") or detail.get("date_text") or ""
+    return {
+        "id": detail.get("id") or detail.get("sales_id"),
+        "order_no": detail.get("sales_no") or str(detail.get("id") or detail.get("sales_id") or ""),
+        "warehouse_name": detail.get("customer_name") or "sjagent",
+        "customer_name": detail.get("customer_name") or "",
+        "order_model": 2,
+        "order_model_name": "sjagent",
+        "status": _mini_legacy_order_status_code(status),
+        "status_name": detail.get("status_text") or str(status or ""),
+        "pay_status_name": detail.get("pay_status_text") or "",
+        "price": _as_money(detail.get("goods_amount") or detail.get("total_price") or 0),
+        "total_price": _as_money(detail.get("total_price") or detail.get("receivable_amount") or 0),
+        "preferential_price": "0.00",
+        "increase_price": "0.00",
+        "pay_price": _as_money(detail.get("receivable_amount") or detail.get("total_price") or 0),
+        "payment_name": detail.get("pay_type_text") or "",
+        "is_under_line_text": None,
+        "user_note": detail.get("note") or "",
+        "add_time": created_at,
+        "confirm_time": detail.get("sales_at") or "",
+        "pay_time": "",
+        "delivery_time": "",
+        "collect_time": "",
+        "cancel_time": detail.get("canceled_at") or "",
+        "close_time": detail.get("deleted_at") or "",
+        "items": items,
+        "currency_data": _mini_legacy_currency_data(),
+        "buy_number_count": str(detail.get("buy_number_count") or detail.get("total_quantity") or len(items)),
+        "payment_id": 0,
+        "operate_data": _mini_legacy_operate_data(),
+        "is_can_launch_aftersale": 0,
+        "address_data": None,
+        "extraction_data": None,
+        "use_guide_data": None,
+        "service_data": None,
+        "express_data": None,
+        "trace_source_data": None,
+        "extension_data": [
+            {"name": "客户", "value": detail.get("customer_name") or ""},
+            {"name": "销售单号", "value": detail.get("sales_no") or ""},
+            {"name": "制单人", "value": detail.get("created_by_name") or ""},
+        ],
+        "plugins_is_order_allot_button": 0,
+        "plugins_is_order_batch_button": 0,
+        "plugins_is_order_frequencycard_button": 0,
+        "plugins_delivery_data": 0,
+        "plugins_ordergoodsform_data": 0,
+        "plugins_orderresources_data": 0,
+        "plugins_is_orderfeed_button": 0,
+        "plugins_express_data": 0,
+        "plugins_intellectstools_data": None,
+        "plugins_hospital_prescription_data": None,
+        "weixin_collect_data": None,
+        "source": "sjagent_core",
+    }
+
+
+def _mini_legacy_order_index_response():
+    payload = _mini_request_payload()
+    keyword = str(_mini_value(payload, "keywords", "keyword", "wd", "q", default="")).strip()
+    page, page_size = _mini_page_payload(payload)
+    status_filter = _mini_legacy_order_status_filter(_mini_value(payload, "status", default="-1"))
+    cards, total = _db_sales_cards(keyword, page, page_size, status_filter)
+    page_total = (int(total or 0) + page_size - 1) // page_size if page_size else 0
+    return jsonify({
+        "code": 0,
+        "data": {
+            "data": _safe_json([_mini_legacy_order_card(card) for card in cards]),
+            "total": int(total or 0),
+            "page_total": int(page_total or 0),
+            "payment_list": [],
+            "default_payment_id": 0,
+            "source": "sjagent_core",
+        },
+    })
+
+
+def _mini_legacy_order_detail_response():
+    payload = _mini_request_payload()
+    order_id = _mini_int(_mini_value(payload, "id", "order_id", "sales_id", default=0), 0)
+    if not order_id:
+        return jsonify({"code": 400, "msg": "id is required"}), 400
+    result = _native_db().sales_detail(order_id)
+    if isinstance(result, dict) and result.get("code", 0) != 0:
+        return jsonify({"code": result.get("code", 404), "msg": result.get("msg", "order not found")}), 404
+    detail = _sales_detail_data(result)
+    return jsonify({
+        "code": 0,
+        "data": {
+            "data": _safe_json(_mini_legacy_order_detail(detail)),
+            "payment_list": [],
+            "default_payment_id": 0,
+            "site_fictitious": None,
+            "status_tips": None,
+            "source": "sjagent_core",
+        },
+    })
+
+
+@app.route("/api/mini/order/index", methods=["GET", "POST"])
+def mini_legacy_order_index_api():
+    """ShopXO order list compatibility backed by sjagent sales_order."""
+    try:
+        return _mini_legacy_order_index_response()
+    except Exception as e:
+        logger.error(f"mini legacy order list failed: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/mini/order/detail", methods=["GET", "POST"])
+def mini_legacy_order_detail_api():
+    """ShopXO order detail compatibility backed by sjagent sales_order."""
+    try:
+        return _mini_legacy_order_detail_response()
+    except Exception as e:
+        logger.error(f"mini legacy order detail failed: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api.php", methods=["GET", "POST"])
+def mini_legacy_api_php_compat():
+    """Allow unchanged ShopXO-style api.php?s=order/index calls to read sjagent data."""
+    route = str(request.values.get("s") or "").strip().strip("/")
+    try:
+        if route.lower() == "order/index":
+            return _mini_legacy_order_index_response()
+        if route.lower() == "order/detail":
+            return _mini_legacy_order_detail_response()
+    except Exception as e:
+        logger.error(f"mini api.php compatibility failed: route={route}, error={e}")
+        return _api_exception_response(e)
+    return jsonify({"code": 404, "msg": "unsupported api.php route", "data": {"route": route}}), 404
+
+
+def _mini_workflow_order_images(value) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    text = str(value or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item or "").strip()]
+        if isinstance(parsed, str) and parsed.strip():
+            return [parsed.strip()]
+    except Exception:
+        pass
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
+def _mini_workflow_quantity(value) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return 0
+    try:
+        return int(float(match.group(0)))
+    except Exception:
+        return 0
+
+
+def _mini_workflow_order_list(keyword: str, page: int = 1, page_size: int = 100, status_filter: str = "active") -> tuple[list[dict], int]:
+    cards, total = _db_workflow_orders(keyword, max(1, page), min(max(1, page_size), 200), status_filter)
+    return _safe_json(cards), int(total or 0)
+
+
+def _mini_number(value) -> float:
+    try:
+        return float(str(value or "0").replace(",", ""))
+    except Exception:
+        return 0.0
+
+
+def _mini_inventory_qty_text(value: float) -> int | str:
+    if abs(value - round(value)) < 0.000001:
+        return int(round(value))
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _mini_workflow_inventory_payload(keyword: str = "") -> dict:
+    rows = _native_db().search_inventory(keyword=keyword, only_in_stock=False, limit=3000)
+    grouped: dict[str, dict] = {}
+    for row in (rows if isinstance(rows, list) else []):
+        code = str(row.get("sku_no") or row.get("code") or row.get("product_code") or "").strip()
+        name = str(row.get("title") or row.get("name") or "").strip()
+        color = str(row.get("color") or "").strip()
+        key = f"{code}|{name}|{color}"
+        item = grouped.setdefault(key, {
+            "id": row.get("product_id") or row.get("id"),
+            "name": name or "商品",
+            "code": code,
+            "spec": color,
+            "color": color,
+            "box_spec": row.get("simple_desc") or "",
+            "qty_baixin": 0.0,
+            "qty_shop": 0.0,
+            "total_qty": 0.0,
+        })
+        qty = _mini_number(row.get("inventory") or row.get("stock") or row.get("quantity"))
+        warehouse_name = str(row.get("warehouse_name") or row.get("warehouse") or "").strip()
+        warehouse_id = _mini_int(row.get("warehouse_id"), 0)
+        if "店" in warehouse_name or "门店" in warehouse_name or warehouse_id == 1:
+            item["qty_shop"] += qty
+        else:
+            item["qty_baixin"] += qty
+        item["total_qty"] += qty
+    items = []
+    total_qty = 0.0
+    for item in grouped.values():
+        total_qty += _mini_number(item.get("total_qty"))
+        item["qty_baixin"] = _mini_inventory_qty_text(_mini_number(item.get("qty_baixin")))
+        item["qty_shop"] = _mini_inventory_qty_text(_mini_number(item.get("qty_shop")))
+        item["total_qty"] = _mini_inventory_qty_text(_mini_number(item.get("total_qty")))
+        items.append(item)
+    items.sort(key=lambda item: (-_mini_number(item.get("total_qty")), str(item.get("name") or "")))
+    return {
+        "items": _safe_json(items),
+        "total_qty": _mini_inventory_qty_text(total_qty),
+        "total_items": len(items),
+        "source": "sjagent_core",
+    }
+
+
+@app.route("/api/mini/workflow-order/customer-list", methods=["GET", "POST"])
+def mini_workflow_customer_list_api():
+    payload = _mini_request_payload()
+    nickname = str(_mini_value(payload, "nickname", "customer_name", "keyword", default="")).strip()
+    if not nickname:
+        return jsonify({"code": 0, "data": []})
+    cards, _total = _mini_workflow_order_list(nickname, 1, 100, "active")
+    return jsonify({"code": 0, "data": cards})
+
+
+@app.route("/api/mini/workflow-order/employee-list", methods=["GET", "POST"])
+def mini_workflow_employee_list_api():
+    payload = _mini_request_payload()
+    page, page_size = _mini_page_payload(payload)
+    cards, _total = _mini_workflow_order_list("", page, max(page_size, 100), "active")
+    return jsonify({"code": 0, "data": cards})
+
+
+@app.route("/api/mini/workflow-order/search", methods=["GET", "POST"])
+def mini_workflow_search_api():
+    payload = _mini_request_payload()
+    keyword = str(_mini_value(payload, "keyword", "q", "wd", default="")).strip()
+    cards, _total = _mini_workflow_order_list(keyword, 1, 100, "active")
+    return jsonify({"code": 0, "data": cards})
+
+
+@app.route("/api/mini/workflow-order/inventory-search", methods=["GET", "POST"])
+def mini_workflow_inventory_search_api():
+    payload = _mini_request_payload()
+    keyword = _normalize_inventory_keyword(str(_mini_value(payload, "keyword", "q", "wd", default="")).strip())
+    try:
+        return jsonify({"code": 0, "data": _mini_workflow_inventory_payload(keyword)})
+    except Exception as e:
+        logger.error(f"mini workflow inventory query failed: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/mini/workflow-order/save", methods=["POST"])
+def mini_workflow_save_api():
+    payload = _mini_request_payload()
+    customer_name = str(_mini_value(payload, "customer_name", default="")).strip()
+    if not customer_name:
+        return jsonify({"code": 400, "msg": "请输入客户名字"}), 400
+    try:
+        result = _native_db().save_workflow_order(
+            order_id=_mini_int(_mini_value(payload, "id", "order_id", default=0), 0) or None,
+            customer_name=customer_name,
+            customer_phone=str(_mini_value(payload, "customer_phone", "phone", default="")).strip(),
+            goods_name=str(_mini_value(payload, "goods_name", default="商品未填写")).strip() or "商品未填写",
+            color=str(_mini_value(payload, "goods_color", "color", default="")).strip(),
+            order_quantity=_mini_workflow_quantity(_mini_value(payload, "order_quantity", "quantity", default=0)),
+            order_images=_mini_workflow_order_images(_mini_value(payload, "order_images", "images", default=[])),
+            is_screen_print=_mini_int(_mini_value(payload, "is_screen_print", default=0), 0),
+            order_type=_mini_int(_mini_value(payload, "order_type", default=0), 0),
+            remark=str(_mini_value(payload, "remark", default="")).strip(),
+        )
+        if isinstance(result, dict) and result.get("code", 0) != 0:
+            return jsonify({"code": result.get("code", 500), "msg": result.get("msg", "保存失败")}), 400
+        return jsonify({"code": 0, "data": result.get("data", result) if isinstance(result, dict) else result})
+    except Exception as e:
+        logger.error(f"mini workflow save failed: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/mini/workflow-order/status-update", methods=["POST"])
+def mini_workflow_status_update_api():
+    payload = _mini_request_payload()
+    order_id = _mini_int(_mini_value(payload, "id", "order_id", default=0), 0)
+    field = str(_mini_value(payload, "field", default="")).strip()
+    value = _mini_int(_mini_value(payload, "value", default=0), 0)
+    if not order_id:
+        return jsonify({"code": 400, "msg": "缺少订单ID"}), 400
+    if field not in {"is_made", "is_delivered", "order_type"}:
+        return jsonify({"code": 400, "msg": "字段不允许更新"}), 400
+    try:
+        result = _native_db().update_workflow_status(order_id, field, value)
+        if isinstance(result, dict) and result.get("code", 0) != 0:
+            return jsonify({"code": result.get("code", 500), "msg": result.get("msg", "操作失败")}), 400
+        return jsonify({"code": 0, "data": result.get("data", result) if isinstance(result, dict) else result})
+    except Exception as e:
+        logger.error(f"mini workflow status update failed: {e}")
+        return _api_exception_response(e)
 
 
 @app.route("/api/product/options", methods=["GET"])

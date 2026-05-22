@@ -238,6 +238,156 @@ EXTRA_CSS = """
   .miniapp-item-editor { display: grid; gap: 8px; }
   .miniapp-item-row { display: grid; grid-template-columns: 1fr 1fr 1fr 34px; gap: 7px; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 8px; }
   .miniapp-item-row input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 9px; background: #fff; color: var(--text); }
+  .miniapp-design-panel.shopxo-diy { max-width: none; padding: 0; border: 0; border-radius: 4px; background: #f0f2f5; box-shadow: none; overflow: hidden; --color-main: #2a94ff; --color-primary: #2a94ff; --el-color-primary: #409eff; --el-text-color-primary: #303133; --el-text-color-regular: #606266; --el-text-color-secondary: #909399; --el-border-color: #dcdfe6; --el-border-color-light: #e4e7ed; --el-fill-color-light: #f5f7fa; color: #303133; font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif; }
+  body:has(#miniappSettingsPanel:not([hidden])) .app { grid-template-columns: 236px minmax(0, 1fr) 0; }
+  body:has(#miniappSettingsPanel:not([hidden])) .context { display: none; }
+  body:has(#miniappSettingsPanel:not([hidden])) .content { padding-right: 22px; }
+  .shopxo-diy * { box-sizing: border-box; }
+  .shopxo-diy button { font-family: inherit; }
+  .shopxo-diy button:hover { transform: none; box-shadow: none; }
+  .shopxo-app-wrapper { background: #fff; border: 1px solid #e4e7ed; border-radius: 4px; overflow: hidden; }
+  .shopxo-app-content { height: calc(100vh - 248px); min-height: 720px; display: flex; background: #f0f2f5; }
+  .shopxo-diy .siderbar { width: 340px; flex: 0 0 340px; padding: 5px 30px; background: #fff; overflow: auto; border-right: 1px solid #f5f5f5; }
+  .shopxo-side-head { height: 48px; display: flex; align-items: center; color: #333; font-size: 16px; font-weight: 700; }
+  .shopxo-collapse-item { margin-bottom: 18px; }
+  .shopxo-collapse-title { height: 20px; display: flex; align-items: center; color: #606266; font-size: 14px; font-weight: 400; margin-bottom: 12px; }
+  .shopxo-diy .component { display: flex; flex-wrap: wrap; align-items: stretch; margin: 0 -5px; }
+  .shopxo-diy .component .item { width: 33.333333%; padding: 5px; border: 0; background: transparent; box-shadow: none; min-height: 76px; cursor: pointer; color: #606266; }
+  .shopxo-diy .component .item .main-border { display: none; }
+  .shopxo-diy .siderbar-show { height: 100%; min-height: 66px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 5px; border-radius: 5px; transition: all .4s; font-size: 12px; line-height: 1.2; }
+  .shopxo-diy .siderbar-show .img { width: 30px; height: 30px; object-fit: contain; display: block; }
+  .shopxo-diy .component .item:hover .siderbar-show { box-shadow: 0 0 5px rgba(24,144,255,.30); transform: scale(1.05); color: #303133; }
+  .shopxo-diy .drawer-container { position: relative; overflow: hidden; margin-left: 1px; background: #fff; transition: .8s ease; border-right: 1px solid #f5f5f5; }
+  .shopxo-diy .drawer-content { position: absolute; top: 0; left: 0; width: 128px; height: 100%; background: #fff; transition: left .8s ease; padding-top: 5px; }
+  .shopxo-diy .drawer-title { height: 48px; line-height: 48px; padding-left: 12px; color: #333; font-size: 14px; font-weight: 700; white-space: nowrap; }
+  .shopxo-diy .drawer-drag-area { height: calc(100% - 45px); overflow-y: auto; }
+  .shopxo-diy .miniapp-outline { display: flex; flex-direction: column; gap: 0; }
+  .shopxo-diy .miniapp-outline-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px 24px 24px; gap: 2px; align-items: center; min-height: 42px; padding: 6px 6px 6px 8px; border: 0; border-radius: 0; background: #fff; color: #606266; transition: background .2s; }
+  .shopxo-diy .miniapp-outline-row:hover,
+  .shopxo-diy .miniapp-outline-row.drawer-drag-bg { background: #f2f8ff; }
+  .shopxo-diy .miniapp-outline-main { min-width: 0; min-height: 30px; padding: 0; display: grid; grid-template-columns: 16px 22px minmax(0, 1fr); column-gap: 4px; align-items: center; border: 0; background: transparent; box-shadow: none; text-align: left; color: #606266; }
+  .shopxo-diy .miniapp-outline-main img { width: 18px; height: 18px; object-fit: contain; }
+  .shopxo-diy .miniapp-outline-main .iconfont { color: #8a8a8a; font-size: 14px; }
+  .shopxo-diy .miniapp-outline-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #303133; font-size: 12px; line-height: 16px; font-weight: 500; }
+  .shopxo-diy .miniapp-outline-main small { display: none; }
+  .shopxo-diy .miniapp-outline-row > button:not(.miniapp-outline-main) { width: 24px; height: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 2px; background: transparent; color: #909399; box-shadow: none; font-size: 12px; }
+  .shopxo-diy .miniapp-outline-row > button:not(.miniapp-outline-main):hover { color: #2a94ff; background: #edf4ff; }
+  .shopxo-diy .miniapp-outline-row.off { opacity: .55; }
+  .shopxo-diy .main { flex: 1; position: relative; height: 100%; min-width: 520px; }
+  .shopxo-diy .layout-toggle-bar { cursor: pointer; height: 64px; width: 20px; position: absolute; top: 50%; transform: translateY(-50%); left: 0; z-index: 3; }
+  .shopxo-diy .layout-toggle-bar-top,
+  .shopxo-diy .layout-toggle-bar-bottom { position: absolute; width: 2px; border-radius: 2px; height: 30px; left: 10px; background: #e6e6e6; transition: 1s ease; }
+  .shopxo-diy .layout-toggle-bar-bottom { top: 26px; }
+  .shopxo-diy .layout-toggle-bar:hover .layout-toggle-bar-top,
+  .shopxo-diy .layout-toggle-bar:hover .layout-toggle-bar-bottom { background: #2a94ff; }
+  .shopxo-diy .layout-toggle-bar:hover .layout-toggle-bar-top { transform: rotate(12deg) scale(1.05) translateY(-2px); }
+  .shopxo-diy .layout-toggle-bar:hover .layout-toggle-bar-bottom { transform: rotate(-12deg) scale(1.05) translateY(2px); }
+  .shopxo-diy .model { display: flex; flex-direction: column; justify-content: center; overflow: hidden; height: 100%; padding: 20px 0; }
+  .shopxo-diy .model-content { position: relative; max-height: 846px; height: 100%; }
+  .shopxo-diy .acticons { position: absolute; left: 50%; margin-left: 260px; top: 0; display: flex; flex-direction: column; gap: 20px; z-index: 4; }
+  .shopxo-diy .shopxo-el-button { height: 32px; min-height: 32px; line-height: 30px; padding: 0 15px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; color: #606266; box-shadow: none; font-size: 14px; font-weight: 500; cursor: pointer; transition: .2s; }
+  .shopxo-diy .shopxo-el-button:hover { color: #2a94ff; border-color: #c6e2ff; background: #ecf5ff; }
+  .shopxo-diy .shopxo-el-button--large { width: 118px; height: 40px; min-height: 40px; line-height: 38px; }
+  .shopxo-diy .shopxo-el-button--small { height: 24px; min-height: 24px; line-height: 22px; padding: 0 9px; font-size: 12px; }
+  .shopxo-diy .shopxo-el-button--primary { background: #409eff; border-color: #409eff; color: #fff; }
+  .shopxo-diy .shopxo-el-button--primary:hover { background: #79bbff; border-color: #79bbff; color: #fff; }
+  .shopxo-diy .model-drag { position: relative; overflow-y: auto; max-height: 844px; height: 100%; scrollbar-width: none; }
+  .shopxo-diy .model-drag::-webkit-scrollbar { display: none; }
+  .shopxo-diy .page-bg { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 390px; min-height: 100%; background: var(--miniapp-page-bg, #f5f5f5); }
+  .shopxo-diy .model-top { position: relative; display: block; width: 390px; margin: 0 auto; padding: 0; border: 0; background: transparent; box-shadow: none; cursor: pointer; color: #333; text-align: center; z-index: 13; }
+  .shopxo-diy .model-top .roll { padding-bottom: 10px; margin: 0 auto; background: #fff; }
+  .shopxo-diy .status-bar { height: 42px; display: flex; align-items: end; justify-content: center; padding: 15px 22px 6px 18px; }
+  .shopxo-diy .status-bar .img { width: 340px; height: 18px; object-fit: contain; filter: brightness(0); }
+  .shopxo-diy .model-head { overflow: hidden; margin: 6px 12px 0; padding-bottom: 8px; }
+  .shopxo-diy .model-head-content { height: 32px; line-height: 32px; color: #333; font-size: 14px; font-weight: 700; }
+  .shopxo-diy .model-head-subtitle { color: #909399; font-size: 12px; line-height: 18px; }
+  .shopxo-diy .page-settings-border { position: relative; z-index: 3; }
+  .shopxo-diy .page-settings-border::before { content: ""; position: absolute; left: -2px; right: -2px; top: 0; height: 100%; border: 2px solid #2a94ff; z-index: 2; pointer-events: none; }
+  .shopxo-diy .model-wall { width: 390px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; align-items: stretch; }
+  .shopxo-diy .model-wall-content { min-height: 100%; flex: 1; display: flex; flex-direction: column; align-items: stretch; padding-top: 0; padding-bottom: 70px; }
+  .shopxo-diy .drag-area { min-height: 360px; display: flex; flex-direction: column; align-items: stretch; flex: 1; }
+  .shopxo-diy .model-bottom { position: sticky; bottom: 70px; left: 50%; transform: translateX(0); z-index: 12; }
+  .shopxo-diy .model-bottom .roll { border-top: 1px solid #f5f5f5; height: 40px; width: 390px; background: #fff; margin: 0 auto; }
+  .shopxo-diy .footer-nav { display: block; width: 390px; margin: 0 auto; padding: 0; border: 0; background: transparent; box-shadow: none; cursor: pointer; color: #606266; }
+  .shopxo-diy .footer-nav-content { min-height: 70px; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; background: var(--miniapp-tabbar-bg, #fff); border-top: 1px solid #f5f5f5; }
+  .shopxo-diy .footer-nav-content span { display: grid; justify-items: center; gap: 4px; font-size: 12px; color: var(--miniapp-tabbar-color, #606266); }
+  .shopxo-diy .footer-nav-content span::before { content: ""; width: 22px; height: 22px; border-radius: 50%; background: #dcdfe6; display: block; }
+  .shopxo-diy .footer-nav-content span.active { color: var(--miniapp-tabbar-selected, #2a94ff); }
+  .shopxo-diy .footer-nav-content span.active::before { background: var(--miniapp-tabbar-selected, #2a94ff); }
+  .shopxo-diy .miniapp-preview-module { width: 100%; display: block; position: relative; border: 0; border-radius: var(--miniapp-module-radius, 0); background: var(--miniapp-module-bg, transparent); margin-top: var(--miniapp-module-margin-top, 0); margin-bottom: var(--miniapp-module-margin-bottom, 0); padding: 0; box-shadow: none; text-align: left; cursor: pointer; color: #303133; overflow: hidden; }
+  .shopxo-diy .miniapp-preview-module.main-border::before { content: ""; position: absolute; inset: 0; border: 2px solid #2a94ff; z-index: 2; pointer-events: none; }
+  .shopxo-diy .miniapp-preview-module.disabled { opacity: .45; }
+  .shopxo-diy .miniapp-preview-search { margin: 9px 15px; height: 32px; border-radius: 16px; background: #fff; border: 1px solid #fff; display: flex; align-items: center; gap: 8px; padding: 0 15px; color: #ccc; font-size: 12px; }
+  .shopxo-diy .miniapp-preview-search em { font-style: normal; }
+  .shopxo-diy .miniapp-preview-banner { height: 150px; margin: 0 15px 10px; padding: 14px; display: grid; align-content: end; gap: 4px; border-radius: 6px; background: linear-gradient(135deg,#dceeff,#f5faff); color: #303133; background-size: cover; background-position: center; }
+  .shopxo-diy .miniapp-preview-banner strong { font-size: 20px; line-height: 1.2; }
+  .shopxo-diy .miniapp-preview-banner span { color: #606266; font-size: 12px; }
+  .shopxo-diy .miniapp-preview-nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 8px; padding: 12px 8px; background: #fff; }
+  .shopxo-diy .miniapp-preview-nav span { min-width: 0; display: grid; justify-items: center; gap: 6px; color: #303133; font-size: 12px; font-weight: 400; }
+  .shopxo-diy .miniapp-preview-nav i { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #edf4ff; color: #2a94ff; font-style: normal; font-weight: 700; }
+  .shopxo-diy .miniapp-preview-nav em { grid-column: 1 / -1; color: #909399; font-style: normal; text-align: center; }
+  .shopxo-diy .miniapp-preview-title { padding: 12px 15px 8px; color: #303133; font-size: 16px; font-weight: 700; }
+  .shopxo-diy .miniapp-preview-products { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 15px 12px; }
+  .shopxo-diy .miniapp-preview-products span { min-width: 0; display: grid; gap: 6px; border-radius: 6px; background: #fff; padding: 8px; }
+  .shopxo-diy .miniapp-preview-products b { aspect-ratio: 1.2; border-radius: 4px; background: #f5f5f5; }
+  .shopxo-diy .miniapp-preview-products i { color: #303133; font-size: 12px; line-height: 1.3; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shopxo-diy .miniapp-preview-image { height: 104px; margin: 10px 15px; padding: 12px; display: grid; align-content: center; gap: 3px; border-radius: 6px; background: #fff; color: #303133; }
+  .shopxo-diy .miniapp-preview-image.hot { background: repeating-linear-gradient(135deg,#fff 0 14px,#edf4ff 14px 28px); }
+  .shopxo-diy .miniapp-preview-heading { padding: 12px 15px; background: #fff; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .shopxo-diy .miniapp-preview-heading strong { font-size: 16px; color: #333; }
+  .shopxo-diy .miniapp-preview-heading span { font-size: 12px; color: #999; }
+  .shopxo-diy .miniapp-preview-notice { margin: 10px 15px; min-height: 36px; border-radius: 4px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #fff; color: #606266; }
+  .shopxo-diy .miniapp-preview-notice strong { color: #2a94ff; font-size: 13px; }
+  .shopxo-diy .miniapp-preview-line { height: 1px; margin: 10px 15px; background: #dcdfe6; }
+  .shopxo-diy .miniapp-preview-blank { background: transparent; }
+  .shopxo-diy .miniapp-preview-video { height: 160px; margin: 10px 15px; border-radius: 6px; background: #303133; color: #fff; display: grid; place-items: center; align-content: center; gap: 8px; }
+  .shopxo-diy .miniapp-preview-video span { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.18); }
+  .shopxo-diy .miniapp-preview-rich { margin: 10px 15px; border-radius: 6px; background: #fff; padding: 12px; color: #606266; }
+  .shopxo-diy .miniapp-preview-rich strong { display: block; color: #333; margin-bottom: 6px; font-size: 14px; }
+  .shopxo-diy .miniapp-preview-rich p { margin: 0; font-size: 12px; line-height: 1.6; }
+  .shopxo-diy .settings { width: 460px; flex: 0 0 460px; display: flex; flex-direction: column; background: #fff; border-left: 1px solid #f5f5f5; }
+  .shopxo-diy .settings-title { height: 78px; padding: 21px 38px; display: grid; grid-template-columns: 108px minmax(0,1fr); align-items: center; gap: 14px; }
+  .shopxo-diy .settings-title .title { font-size: 16px; font-weight: 700; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shopxo-diy .radio-group { display: grid; grid-template-columns: 1fr 1fr; width: 100%; background: #f4f4f4; border-radius: 999px; overflow: hidden; padding: 0; }
+  .shopxo-diy .radio-group button { height: 32px; min-height: 32px; padding: 0; border: 0; border-radius: 999px; background: #f4f4f4; box-shadow: none; color: #606266; font-size: 14px; font-weight: 500; }
+  .shopxo-diy .radio-group button.active { background: #2a94ff; color: #fff; }
+  .shopxo-diy .setting-content { height: calc(100% - 78px); overflow: auto; background: #fff; padding: 0 20px 20px; }
+  .shopxo-diy .shopxo-form-card { display: grid; gap: 14px; padding: 16px 18px; background: #fff; border-top: 1px solid #f5f5f5; }
+  .shopxo-diy .shopxo-card-title { display: flex; align-items: center; justify-content: space-between; min-height: 20px; color: #333; font-size: 14px; font-weight: 700; }
+  .shopxo-diy .shopxo-form-item { display: grid; grid-template-columns: 80px minmax(0,1fr); align-items: center; gap: 10px; margin: 0; color: #606266; font-size: 14px; }
+  .shopxo-diy .shopxo-form-item > span { text-align: right; color: #606266; }
+  .shopxo-diy .shopxo-input { min-width: 0; width: 100%; min-height: 32px; border: 0; border-radius: 4px; box-shadow: 0 0 0 1px #dcdfe6 inset; background: #fff; color: #606266; font-size: 14px; line-height: 30px; padding: 1px 11px; outline: none; transition: box-shadow .2s; }
+  .shopxo-diy textarea.shopxo-input { min-height: 82px; resize: vertical; line-height: 20px; padding-top: 7px; }
+  .shopxo-diy .shopxo-input:hover { box-shadow: 0 0 0 1px #c0c4cc inset; }
+  .shopxo-diy .shopxo-input:focus { box-shadow: 0 0 0 1px #409eff inset; }
+  .shopxo-diy .shopxo-switch-row { display: grid; grid-template-columns: 80px auto 1fr; align-items: center; gap: 10px; margin: 0; color: #606266; font-size: 14px; }
+  .shopxo-diy .shopxo-switch-row > span { text-align: right; }
+  .shopxo-diy .shopxo-switch-row input { position: absolute; opacity: 0; pointer-events: none; }
+  .shopxo-diy .shopxo-switch-row i { position: relative; width: 40px; height: 20px; border-radius: 10px; background: #dcdfe6; display: inline-block; transition: .2s; }
+  .shopxo-diy .shopxo-switch-row i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s; }
+  .shopxo-diy .shopxo-switch-row input:checked + i { background: #2a94ff; }
+  .shopxo-diy .shopxo-switch-row input:checked + i::after { left: 22px; }
+  .shopxo-diy .miniapp-item-editor { display: grid; gap: 8px; }
+  .shopxo-diy .miniapp-item-row { display: grid; grid-template-columns: 1fr 1fr 1fr 32px; gap: 7px; align-items: center; border: 0; border-radius: 4px; background: #f5f7fa; padding: 8px; }
+  .shopxo-diy .miniapp-item-row input { border-radius: 4px; padding: 1px 11px; }
+  .shopxo-diy .miniapp-tabbar-editor { display: grid; gap: 8px; }
+  .shopxo-diy .miniapp-tabbar-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; background: #f5f7fa; border-radius: 4px; }
+  .shopxo-diy .miniapp-tabbar-row label { min-width: 0; display: grid; gap: 4px; color: #606266; font-size: 12px; }
+  .shopxo-diy .miniapp-tabbar-row span { color: #606266; }
+  .shopxo-diy .setting-delete { width: 32px; height: 32px; min-height: 32px; border-radius: 4px; padding: 0; color: #f56c6c; background: #fff; border-color: #fcd3d3; }
+  .shopxo-diy .shopxo-app-footer { height: 62px; padding: 15px; border-top: 1px solid #f5f5f5; position: relative; background: #fff; display: flex; gap: 10px; justify-content: center; align-items: center; }
+  .shopxo-diy .shopxo-app-footer .footer-save { height: 31px; line-height: 29px; padding-top: 0; padding-bottom: 0; font-size: 12px; min-width: 80px; }
+  @media screen and (max-width: 1800px) {
+    .shopxo-diy .siderbar { width: 320px; flex-basis: 320px; padding: 5px 10px; }
+    .shopxo-diy .settings { width: 400px; flex-basis: 400px; }
+    .shopxo-diy .drawer-container { width: 0 !important; }
+    .shopxo-diy .layout-toggle-bar { display: none; }
+    .shopxo-diy .acticons { margin-left: 205px; gap: 12px; }
+    .shopxo-diy .acticons .shopxo-el-button--large { width: 80px; }
+  }
+  @media screen and (max-width: 1500px) {
+    .shopxo-diy .acticons { display: none; }
+  }
   .setting-list { display: grid; gap: 8px; }
   .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 8px; }
   .setting-row.two { grid-template-columns: minmax(0, 1fr) auto; }
