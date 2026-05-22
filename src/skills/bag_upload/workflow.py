@@ -485,40 +485,20 @@ class BagUploadWorkflow(BaseWorkflow):
         return cleaned[:120] or "泡袋新品"
 
     def _find_existing_product_by_code(self, code: str) -> dict | None:
-        from src.engine.api_client import ERPSystemClient
-
         code = self._extract_sj_code(code) or str(code or "").strip().upper()
         if not code:
             return None
         try:
-            result = ERPSystemClient().product_list(keyword=code, page_size=20)
-            rows = self._api_data_list(result)
+            from src.engine.native_db import get_native_db_client
+
+            rows = get_native_db_client().product_search(code, limit=20)
             for row in rows:
-                row_code = self._extract_sj_code(row.get("coding") or "")
+                row_code = self._extract_sj_code(row.get("sku_no") or row.get("coding") or "")
                 title_code = self._extract_sj_code(row.get("title") or row.get("name") or row.get("product_name") or "")
                 if row_code == code or title_code == code:
                     return row
         except Exception as e:
-            logger.warning(f"按编号查询 ERP 商品失败: code={code}, error={e}")
-
-        try:
-            from src.engine.db_client import get_db_client
-
-            db = get_db_client()
-            rows = db.query(
-                """
-                SELECT p.id, p.title, p.coding, p.spec, p.simple_desc, p.images, p.main_images,
-                       p.price, p.cost_price, p.status
-                FROM sxo_plugins_erp_product p
-                WHERE p.coding = %s OR p.title LIKE %s
-                ORDER BY p.id DESC
-                LIMIT 1
-                """,
-                (code, f"%{code}%"),
-            )
-            return rows[0] if rows else None
-        except Exception as e:
-            logger.warning(f"按编号查询本地商品失败: code={code}, error={e}")
+            logger.warning(f"按编号查询自有库商品失败: code={code}, error={e}")
         return None
 
     def _api_data_list(self, result) -> list[dict]:
@@ -565,10 +545,12 @@ class BagUploadWorkflow(BaseWorkflow):
         detail_url: str,
         price: int = BAG_DEFAULT_PRICE,
     ) -> dict:
-        from src.engine.api_client import ERPSystemClient
+        from src.engine.native_db import get_native_db_client
 
         payload = {
             "title": title,
+            "product_type": "bubble_bag",
+            "bag_type": self._bag_type_from_title(title),
             "product_category_id": [category_id],
             "status": 0,
             "simple_desc": "",
@@ -597,7 +579,7 @@ class BagUploadWorkflow(BaseWorkflow):
                 }
             },
         }
-        return ERPSystemClient().product_save(payload)
+        return get_native_db_client().save_product(payload)
 
     def _update_existing_product_images(
         self,
@@ -608,13 +590,13 @@ class BagUploadWorkflow(BaseWorkflow):
         detail_url: str,
         price: int = BAG_DEFAULT_PRICE,
     ) -> dict:
-        from src.engine.api_client import ERPSystemClient
+        from src.engine.native_db import get_native_db_client
 
         product_id = int(existing_product.get("id") or existing_product.get("product_id") or 0)
         if not product_id:
             raise ValueError(f"编号 {code} 找到的商品缺少 product_id")
 
-        client = ERPSystemClient()
+        client = get_native_db_client()
         detail = self._load_product_for_edit(client, product_id)
         title = detail.get("title") or detail.get("name") or existing_product.get("title") or existing_product.get("name")
         category_ids = self._product_category_ids(detail) or self._product_category_ids(existing_product) or [category_id]
@@ -625,6 +607,8 @@ class BagUploadWorkflow(BaseWorkflow):
         payload = {
             "id": product_id,
             "title": title or existing_product.get("title") or code,
+            "product_type": "bubble_bag",
+            "bag_type": self._bag_type_from_title(title or existing_product.get("title") or ""),
             "product_category_id": category_ids,
             "status": int(detail.get("status") if detail.get("status") not in (None, "") else existing_product.get("status") or 0),
             "content": f'<p><img src="{html.escape(detail_url, quote=True)}" /></p>',
@@ -633,18 +617,30 @@ class BagUploadWorkflow(BaseWorkflow):
         }
         if simple_desc:
             payload["simple_desc"] = simple_desc
-        return client.product_save(payload)
+        return client.save_product(payload)
 
     def _load_product_for_edit(self, client, product_id: int) -> dict:
-        for loader in (client.product_save_info, client.product_detail):
-            try:
-                result = loader(product_id)
-                data = self._unwrap_api_data(result)
-                if isinstance(data, dict):
-                    return data
-            except Exception as e:
-                logger.warning(f"读取商品编辑资料失败: product_id={product_id}, error={e}")
+        try:
+            data = client.product_options(product_id).get("data") or client.product_info(product_id)
+            if isinstance(data, dict):
+                return data
+        except Exception as e:
+            logger.warning(f"读取自有库商品编辑资料失败: product_id={product_id}, error={e}")
         return {"id": product_id}
+
+    def _bag_type_from_title(self, title: str) -> str:
+        text = str(title or "")
+        if "长泡袋" in text:
+            return "长泡袋"
+        if "短泡袋" in text:
+            return "短泡袋"
+        if "红茶袋" in text:
+            return "红茶袋"
+        if "宽版" in text:
+            return "宽版"
+        if "空白" in text:
+            return "空白"
+        return "长泡袋" if "泡袋" in text else ""
 
     def _unwrap_api_data(self, result) -> dict:
         data = result.get("data") if isinstance(result, dict) else result
@@ -904,24 +900,20 @@ class BagUploadWorkflow(BaseWorkflow):
                 return part.strip('"')
         return text.strip('"') if Path(text.strip('"')).suffix.lower() in {".zip", ".png", ".jpg", ".jpeg", ".webp", ".bmp"} else ""
 
-    def _next_sj_code(self, start_number: int = 506) -> str:
+    def _next_sj_code(self, start_number: int = 1001) -> str:
         try:
-            from src.engine.db_client import get_db_client
+            from src.engine.native_db import get_native_db_client
 
-            db = get_db_client()
-            number = max(int(start_number or 506), 506)
-            while number < 99999:
-                code = f"SJ{number:04d}"
-                exists = 0
-                for table in ("sxo_plugins_erp_product", "sxo_plugins_erp_product_base", "sxo_goods_spec_base"):
-                    rows = db.query(f"SELECT COUNT(*) AS c FROM `{table}` WHERE coding=%s", (code,))
-                    exists += int((rows[0] if rows else {}).get("c") or 0)
-                if not exists:
-                    return code
-                number += 1
+            db = get_native_db_client()
+            with db.cursor() as cursor:
+                return db._next_sku_no(
+                    cursor,
+                    start_number=max(int(start_number or 1001), 1001),
+                    compact_from_start=True,
+                )
         except Exception as e:
-            logger.warning(f"获取 SJ 编号预览失败，使用本地测试编号 SJ0506: {e}")
-        return f"SJ{max(int(start_number or 506), 506):04d}"
+            logger.warning(f"SJ code preview failed, using fallback SJ1001: {e}")
+        return f"SJ{max(int(start_number or 1001), 1001):04d}"
 
     def _is_confirm(self, text: str) -> bool:
         return str(text or "").strip() in {"确认", "确定", "可以", "继续", "好", "没问题", "是"}

@@ -23,8 +23,8 @@ from scripts.common.unit_converter import calculate_purchase_quantity, is_one_pi
 
 logger = get_logger("sjagent.skills.order_flow")
 
-# 不查库存的类别（非礼盒类，直接从百鑫发货）
-NON_CHECK_CATEGORIES = ["泡袋", "包茶", "内衬", "PVC", "标签", "纸箱", "烫金泡袋", "提袋UV", "提袋丝印", "烫膜"]
+# 不查库存的类别。数据库的 is_stock_item/product_type 优先，这里只做旧数据兜底。
+NON_CHECK_CATEGORIES = ["泡袋", "茶袋", "包茶", "标签", "服务", "设计", "制版", "辅料", "烫金泡袋", "提袋UV", "提袋丝印", "烫膜"]
 
 # 单位映射
 UNIT_MAP = {"套": 1, "捆": 2, "个": 3, "斤": 4, "张": 5, "件": 1}
@@ -465,11 +465,12 @@ class OrderFlowWorkflow(BaseWorkflow):
         match = self.product_matcher.match(
             keyword,
             color=color,
-            use_inventory=True,
+            use_inventory=False,
             allow_product_fallback=True,
             product_limit=100,
             inventory_limit=80,
-            allow_llm=True,
+            allow_llm=False,
+            broad_keywords=False,
         )
         results = match.candidates
         target = match.product
@@ -479,11 +480,12 @@ class OrderFlowWorkflow(BaseWorkflow):
             no_color_match = self.product_matcher.match(
                 keyword,
                 color="",
-                use_inventory=True,
+                use_inventory=False,
                 allow_product_fallback=True,
                 product_limit=100,
                 inventory_limit=80,
-                allow_llm=True,
+                allow_llm=False,
+                broad_keywords=False,
             )
             if no_color_match.product is not None:
                 target = no_color_match.product
@@ -491,13 +493,10 @@ class OrderFlowWorkflow(BaseWorkflow):
                 color = ""
         if target is None:
             logger.warning(f"[OrderFlow] 商品未唯一确认: name={name}, color={color}, reason={match.reason}, results={len(results)}")
+            product["_match_candidates"] = results[:12]
             return None
 
         product_id = target.get("id") or target.get("product_id")
-        if product_id and ("产品名称" in target or not target.get("price")):
-            detail = self._product_detail(product_id)
-            if detail:
-                target = {**target, **detail}
         if product_id:
             detail = self._product_detail(product_id)
             if detail:
@@ -553,6 +552,9 @@ class OrderFlowWorkflow(BaseWorkflow):
             "price": float(price) if price else 0,
             "price_overridden": price_override is not None,
             "simple_desc": simple_desc,
+            "is_stock_item": int(target.get("is_stock_item") if target.get("is_stock_item") not in (None, "") else 1),
+            "product_type": target.get("product_type") or "",
+            "purchase_policy": target.get("purchase_policy") or "",
         }
         logger.info(f"[OrderFlow] 商品解析: {resolved['name']} {spec} → id={product_id}, qty={qty}, unit={unit}")
         return resolved
@@ -675,32 +677,35 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         brand = self._normalize_product_name(terms[0]).replace(" ", "")
         spec = self._normalize_product_name(terms[-1]).replace(" ", "")
-        spec_aliases = [spec]
-
-        title_expr = "REPLACE(REPLACE(REPLACE(title, '【', ''), '】', ''), ' ', '')"
-        spec_filters = " OR ".join([f"{title_expr} LIKE %s" for _ in spec_aliases])
-        sql = f"""
-        SELECT id, title, spec, simple_desc, price
-        FROM sxo_plugins_erp_product
-        WHERE {title_expr} LIKE %s
-          AND ({spec_filters})
-        """
-        params: list = [f"%{brand}%"] + [f"%{item}%" for item in spec_aliases]
-
         normalized_color = self._normalize_color(color)
-        if normalized_color:
-            sql += " AND (spec = %s OR spec LIKE %s)"
-            params.extend([normalized_color, f"%{normalized_color}%"])
-        sql += " ORDER BY id DESC LIMIT 30"
+        search_keyword = f"{brand} {spec}".strip()
 
         try:
-            rows = self.caller.call("db_query", sql=sql, params=tuple(params))
+            rows = self.caller.call("product_search", keyword=search_keyword) or []
         except Exception as e:
-            logger.warning(f"[OrderFlow] 字段商品匹配失败: {e}")
+            logger.warning(f"[OrderFlow] ????????: {e}")
             return []
-        rows = [row for row in rows or [] if isinstance(row, dict) and not row.get("error")]
-        logger.info(f"[OrderFlow] 字段商品匹配: brand={brand}, spec={spec}, color={normalized_color}, 结果={len(rows)}条")
-        return rows
+
+        candidates: list[dict] = []
+        seen: set[tuple] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            title = self._normalize_product_name(str(row.get("title") or row.get("name") or "")).replace(" ", "")
+            spec_text = self._normalize_product_name(str(row.get("spec") or row.get("color") or "")).replace(" ", "")
+            if brand and brand not in title:
+                continue
+            if spec and spec not in title:
+                continue
+            if normalized_color and normalized_color not in spec_text:
+                continue
+            key = (row.get("id"), row.get("spec") or row.get("color"))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(row)
+        logger.info(f"[OrderFlow] ??????: brand={brand}, spec={spec}, color={normalized_color}, ??={len(candidates)}?")
+        return candidates
 
     def _product_keywords(self, name: str) -> list[str]:
         specs = PRODUCT_SPECS
@@ -751,6 +756,9 @@ class OrderFlowWorkflow(BaseWorkflow):
         return "\n".join(lines)
 
     def _preview_product_candidates(self, product: dict) -> list[dict]:
+        existing = product.get("_match_candidates")
+        if isinstance(existing, list) and existing:
+            return existing
         name = product.get("name", "")
         color = product.get("color", "")
         keyword = self._normalize_product_name(name)
@@ -768,20 +776,12 @@ class OrderFlowWorkflow(BaseWorkflow):
 
     def _product_detail(self, product_id) -> dict | None:
         try:
-            from src.engine.api_client import ERPSystemClient
-            result = ERPSystemClient().product_detail(int(product_id))
-            data = result.get("data") if isinstance(result, dict) else None
-            if isinstance(data, dict) and isinstance(data.get("data"), dict):
-                data = data["data"]
+            data = self.caller.call("product_info", product_id=int(product_id))
             if isinstance(data, dict) and data:
                 return data
         except Exception as e:
-            logger.warning(f"[OrderFlow] 商品API详情查询失败: {e}")
-        try:
-            return self.caller.call("product_info", product_id=int(product_id))
-        except Exception as e:
             logger.warning(f"[OrderFlow] 商品详情查询失败: {e}")
-            return None
+        return None
 
     def _llm_product_keywords(self, name: str, color: str = "") -> list[str]:
         try:
@@ -948,7 +948,7 @@ class OrderFlowWorkflow(BaseWorkflow):
             return {"status": "ok", "warehouse_id": wid}
 
         # 检查是否所有商品都是非礼盒类
-        all_non_gift = all(self._is_non_gift(p["name"]) for p in products)
+        all_non_gift = all(not self._product_tracks_inventory(p) for p in products)
         logger.info(f"[OrderFlow] all_non_gift={all_non_gift}, products={[p['name'] for p in products]}")
         if all_non_gift:
             # 非礼盒类全部从百鑫发货
@@ -958,9 +958,9 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         # 有礼盒类商品 → 默认百鑫仓库，确认卡里可人工改为自己店里。
         for p in products:
-            is_non = self._is_non_gift(p["name"])
-            logger.info(f"[OrderFlow] 库存判断: {p['name']} → 非礼盒={is_non}")
-            if is_non:
+            tracks_inventory = self._product_tracks_inventory(p)
+            logger.info(f"[OrderFlow] 库存判断: {p['name']} → 查库存={tracks_inventory}")
+            if not tracks_inventory:
                 p["warehouse_id"] = 2
                 continue
 
@@ -1029,7 +1029,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         for p in products:
             product_warehouse_id = int(p.get("warehouse_id") or warehouse_id or 2)
             p["warehouse_id"] = product_warehouse_id
-            if self._is_non_gift(p.get("name", "")):
+            if not self._product_tracks_inventory(p):
                 p.pop("need_purchase", None)
                 p.pop("purchase_warehouse_id", None)
                 p.pop("shortage_qty", None)
@@ -1101,9 +1101,18 @@ class OrderFlowWorkflow(BaseWorkflow):
         per_piece = self._parse_sets_per_case(product.get("simple_desc", "")) or 0
         product_name = f"{product.get('name', '')} {product.get('title', '')}".strip()
 
-        should_use_piece = order_unit == "套" and per_piece > 1 and is_one_piece_order(product_name)
+        purchase_policy = str(product.get("purchase_policy") or "").strip()
+        should_use_piece = (
+            order_unit == "套"
+            and per_piece > 1
+            and (purchase_policy == "one_case" or (not purchase_policy and is_one_piece_order(product_name)))
+        )
         if should_use_piece:
-            computed_purchase_qty = calculate_purchase_quantity(shortage_qty, per_piece, product_name)
+            computed_purchase_qty = (
+                (shortage_qty + per_piece - 1) // per_piece
+                if purchase_policy == "one_case"
+                else calculate_purchase_quantity(shortage_qty, per_piece, product_name)
+            )
             purchase_qty = computed_purchase_qty
             purchase_unit = "件"
         else:
@@ -1117,7 +1126,11 @@ class OrderFlowWorkflow(BaseWorkflow):
             edited_purchase_qty = 0
         if edited_purchase_qty > 0:
             if should_use_piece and per_piece > 1 and edited_purchase_qty > computed_purchase_qty and edited_purchase_qty >= shortage_qty:
-                purchase_qty = calculate_purchase_quantity(edited_purchase_qty, per_piece, product_name)
+                purchase_qty = (
+                    (edited_purchase_qty + per_piece - 1) // per_piece
+                    if purchase_policy == "one_case"
+                    else calculate_purchase_quantity(edited_purchase_qty, per_piece, product_name)
+                )
             else:
                 purchase_qty = edited_purchase_qty
 
@@ -1129,6 +1142,22 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _is_non_gift(self, product_name: str) -> bool:
         """判断是否非礼盒类（不需要查库存）"""
         return any(cat in product_name for cat in NON_CHECK_CATEGORIES)
+
+    def _product_tracks_inventory(self, product: dict) -> bool:
+        """Use the native product inventory flag first, then fall back to old keywords."""
+        product_type = str(product.get("product_type") or "").strip().lower()
+        if product_type in {"bag", "bubble_bag"}:
+            return False
+        name_text = " ".join(str(product.get(key) or "") for key in ("name", "title", "spec", "product_category_text"))
+        if self._is_non_gift(name_text):
+            return False
+        value = product.get("is_stock_item")
+        if value not in (None, ""):
+            try:
+                return int(value) == 1
+            except (TypeError, ValueError):
+                return str(value).strip().lower() not in {"0", "false", "no", "off"}
+        return not self._is_non_gift(str(product.get("name") or ""))
 
     def _is_yes(self, text: str) -> bool:
         """Conservative confirmation parser for irreversible inventory/order actions."""

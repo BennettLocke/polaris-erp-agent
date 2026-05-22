@@ -841,6 +841,36 @@
       gap: 10px;
     }
 
+    .segmented {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: -6px 0 14px;
+    }
+
+    .segmented button {
+      min-height: 34px;
+      border-radius: 8px;
+      padding: 0 12px;
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+
+    .segmented button.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+    }
+
+    .table-panel {
+      grid-column: 1 / -1;
+      overflow: auto;
+    }
+
+    .wide-table {
+      min-width: 880px;
+    }
+
     .section-head {
       display: flex;
       align-items: center;
@@ -930,6 +960,25 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
+    }
+
+    .product-stock-toggle {
+      width: fit-content;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .product-stock-toggle input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--brand);
     }
 
     .order-row {
@@ -1266,6 +1315,13 @@
           </span>
           <span class="badge">18</span>
         </button>
+        <button data-view="customers">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-8 0"/><path d="M4 21a8 8 0 0 1 16 0"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+            <span>客户</span>
+          </span>
+          <span class="badge">新</span>
+        </button>
         <button data-view="inventory">
           <span class="nav-label">
             <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5 12 4l8 4.5-8 4.5z"/><path d="M4 8.5V16l8 4 8-4V8.5"/><path d="M12 13v7"/></svg>
@@ -1279,6 +1335,20 @@
             <span>商品</span>
           </span>
           <span class="badge">32</span>
+        </button>
+        <button data-view="product-assets">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="m8 15 2.5-3 2 2.2L15 11l3 4"/><path d="M9 8h.01"/></svg>
+            <span>图片资产</span>
+          </span>
+          <span class="badge">图</span>
+        </button>
+        <button data-view="settings">
+          <span class="nav-label">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2.1 2.1 0 0 1-2.97 2.97l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2.1 2.1 0 0 1-4.2 0v-.08a1.8 1.8 0 0 0-1.1-1.66 1.8 1.8 0 0 0-1.98.36l-.05.05a2.1 2.1 0 0 1-2.97-2.97l.05-.05A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-1.66-1.1H2.8a2.1 2.1 0 0 1 0-4.2h.08A1.8 1.8 0 0 0 4.54 8.6a1.8 1.8 0 0 0-.36-1.98l-.05-.05A2.1 2.1 0 0 1 7.1 3.6l.05.05a1.8 1.8 0 0 0 1.98.36A1.8 1.8 0 0 0 10.24 2.35V2.2a2.1 2.1 0 0 1 4.2 0v.08a1.8 1.8 0 0 0 1.1 1.66 1.8 1.8 0 0 0 1.98-.36l.05-.05a2.1 2.1 0 0 1 2.97 2.97l-.05.05a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.66 1.1h.08a2.1 2.1 0 0 1 0 4.2h-.08A1.8 1.8 0 0 0 19.4 15z"/></svg>
+            <span>设置</span>
+          </span>
+          <span class="badge">印</span>
         </button>
       </nav>
 
@@ -1394,6 +1464,22 @@
                     <input id="saleCreateTime" type="datetime-local">
                   </div>
                   <div class="sale-field">
+                    <label>结款</label>
+                    <select id="salePaymentStatus">
+                      <option value="paid" selected>已付</option>
+                      <option value="monthly">月结</option>
+                      <option value="unpaid">未付</option>
+                    </select>
+                  </div>
+                  <div class="sale-field" id="salePayTypeField">
+                    <label>已付方式</label>
+                    <select id="salePayType">
+                      <option value="wechat" selected>微信</option>
+                      <option value="cash">现金</option>
+                      <option value="balance">余额</option>
+                    </select>
+                  </div>
+                  <div class="sale-field">
                     <label>当前客户</label>
                     <div class="sale-readonly" id="saleSelectedCustomer">未选择客户</div>
                   </div>
@@ -1505,16 +1591,40 @@
           <div id="workflowList" class="section-grid"></div>
         </div>
 
+        <div class="view" id="customers">
+          <div class="section-head">
+            <div>
+              <h1>客户</h1>
+              <p>客户资料和登录用户统一放在这里查，手机号会作为客户和用户的连接线。</p>
+            </div>
+            <div class="pager" id="customerPager"></div>
+          </div>
+          <div class="segmented customer-tabs" id="customerTabBar">
+            <button class="active" data-customer-tab="customers">客户管理</button>
+            <button data-customer-tab="users">用户管理</button>
+          </div>
+          <div id="customerList" class="section-grid"></div>
+        </div>
+
         <div class="view" id="inventory">
           <div class="section-head">
             <div>
               <h1>库存</h1>
-              <p>按规格看颜色库存，两个仓库数量放在同一张卡里，方便调货、进货和盘点。</p>
+              <p>库存卡片、出入库、盘点、调拨、库存日志和仓库设置都从这里看。</p>
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
               <div id="inventoryPager" class="pager"></div>
               <button class="primary">新增进货</button>
             </div>
+          </div>
+          <div class="segmented inventory-tabs" id="inventoryTabBar">
+            <button class="active" data-inventory-tab="cards">库存卡片</button>
+            <button data-inventory-tab="balances">库存明细</button>
+            <button data-inventory-tab="stock-documents">出入库明细</button>
+            <button data-inventory-tab="stocktakes">盘点明细</button>
+            <button data-inventory-tab="transfers">调拨明细</button>
+            <button data-inventory-tab="ledger">库存日志</button>
+            <button data-inventory-tab="warehouses">仓库设置</button>
           </div>
           <div class="section-grid">
             <div class="business-card">
@@ -1541,6 +1651,70 @@
               </table>
               <div class="card-actions"><button>调货</button><button>进货</button><button>盘点</button></div>
             </div>
+          </div>
+        </div>
+
+        <div class="view" id="product-assets">
+          <div class="section-head">
+            <div>
+              <h1>图片资产</h1>
+              <p>商品主图、详情页、颜色图和待绑定图片都在这里集中管理。</p>
+            </div>
+            <div class="asset-head-actions">
+              <div id="assetPager" class="pager"></div>
+              <button class="primary" id="assetUploadButton">上传图片</button>
+            </div>
+          </div>
+          <div class="segmented asset-tabs" id="assetViewBar">
+            <button class="active" data-asset-view="products">按商品看</button>
+            <button data-asset-view="categories">按分类看</button>
+            <button data-asset-view="pending">待绑定</button>
+            <button data-asset-view="all">全部图片</button>
+          </div>
+          <div class="asset-group-bar" id="assetGroupBar"></div>
+          <div id="productAssetList" class="section-grid"></div>
+        </div>
+
+        <div class="view" id="settings">
+          <div class="section-head">
+            <div>
+              <h1>设置</h1>
+              <p>打印、编号这些基础规则都存在自己的数据库里。</p>
+            </div>
+          </div>
+          <div class="segmented settings-tabs">
+            <button class="active" type="button" data-settings-tab="number">编号设置</button>
+            <button type="button" data-settings-tab="product">商品基础</button>
+            <button type="button" data-settings-tab="inventory">库存规则</button>
+            <button type="button" data-settings-tab="payment">收款结款</button>
+            <button type="button" data-settings-tab="images">图片/OSS</button>
+            <button type="button" data-settings-tab="miniapp">小程序设计</button>
+            <button type="button" data-settings-tab="users">用户权限</button>
+            <button type="button" data-settings-tab="print">打印设置</button>
+          </div>
+          <div id="numberSettingsPanel" class="settings-layout">
+            <div class="empty">正在加载编号设置</div>
+          </div>
+          <div id="productSettingsPanel" class="settings-layout" hidden>
+            <div class="empty">正在加载商品基础设置</div>
+          </div>
+          <div id="inventorySettingsPanel" class="settings-layout" hidden>
+            <div class="empty">正在加载库存规则</div>
+          </div>
+          <div id="paymentSettingsPanel" class="settings-layout" hidden>
+            <div class="empty">正在加载收款结款设置</div>
+          </div>
+          <div id="imageSettingsPanel" class="settings-layout" hidden>
+            <div class="empty">正在加载图片/OSS 设置</div>
+          </div>
+          <div id="miniappSettingsPanel" class="settings-layout" hidden>
+            <div class="empty">正在加载小程序设计</div>
+          </div>
+          <div id="userSettingsPanel" class="settings-layout" hidden>
+            <div class="empty">正在加载用户权限</div>
+          </div>
+          <div id="printSettingsPanel" class="settings-layout" hidden>
+            <div class="empty">正在加载打印设置</div>
           </div>
         </div>
 

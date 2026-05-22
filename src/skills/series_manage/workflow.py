@@ -130,9 +130,24 @@ class SeriesManageWorkflow(BaseWorkflow):
         self._set_list(data, NON_ONE_PATH, non_one)
         self._save_lists_preserving_comments(one_piece, non_one)
         get_config().reload()
+        db_change = self._sync_database_rules(action, series)
+        if db_change:
+            change = f"{change}\n已同步商品库：SPU {db_change.get('spu', 0)} 个，SKU {db_change.get('sku', 0)} 个。"
         self._sync_wiki_rules(action, series, one_piece, non_one)
 
         return f"{change}\n当前1件起订：{'、'.join(one_piece) or '无'}\n当前非1件起订：{'、'.join(non_one) or '无'}"
+
+    def _sync_database_rules(self, action: str, series: list[str]) -> dict:
+        if action not in {"set_one_piece", "set_non_one_piece"}:
+            return {}
+        try:
+            from src.engine.native_db import get_native_db_client
+
+            policy = "one_case" if action == "set_one_piece" else "order_qty"
+            return get_native_db_client().update_purchase_policy_by_series(series, policy)
+        except Exception as e:
+            logger.warning(f"同步系列起订规则到商品库失败: {e}")
+            return {}
 
     def _sync_wiki_rules(self, action: str, series: list[str], one_piece: list[str], non_one: list[str]) -> None:
         try:

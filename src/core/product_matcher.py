@@ -46,11 +46,17 @@ class ProductMatcher:
         inventory_limit: int = 100,
         allow_product_fallback: bool = True,
         allow_llm: bool = True,
+        broad_keywords: bool = True,
     ) -> ProductMatch:
         detected_color = color or self.extract_color(name)
         normalized_name = self.normalize_name(name)
         normalized_color = self.normalize_color(detected_color)
         keywords = self.keywords(normalized_name)
+        if not broad_keywords:
+            compact = normalized_name.replace(" ", "")
+            keywords = [normalized_name]
+            if compact and compact != normalized_name:
+                keywords.append(compact)
         terms = self.terms(normalized_name)
         if not normalized_name:
             return ProductMatch(keywords=keywords, reason="empty_name")

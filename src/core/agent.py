@@ -22,7 +22,10 @@ class Agent:
             register_all_tools()
             _tools_registered = True
 
+        from src.core.skill_engine import SkillEngine
+
         self.config = get_config()
+        self.engine = SkillEngine()
         logger.info("Agent 初始化完成，工具已注册")
 
     def run(self, user_input: str, user_id: str = "default", session_id: str = "default") -> str:
@@ -40,9 +43,7 @@ class Agent:
         logger.info(f"[{session_id}] 用户输入: {user_input[:100]}...")
 
         try:
-            from src.core.skill_engine import SkillEngine
-            engine = SkillEngine()
-            output = engine.run(user_input, session_id)
+            output = self.engine.run(user_input, session_id)
 
             logger.info(f"[{session_id}] Agent输出: {output[:100]}...")
             return output

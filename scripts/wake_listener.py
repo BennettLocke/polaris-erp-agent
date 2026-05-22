@@ -364,6 +364,155 @@ def wav_to_pcm16(path: Path, *, gain: float = 1.0) -> tuple[bytes, int]:
     return frames, activity_rms(frames, width, rate)
 
 
+def pcm16_duration_ms(pcm: bytes, *, rate: int = 16000) -> int:
+    return int(len(pcm) / 2 / rate * 1000) if pcm else 0
+
+
+def _pcm16_frame_size(rate: int, frame_ms: int) -> int:
+    return max(2, int(rate * frame_ms / 1000) * 2)
+
+
+def _pcm16_frame_rms(pcm: bytes, *, rate: int = 16000, frame_ms: int = 20) -> list[int]:
+    frame_size = _pcm16_frame_size(rate, frame_ms)
+    return [
+        audioop.rms(pcm[offset : offset + frame_size], 2)
+        for offset in range(0, len(pcm) - frame_size + 1, frame_size)
+    ]
+
+
+def _percentile(values: list[int], ratio: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * ratio))))
+    return ordered[index]
+
+
+def _asr_activity_threshold(values: list[int], args) -> int:
+    if not values:
+        return args.asr_trim_min_rms
+    noise = _percentile(values, 0.20)
+    peak = max(values)
+    adaptive = int(noise * args.asr_noise_ratio + args.asr_noise_margin)
+    # Do not let one loud transient force the gate too high.
+    ceiling = max(args.asr_trim_min_rms, int(peak * 0.45))
+    return min(max(args.asr_trim_min_rms, adaptive), ceiling)
+
+
+def trim_pcm16_silence(pcm: bytes, *, threshold: int, rate: int = 16000, frame_ms: int = 20, keep_ms: int = 120) -> bytes:
+    if not pcm:
+        return pcm
+    frame_size = _pcm16_frame_size(rate, frame_ms)
+    frames = [
+        (offset, pcm[offset : offset + frame_size])
+        for offset in range(0, len(pcm) - frame_size + 1, frame_size)
+    ]
+    if not frames:
+        return pcm
+    active = [i for i, (_, frame) in enumerate(frames) if audioop.rms(frame, 2) >= threshold]
+    if not active:
+        return pcm
+    keep_frames = max(1, int(keep_ms / frame_ms))
+    start_frame = max(0, active[0] - keep_frames)
+    end_frame = min(len(frames), active[-1] + keep_frames + 1)
+    start = frames[start_frame][0]
+    end = frames[end_frame - 1][0] + len(frames[end_frame - 1][1])
+    return pcm[start:end]
+
+
+def noise_gate_pcm16(
+    pcm: bytes,
+    *,
+    threshold: int,
+    attenuation: float,
+    rate: int = 16000,
+    frame_ms: int = 20,
+) -> bytes:
+    if not pcm or attenuation >= 1.0:
+        return pcm
+    frame_size = _pcm16_frame_size(rate, frame_ms)
+    chunks: list[bytes] = []
+    for offset in range(0, len(pcm), frame_size):
+        frame = pcm[offset : offset + frame_size]
+        if len(frame) < 2:
+            continue
+        if len(frame) >= frame_size and audioop.rms(frame, 2) < threshold:
+            frame = audioop.mul(frame, 2, max(0.0, attenuation))
+        chunks.append(frame)
+    return b"".join(chunks)
+
+
+def normalize_pcm16_for_asr(pcm: bytes, args) -> bytes:
+    if not pcm:
+        return pcm
+    active_rms = activity_rms(pcm, 2, 16000)
+    if active_rms <= 0:
+        return pcm
+    peak = audioop.max(pcm, 2)
+    target = max(1, args.asr_target_rms)
+    factor = target / max(1, active_rms)
+    factor = min(args.asr_max_gain, max(args.asr_min_gain, factor))
+    if peak > 0:
+        factor = min(factor, args.asr_peak_limit / peak)
+    if abs(factor - 1.0) > 0.03:
+        pcm = audioop.mul(pcm, 2, factor)
+    return pcm
+
+
+def pad_pcm16_min_duration(pcm: bytes, *, min_ms: int, rate: int = 16000) -> bytes:
+    if min_ms <= 0:
+        return pcm
+    current_ms = pcm16_duration_ms(pcm, rate=rate)
+    if current_ms >= min_ms:
+        return pcm
+    missing_samples = int((min_ms - current_ms) * rate / 1000)
+    padding = b"\x00\x00" * max(0, missing_samples)
+    left = padding[: len(padding) // 2 // 2 * 2]
+    right = padding[len(left) :]
+    return left + pcm + right
+
+
+def prepare_asr_pcm16(pcm: bytes, args, *, source: str = "") -> bytes:
+    """Prepare a 16 kHz mono PCM16 utterance before sending it to cloud ASR."""
+    if not args.asr_preprocess or not pcm:
+        return pcm
+    before_ms = pcm16_duration_ms(pcm)
+    before_rms = activity_rms(pcm, 2, 16000) if pcm else 0
+    if len(pcm) % 2:
+        pcm = pcm[:-1]
+    avg = audioop.avg(pcm, 2)
+    if avg:
+        pcm = audioop.bias(pcm, 2, -avg)
+    values = _pcm16_frame_rms(pcm, frame_ms=args.asr_frame_ms)
+    threshold = _asr_activity_threshold(values, args)
+    if args.asr_trim_silence:
+        pcm = trim_pcm16_silence(
+            pcm,
+            threshold=threshold,
+            frame_ms=args.asr_frame_ms,
+            keep_ms=args.asr_trim_keep_ms,
+        )
+    if args.asr_noise_gate:
+        pcm = noise_gate_pcm16(
+            pcm,
+            threshold=max(args.asr_trim_min_rms, int(threshold * args.asr_noise_gate_ratio)),
+            attenuation=args.asr_noise_gate_attenuation,
+            frame_ms=args.asr_frame_ms,
+        )
+    pcm = normalize_pcm16_for_asr(pcm, args)
+    pcm = pad_pcm16_min_duration(pcm, min_ms=args.asr_min_audio_ms)
+    if args.verbose:
+        after_ms = pcm16_duration_ms(pcm)
+        after_rms = activity_rms(pcm, 2, 16000) if pcm else 0
+        print(
+            "ASR_PREPROCESS "
+            f"source={source or '-'} before_ms={before_ms} after_ms={after_ms} "
+            f"before_rms={before_rms} after_rms={after_rms} threshold={threshold}",
+            flush=True,
+        )
+    return pcm
+
+
 def activity_rms(frames: bytes, width: int, rate: int, *, window_ms: int = 200) -> int:
     """Use short-window peak RMS so quick wake words do not get averaged away."""
     window_bytes = max(width, int(rate * window_ms / 1000) * width)
@@ -417,7 +566,14 @@ def _open_webrtc_vad(args):
 
 
 class LocalWakeDetector:
-    def process(self, pcm16: bytes) -> bool:
+    def process(self, pcm16: bytes, *, force: bool = False) -> bool:
+        return False
+
+    def reset(self) -> None:
+        return
+
+    def finish(self) -> bool:
+        self.reset()
         return False
 
 
@@ -440,7 +596,7 @@ class PorcupineWakeDetector(LocalWakeDetector):
         self.buffer = array("h")
         print(f"local_wake=porcupine frame_length={self.frame_length}", flush=True)
 
-    def process(self, pcm16: bytes) -> bool:
+    def process(self, pcm16: bytes, *, force: bool = False) -> bool:
         samples = array("h")
         samples.frombytes(pcm16)
         self.buffer.extend(samples)
@@ -460,12 +616,21 @@ class OpenWakeWordDetector(LocalWakeDetector):
         model_paths = [p for p in args.openwakeword_model_path if p]
         if not model_paths:
             raise RuntimeError("openWakeWord needs --openwakeword-model-path /path/to/model.onnx")
-        self.model = Model(wakeword_models=model_paths)
+        feature_dir = ROOT / "models" / "openwakeword"
+        feature_kwargs = {}
+        melspec_model = feature_dir / "melspectrogram.onnx"
+        embedding_model = feature_dir / "embedding_model.onnx"
+        if melspec_model.exists() and embedding_model.exists():
+            feature_kwargs = {
+                "melspec_model_path": str(melspec_model),
+                "embedding_model_path": str(embedding_model),
+            }
+        self.model = Model(wakeword_models=model_paths, inference_framework="onnx", **feature_kwargs)
         self.threshold = args.openwakeword_threshold
         self.buffer = array("h")
         print(f"local_wake=openwakeword threshold={self.threshold}", flush=True)
 
-    def process(self, pcm16: bytes) -> bool:
+    def process(self, pcm16: bytes, *, force: bool = False) -> bool:
         import numpy as np
 
         samples = array("h")
@@ -481,6 +646,17 @@ class OpenWakeWordDetector(LocalWakeDetector):
                 print(f"LOCAL_WAKE_SCORE {prediction}", flush=True)
                 detected = True
         return detected
+
+    def reset(self) -> None:
+        self.buffer = array("h")
+        try:
+            self.model.reset()
+        except Exception:
+            pass
+
+    def finish(self) -> bool:
+        self.reset()
+        return False
 
 
 class SherpaKeywordWakeDetector(LocalWakeDetector):
@@ -518,14 +694,15 @@ class SherpaKeywordWakeDetector(LocalWakeDetector):
             provider="cpu",
         )
         self.stream = self.spotter.create_stream()
+        self.tail_padding = self.np.zeros(int(0.66 * 16000), dtype=self.np.float32)
         print(
             f"local_wake=sherpa model={model_dir.name} keywords={keywords_file} "
             f"chunk={chunk} int8={args.sherpa_int8}",
             flush=True,
         )
 
-    def process(self, pcm16: bytes) -> bool:
-        if audioop.rms(pcm16, 2) < self.min_rms:
+    def process(self, pcm16: bytes, *, force: bool = False) -> bool:
+        if not force and audioop.rms(pcm16, 2) < self.min_rms:
             return False
         samples = self.np.frombuffer(pcm16, dtype=self.np.int16).astype(self.np.float32) / 32768.0
         self.stream.accept_waveform(16000, samples)
@@ -535,8 +712,26 @@ class SherpaKeywordWakeDetector(LocalWakeDetector):
             result = self.spotter.get_result(self.stream)
             if result:
                 print(f"LOCAL_WAKE_SHERPA {result}", flush=True)
-                self.spotter.reset_stream(self.stream)
+                self.reset()
                 detected = True
+        return detected
+
+    def reset(self) -> None:
+        self.spotter.reset_stream(self.stream)
+        self.stream = self.spotter.create_stream()
+
+    def finish(self) -> bool:
+        self.stream.accept_waveform(16000, self.tail_padding)
+        self.stream.input_finished()
+        detected = False
+        while self.spotter.is_ready(self.stream):
+            self.spotter.decode_stream(self.stream)
+            result = self.spotter.get_result(self.stream)
+            if result:
+                print(f"LOCAL_WAKE_SHERPA {result}", flush=True)
+                detected = True
+                break
+        self.stream = self.spotter.create_stream()
         return detected
 
 
@@ -761,6 +956,17 @@ def handle_command(args, command: str) -> bool:
     return True
 
 
+def should_continue_command_window(command: str) -> bool:
+    command = normalize_command_text(command)
+    if not command:
+        return False
+    if is_wake_text(command):
+        return False
+    if is_ignorable_voice_command(command):
+        return False
+    return True
+
+
 def run_once(args) -> bool:
     with tempfile.TemporaryDirectory(prefix="sjagent-wake-") as tmp:
         wav_path = Path(tmp) / "chunk.wav"
@@ -772,6 +978,7 @@ def run_once(args) -> bool:
         return False
 
     try:
+        pcm = prepare_asr_pcm16(pcm, args, source="chunk")
         text = recognize(args, pcm)
     except Exception as exc:
         print(f"ASR_ERROR {exc}", flush=True)
@@ -814,6 +1021,12 @@ def run_stream(args) -> None:
     max_speech_frames = max(1, int(args.vad_max_seconds / frame_seconds))
     min_speech_frames = max(1, int(args.vad_min_speech_ms / args.vad_frame_ms))
     start_speech_frames = max(1, args.vad_start_frames)
+    local_wake_reset_frames = max(1, int(350 / args.vad_frame_ms))
+    local_wake_max_frames = max(1, int(2500 / args.vad_frame_ms))
+    local_wake_segment_active = False
+    local_wake_segment_frames = 0
+    local_wake_segment_peak = 0
+    local_wake_inactive_frames = 0
     calibration_frames = max(1, int(args.vad_calibration_ms / args.vad_frame_ms))
     calibration: list[int] = []
     waiting_command_until = 0.0
@@ -845,22 +1058,6 @@ def run_stream(args) -> None:
         if not speaking:
             noise_floor = noise_floor * 0.94 + rms * 0.06
 
-        if local_wake and not waiting_command_until and local_wake.process(pcm):
-            print("LOCAL_WAKE detected", flush=True)
-            waiting_command_until = time.monotonic() + args.command_window_seconds
-            print("command_window=opened", flush=True)
-            screen_notify(args, "listen", role="assistant", text="我在听。")
-            play_prompt_async("wake", device=args.output_device)
-            ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
-            pre_roll.clear()
-            speaking = False
-            speech_frames = []
-            silence_frames = 0
-            speech_frames_count = 0
-            active_streak = 0
-            expecting_command_utterance = False
-            continue
-
         threshold = _vad_threshold(noise_floor, args)
         energy_active = rms >= threshold
         vad_active = False
@@ -875,6 +1072,97 @@ def run_stream(args) -> None:
                 flush=True,
             )
 
+        if local_wake and not waiting_command_until:
+            if active:
+                if not local_wake_segment_active and args.wake_debug:
+                    print(
+                        f"WAKE_SEGMENT start rms={rms} noise={int(noise_floor)} "
+                        f"threshold={int(threshold)}",
+                        flush=True,
+                    )
+                local_wake_segment_active = True
+                local_wake_segment_frames = 0 if not local_wake_segment_frames else local_wake_segment_frames
+                local_wake_segment_peak = max(local_wake_segment_peak, rms)
+                local_wake_inactive_frames = 0
+            else:
+                local_wake_inactive_frames += 1
+                if local_wake_inactive_frames >= local_wake_reset_frames and not local_wake_segment_active:
+                    local_wake.reset()
+                    local_wake_inactive_frames = 0
+            if local_wake_segment_active:
+                local_wake_segment_frames += 1
+                if local_wake.process(pcm, force=True):
+                    print("LOCAL_WAKE detected", flush=True)
+                    local_wake_segment_active = False
+                    local_wake_segment_frames = 0
+                    local_wake_segment_peak = 0
+                    local_wake_inactive_frames = 0
+                    local_wake.reset()
+                    if args.wake_only:
+                        screen_notify(args, "listen", role="assistant", text="我在听。")
+                        if not args.no_wake_prompt:
+                            play_prompt_async("wake", device=args.output_device)
+                        ignore_audio_until = time.monotonic() + max(args.wake_reply_ignore_seconds, args.cooldown)
+                        time.sleep(args.cooldown)
+                        continue
+                    waiting_command_until = time.monotonic() + args.command_window_seconds
+                    print("command_window=opened", flush=True)
+                    screen_notify(args, "listen", role="assistant", text="我在听。")
+                    if not args.no_wake_prompt:
+                        play_prompt_async("wake", device=args.output_device)
+                    ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
+                    pre_roll.clear()
+                    speaking = False
+                    speech_frames = []
+                    silence_frames = 0
+                    speech_frames_count = 0
+                    active_streak = 0
+                    expecting_command_utterance = False
+                    continue
+                if (
+                    local_wake_inactive_frames >= local_wake_reset_frames
+                    or local_wake_segment_frames >= local_wake_max_frames
+                ):
+                    detected_on_finish = local_wake.finish()
+                    if detected_on_finish:
+                        print("LOCAL_WAKE detected", flush=True)
+                        local_wake_segment_active = False
+                        local_wake_segment_frames = 0
+                        local_wake_segment_peak = 0
+                        local_wake_inactive_frames = 0
+                        local_wake.reset()
+                        if args.wake_only:
+                            screen_notify(args, "listen", role="assistant", text="我在听。")
+                            if not args.no_wake_prompt:
+                                play_prompt_async("wake", device=args.output_device)
+                            ignore_audio_until = time.monotonic() + max(args.wake_reply_ignore_seconds, args.cooldown)
+                            time.sleep(args.cooldown)
+                            continue
+                        waiting_command_until = time.monotonic() + args.command_window_seconds
+                        print("command_window=opened", flush=True)
+                        screen_notify(args, "listen", role="assistant", text="我在听。")
+                        if not args.no_wake_prompt:
+                            play_prompt_async("wake", device=args.output_device)
+                        ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
+                        pre_roll.clear()
+                        speaking = False
+                        speech_frames = []
+                        silence_frames = 0
+                        speech_frames_count = 0
+                        active_streak = 0
+                        expecting_command_utterance = False
+                        continue
+                    if args.wake_debug:
+                        print(
+                            f"WAKE_SEGMENT end frames={local_wake_segment_frames} "
+                            f"peak={local_wake_segment_peak} detected=0",
+                            flush=True,
+                        )
+                    local_wake_segment_active = False
+                    local_wake_segment_frames = 0
+                    local_wake_segment_peak = 0
+                    local_wake_inactive_frames = 0
+
         if not speaking:
             pre_roll.append(pcm)
             if len(pre_roll) > max_pre_roll:
@@ -887,7 +1175,12 @@ def run_stream(args) -> None:
                 speaking = True
                 speech_frames = list(pre_roll)
                 expecting_command_utterance = bool(waiting_command_until)
-                if expecting_command_utterance and args.asr_provider == "volc" and args.stream_command_asr:
+                if (
+                    expecting_command_utterance
+                    and args.asr_provider == "volc"
+                    and args.stream_command_asr
+                    and not args.asr_preprocess
+                ):
                     streaming_asr = VolcStreamingRecognizer(timeout=args.asr_timeout)
                     for frame in speech_frames:
                         streaming_asr.feed(frame)
@@ -929,6 +1222,7 @@ def run_stream(args) -> None:
                 text = streaming_asr.finish()
                 streaming_asr = None
             else:
+                utterance = prepare_asr_pcm16(utterance, args, source="stream")
                 text = recognize(args, utterance)
         except Exception as exc:
             streaming_asr = None
@@ -940,6 +1234,8 @@ def run_stream(args) -> None:
             expecting_command_utterance = False
             if handle_command(args, text):
                 waiting_command_until = 0.0
+            elif not should_continue_command_window(text):
+                print("command_window=kept", flush=True)
             else:
                 waiting_command_until = time.monotonic() + args.command_window_seconds
                 print("command_window=continued", flush=True)
@@ -951,14 +1247,16 @@ def run_stream(args) -> None:
             learn_wake_variants(text)
             if command_tail:
                 screen_notify(args, "listen", role="assistant", text="我在听。")
-                play_prompt_async("wake", device=args.output_device)
+                if not args.no_wake_prompt:
+                    play_prompt_async("wake", device=args.output_device)
                 ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
                 handle_command(args, command_tail)
             elif args.assistant_mode:
                 waiting_command_until = time.monotonic() + args.command_window_seconds
                 print("command_window=opened", flush=True)
                 screen_notify(args, "listen", role="assistant", text="我在听。")
-                play_prompt_async("wake", device=args.output_device)
+                if not args.no_wake_prompt:
+                    play_prompt_async("wake", device=args.output_device)
                 ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
             if not waiting_command_until:
                 time.sleep(args.cooldown)
@@ -977,9 +1275,27 @@ def main() -> None:
     parser.add_argument("--asr-provider", choices=["volc", "aliyun"], default="volc")
     parser.add_argument("--asr-timeout", type=int, default=15)
     parser.add_argument("--stream-command-asr", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--asr-preprocess", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--asr-frame-ms", type=int, default=20, choices=[10, 20, 30])
+    parser.add_argument("--asr-trim-silence", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--asr-trim-keep-ms", type=int, default=120)
+    parser.add_argument("--asr-trim-min-rms", type=int, default=120)
+    parser.add_argument("--asr-noise-ratio", type=float, default=1.8)
+    parser.add_argument("--asr-noise-margin", type=int, default=90)
+    parser.add_argument("--asr-noise-gate", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--asr-noise-gate-ratio", type=float, default=0.85)
+    parser.add_argument("--asr-noise-gate-attenuation", type=float, default=0.18)
+    parser.add_argument("--asr-target-rms", type=int, default=2800)
+    parser.add_argument("--asr-min-gain", type=float, default=0.45)
+    parser.add_argument("--asr-max-gain", type=float, default=3.0)
+    parser.add_argument("--asr-peak-limit", type=int, default=26000)
+    parser.add_argument("--asr-min-audio-ms", type=int, default=1000)
     parser.add_argument("--once", action="store_true", help="Record and process one chunk")
     parser.add_argument("--stream-vad", action="store_true", help="Use continuous local VAD before ASR")
     parser.add_argument("--assistant-mode", action="store_true", help="After wake word, listen for one command")
+    parser.add_argument("--wake-only", action="store_true", help="Only test local wake; do not open command ASR window")
+    parser.add_argument("--wake-debug", action="store_true", help="Print compact local wake segment debug logs")
+    parser.add_argument("--no-wake-prompt", action="store_true", help="Do not play a wake prompt after local wake")
     parser.add_argument("--command-window-seconds", type=float, default=8.0)
     parser.add_argument("--wake-reply-ignore-seconds", type=float, default=0.8)
     parser.add_argument("--agent-session-id", default="orangepi_voice")

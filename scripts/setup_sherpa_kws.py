@@ -36,15 +36,19 @@ def ensure_model(models_dir: Path) -> Path:
 
 
 def write_keywords(models_dir: Path) -> Path:
-    # Keep near-sound aliases local-only. They make wake more forgiving while
-    # cloud ASR remains disabled before wake, so they no longer trigger command
-    # handling through the old ASR fallback.
+    # Keep the wake list strict for always-on listening. Near-sound aliases such
+    # as "小心小心" are too easy to false-trigger on this small board mic.
     raw = models_dir / "xiaoxing_keywords_raw.txt"
     raw.write_text(
-        "\u5c0f\u661f :4.0 #0.12 @\u5c0f\u661f\n"
-        "\u6653\u661f :3.5 #0.12 @\u6653\u661f\n"
-        "\u5c0f\u65b0 :2.5 #0.16 @\u5c0f\u65b0\n"
-        "\u5c0f\u5fc3 :2.5 #0.16 @\u5c0f\u5fc3\n",
+        "\u5c0f\u661f\u5c0f\u661f :3.5 #0.08 @\u5c0f\u661f\u5c0f\u661f\n"
+        "\u5c0f\u661f\u5728\u5417 :3.4 #0.08 @\u5c0f\u661f\u5728\u5417\n"
+        "\u6653\u661f\u6653\u661f :3.4 #0.08 @\u6653\u661f\u6653\u661f\n"
+        "\u5c0f\u661f\u540c\u5b66 :3.4 #0.08 @\u5c0f\u661f\u540c\u5b66\n"
+        "\u5c0f\u661f\u9192\u9192 :3.4 #0.08 @\u5c0f\u661f\u9192\u9192\n"
+        "\u5c0f\u661f\u52a9\u624b :3.4 #0.08 @\u5c0f\u661f\u52a9\u624b\n"
+        "\u5c0f\u5fc3\u5c0f\u5fc3 :3.6 #0.09 @\u5c0f\u5fc3\u5c0f\u5fc3\n"
+        "\u5c0f\u5b81\u5c0f\u5b81 :3.6 #0.09 @\u5c0f\u5b81\u5c0f\u5b81\n"
+        "\u5c0f\u65b0\u5c0f\u65b0 :3.8 #0.10 @\u5c0f\u65b0\u5c0f\u65b0\n",
         encoding="utf-8",
     )
     return raw

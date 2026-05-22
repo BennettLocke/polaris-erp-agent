@@ -5,6 +5,7 @@ const LIST_LIMITS = {
   workflow: 100,
   inventory: 160,
   products: 120,
+  customers: 200,
   choice: 20,
   context: 1
 };
@@ -26,9 +27,16 @@ const state = {
   workflowLoadedAt: 0,
   workflowFilter: "active",
   lastInventoryCards: [],
+  inventoryTab: "cards",
+  lastInventoryRows: [],
   inventoryPage: 1,
   inventoryPageSize: 8,
   inventoryTotal: 0,
+  customerTab: "customers",
+  lastCustomers: [],
+  customerPage: 1,
+  customerPageSize: 50,
+  customerTotal: 0,
   contextInventory: null,
   businessHistory: [],
   lastProducts: [],
@@ -36,8 +44,23 @@ const state = {
   productPageSize: 20,
   productTotal: 0,
   productCategoryId: "",
+  productCategoryGroupKey: "",
   productCategories: [],
   productUnits: [],
+  productMediaAssets: [],
+  productAssets: [],
+  productAssetView: "products",
+  productAssetTab: "",
+  productAssetGroup: "",
+  productAssetProductGroups: [],
+  productAssetDetailKey: "",
+  productAssetPage: 1,
+  productAssetPageSize: 80,
+  productAssetTotal: 0,
+  productAssetLastFilter: "",
+  productAssetPickerTarget: null,
+  productAssetPickerTab: "",
+  productAssetPickerKeyword: "",
   productStatuses: [
     { value: 0, name: "正常" },
     { value: 1, name: "下架" },
@@ -45,6 +68,12 @@ const state = {
     { value: 3, name: "停产" }
   ],
   productUploadTarget: null,
+  settingsTab: "number",
+  printSettings: null,
+  numberSettings: null,
+  miniappDesignSettings: null,
+  miniappDesignDraft: null,
+  miniappSelectedIndex: 0,
   saleCustomer: null,
   saleProduct: null,
   saleProductGroups: [],
@@ -77,6 +106,27 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+function imageThumbUrl(url, width = 240) {
+  const clean = String(url || "").trim();
+  if (!clean || !/^https?:\/\//i.test(clean) || clean.includes("x-oss-process=")) return clean;
+  let parsed;
+  try {
+    parsed = new URL(clean);
+  } catch {
+    return clean;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (!host.includes("513sjbz.com") && !host.includes("aliyuncs.com")) return clean;
+  const safeWidth = Math.max(80, Math.min(Number(width || 240), 1200));
+  return `${clean}${clean.includes("?") ? "&" : "?"}x-oss-process=image/resize,w_${safeWidth}/quality,q_80`;
+}
+
+function lazyImageHtml(url, width = 240, alt = "") {
+  const raw = String(url || "").trim();
+  const src = imageThumbUrl(raw, width);
+  return `<img src="${escapeAttr(src)}" data-full-src="${escapeAttr(raw)}" loading="lazy" decoding="async" alt="${escapeAttr(alt)}" onerror="this.onerror=null;this.src=this.dataset.fullSrc||this.src;">`;
 }
 
 function money(value) {
@@ -266,15 +316,23 @@ function setupDom() {
     ordersView.appendChild(grid);
   }
 
+  const customerGrid = document.querySelector("#customers .section-grid");
+  if (customerGrid) customerGrid.id = "customerList";
+
   insertToolbar("sales", "salesKeyword", "搜索客户 / 商品 / 订单号", "salesSearchBtn");
   insertToolbar("orders", "workflowKeyword", "搜索客户 / 商品 / 电话", "workflowSearchBtn");
+  insertToolbar("customers", "customerKeyword", "搜索客户 / 用户 / 电话", "customerSearchBtn");
   insertToolbar("inventory", "inventoryKeyword", "搜索礼盒 / 颜色", "inventorySearchBtn");
   insertToolbar("products", "productKeyword", "搜索商品关键词", "productSearchBtn");
+  insertToolbar("product-assets", "assetKeyword", "搜索分类 / 产品 / 图片地址", "assetSearchBtn");
 
   setBadge("sales", "-");
   setBadge("orders", "-");
+  setBadge("customers", "-");
   setBadge("inventory", "-");
   setBadge("products", "-");
+  setBadge("product-assets", "-");
+  setBadge("settings", "设");
 }
 
 function insertToolbar(viewId, inputId, placeholder, buttonId) {
@@ -317,13 +375,1135 @@ function setView(name) {
   });
   if (name === "sale-create") {
     setDefaultSaleCreateTime();
+    syncSalePaymentUi();
     renderSaleLines();
   }
   if (name === "sales" && !state.lastSalesCards.length) loadSales();
   if (name === "orders" && !state.lastWorkflowCards.length) loadWorkflow();
+  if (name === "customers" && !state.lastCustomers.length) loadCustomers(1);
   if (name === "inventory" && !state.lastInventoryCards.length) loadInventory();
   if (name === "products" && !state.lastProducts.length) loadProducts();
+  if (name === "product-assets") loadProductAssets();
+  if (name === "settings") loadSettings();
   scheduleActiveListRefresh(name);
+}
+
+function checkedAttr(value) {
+  return Number(value || 0) ? "checked" : "";
+}
+
+function setSettingsTab(tab = "print") {
+  const validTabs = new Set(["number", "product", "inventory", "payment", "images", "miniapp", "users", "print"]);
+  const clean = validTabs.has(tab) ? tab : "number";
+  state.settingsTab = clean;
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.settingsTab === clean);
+  });
+  const panelMap = {
+    number: "numberSettingsPanel",
+    product: "productSettingsPanel",
+    inventory: "inventorySettingsPanel",
+    payment: "paymentSettingsPanel",
+    images: "imageSettingsPanel",
+    miniapp: "miniappSettingsPanel",
+    users: "userSettingsPanel",
+    print: "printSettingsPanel"
+  };
+  Object.entries(panelMap).forEach(([key, id]) => {
+    const panel = $(id);
+    if (panel) panel.hidden = key !== clean;
+  });
+  if (clean === "number") loadNumberSettings();
+  else if (clean === "product") loadProductBasicSettings();
+  else if (clean === "inventory") loadInventoryRuleSettings();
+  else if (clean === "payment") loadPaymentRuleSettings();
+  else if (clean === "miniapp") loadMiniappDesignSettings();
+  else if (clean === "users") loadPermissionSettings();
+  else if (clean === "images") loadImageSettings();
+  else loadPrintSettings();
+}
+
+function loadSettings() {
+  setSettingsTab(state.settingsTab || "number");
+}
+
+async function loadPrintSettings() {
+  const panel = $("printSettingsPanel");
+  if (!panel) return;
+  if (!state.printSettings) panel.innerHTML = '<div class="empty">正在加载打印设置</div>';
+  try {
+    const res = await api("/api/settings/print/sales");
+    state.printSettings = (res && res.data) || {};
+    renderPrintSettings(state.printSettings);
+  } catch (err) {
+    panel.innerHTML = `<div class="empty">打印设置加载失败：${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderPrintSettings(settings = {}) {
+  const panel = $("printSettingsPanel");
+  if (!panel) return;
+  const latestText = settings.latest_sales_no
+    ? `最近一张销售单：${escapeHtml(settings.latest_sales_no)}`
+    : "还没有可预览的销售单";
+  panel.innerHTML = `
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>销售单打印模板</h3>
+          <p>这里只设置销售单打印，进货单、采购单这些先不做。</p>
+        </div>
+        <span class="tag green-outline">${latestText}</span>
+      </div>
+      <div class="settings-grid">
+        <label class="setting-field">模板名称
+          <input id="printTemplateName" value="${escapeAttr(settings.name || "默认销售单模板")}">
+        </label>
+        <label class="setting-field">标题
+          <input id="printHeaderText" value="${escapeAttr(settings.header_text || "肆计包装销售单")}">
+        </label>
+        <label class="setting-field">纸张
+          <select id="printPaperSize">
+            <option value="A4" ${settings.paper_size === "A4" ? "selected" : ""}>A4</option>
+            <option value="A5" ${settings.paper_size === "A5" ? "selected" : ""}>A5</option>
+            <option value="80mm" ${settings.paper_size === "80mm" ? "selected" : ""}>80mm 小票</option>
+          </select>
+        </label>
+        <label class="setting-field">方向
+          <select id="printOrientation">
+            <option value="portrait" ${settings.orientation !== "landscape" ? "selected" : ""}>竖向</option>
+            <option value="landscape" ${settings.orientation === "landscape" ? "selected" : ""}>横向</option>
+          </select>
+        </label>
+        <label class="setting-field">字号
+          <input id="printFontSize" type="number" min="10" max="18" value="${escapeAttr(settings.font_size || 12)}">
+        </label>
+        <label class="setting-field">打印份数
+          <input id="printCopies" type="number" min="1" max="5" value="${escapeAttr(settings.copies || 1)}">
+        </label>
+        <div class="setting-field full">
+          <span>显示内容</span>
+          <div class="print-toggle-grid">
+            <label class="print-toggle"><input id="printShowOperator" type="checkbox" ${checkedAttr(settings.show_operator)}> 开单人</label>
+            <label class="print-toggle"><input id="printShowCustomerPhone" type="checkbox" ${checkedAttr(settings.show_customer_phone)}> 客户电话</label>
+            <label class="print-toggle"><input id="printShowPayment" type="checkbox" ${checkedAttr(settings.show_payment)}> 付款状态</label>
+            <label class="print-toggle"><input id="printShowNote" type="checkbox" ${checkedAttr(settings.show_note)}> 备注</label>
+          </div>
+        </div>
+        <label class="setting-field full">底部文字
+          <textarea id="printFooterText">${escapeHtml(settings.footer_text || "")}</textarea>
+        </label>
+        <label class="setting-field full">模板样式
+          <textarea id="printCustomCss" placeholder="可选：写一点打印页 CSS">${escapeHtml(settings.custom_css || "")}</textarea>
+        </label>
+      </div>
+      <div class="print-template-note">销售单打印页现在由 sjagent_core 数据生成。点销售单上的“打印”只创建打印任务，AI 打印也走同一条队列；预览按钮才会打开页面。</div>
+      <div class="print-settings-actions">
+        <button id="previewPrintSettings" type="button">预览最近销售单</button>
+        <button class="primary" id="savePrintSettings" type="button">保存设置</button>
+      </div>
+    </section>`;
+}
+
+function collectPrintSettings() {
+  return {
+    name: $("printTemplateName") ? $("printTemplateName").value : "",
+    header_text: $("printHeaderText") ? $("printHeaderText").value : "",
+    paper_size: $("printPaperSize") ? $("printPaperSize").value : "A4",
+    orientation: $("printOrientation") ? $("printOrientation").value : "portrait",
+    font_size: $("printFontSize") ? Number($("printFontSize").value || 12) : 12,
+    copies: $("printCopies") ? Number($("printCopies").value || 1) : 1,
+    show_operator: $("printShowOperator") && $("printShowOperator").checked ? 1 : 0,
+    show_customer_phone: $("printShowCustomerPhone") && $("printShowCustomerPhone").checked ? 1 : 0,
+    show_payment: $("printShowPayment") && $("printShowPayment").checked ? 1 : 0,
+    show_note: $("printShowNote") && $("printShowNote").checked ? 1 : 0,
+    footer_text: $("printFooterText") ? $("printFooterText").value : "",
+    custom_css: $("printCustomCss") ? $("printCustomCss").value : ""
+  };
+}
+
+async function savePrintSettings() {
+  const button = $("savePrintSettings");
+  if (button) { button.classList.add("loading"); button.textContent = "保存中"; }
+  try {
+    const res = await api("/api/settings/print/sales", { method: "POST", body: collectPrintSettings() });
+    state.printSettings = (res && res.data) || {};
+    renderPrintSettings(state.printSettings);
+    toast("打印设置已保存");
+  } finally {
+    const nextButton = $("savePrintSettings");
+    if (nextButton) { nextButton.classList.remove("loading"); nextButton.textContent = "保存设置"; }
+  }
+}
+
+function previewPrintSettings() {
+  const salesId = state.printSettings && state.printSettings.latest_sales_id;
+  if (!salesId) return toast("还没有可预览的销售单", true);
+  window.open(`/api/sales/${encodeURIComponent(salesId)}/print-html?auto=0`, "_blank", "noopener");
+}
+
+function settingListText(value) {
+  if (Array.isArray(value)) return value.join("\n");
+  return String(value || "");
+}
+
+function settingListValue(id) {
+  const el = $(id);
+  return String(el ? el.value : "")
+    .split(/[\n,，、]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function checkedValue(id) {
+  const el = $(id);
+  return el && el.checked ? 1 : 0;
+}
+
+function settingRowValue(row, selector = "input") {
+  const el = row.querySelector(selector);
+  return el ? String(el.value || "").trim() : "";
+}
+
+function settingTextRowHtml(kind, value = "", { placeholder = "名称", removable = true, meta = "" } = {}) {
+  return `<div class="setting-row two" data-setting-row="${escapeAttr(kind)}">
+    <input value="${escapeAttr(value)}" placeholder="${escapeAttr(placeholder)}">
+    ${meta ? `<span class="tag">${escapeHtml(meta)}</span>` : ""}
+    ${removable ? `<button type="button" class="setting-delete" data-remove-setting-row title="删除">×</button>` : ""}
+  </div>`;
+}
+
+function settingCategoryRowHtml(item = {}, index = 0) {
+  const name = String(item.name || item.key || "");
+  const type = String(item.product_type || item.key || "").toLowerCase();
+  const fixedNoStock = type === "bag" || /泡袋|茶袋/.test(name);
+  const stock = fixedNoStock ? false : Number(item.is_stock_item ?? item.stock ?? 1) === 1;
+  return `<div class="setting-row" data-setting-row="product-category">
+    <input class="setting-category-name" value="${escapeAttr(name)}" placeholder="分类名称">
+    ${fixedNoStock ? '<span class="tag green-outline">固定不扣库存</span>' : `<div class="setting-segment" data-stock-toggle>
+      <button type="button" class="${stock ? "active" : ""}" data-stock-value="1">扣库存</button>
+      <button type="button" class="${!stock ? "active" : ""}" data-stock-value="0">不扣库存</button>
+    </div>`}
+    <button type="button" class="setting-delete" data-remove-setting-row title="删除">×</button>
+  </div>`;
+}
+
+function settingPaymentRowHtml(kind, value = "", currentDefault = "") {
+  const safeValue = String(value || "").trim();
+  return `<div class="setting-row" data-setting-row="${escapeAttr(kind)}">
+    <input value="${escapeAttr(safeValue)}" placeholder="选项名称">
+    <label class="setting-radio"><input type="radio" name="${escapeAttr(kind)}Default" ${safeValue === currentDefault ? "checked" : ""}>默认</label>
+    <button type="button" class="setting-delete" data-remove-setting-row title="删除">×</button>
+  </div>`;
+}
+
+function settingRowsValues(containerId) {
+  const container = $(containerId);
+  if (!container) return [];
+  return Array.from(container.querySelectorAll("[data-setting-row]"))
+    .map((row) => settingRowValue(row))
+    .filter(Boolean);
+}
+
+function appendSettingRow(containerId, html) {
+  const container = $(containerId);
+  if (!container) return;
+  container.insertAdjacentHTML("beforeend", html);
+  const input = container.querySelector("[data-setting-row]:last-child input");
+  if (input) input.focus();
+}
+
+function addSettingRow(kind) {
+  const map = {
+    "product-category": ["productCategorySettingRows", settingCategoryRowHtml({ name: "", is_stock_item: 1 })],
+    "product-unit": ["productUnitSettingRows", settingTextRowHtml("product-unit", "", { placeholder: "单位名称" })],
+    "bag-type": ["bagTypeSettingRows", settingTextRowHtml("bag-type", "", { placeholder: "版型名称" })],
+    "payment-status": ["paymentStatusRows", settingPaymentRowHtml("payment-status", "")],
+    "payment-method": ["paymentMethodRows", settingPaymentRowHtml("payment-method", "")],
+    "balance-reason": ["balanceReasonRows", settingTextRowHtml("balance-reason", "", { placeholder: "原因名称" })]
+  };
+  const target = map[kind];
+  if (!target) return;
+  appendSettingRow(target[0], target[1]);
+}
+
+function toggleSettingSegment(button) {
+  const segment = button.closest("[data-stock-toggle]");
+  if (!segment) return;
+  segment.querySelectorAll("[data-stock-value]").forEach((item) => item.classList.toggle("active", item === button));
+}
+
+async function loadSystemSetting(key, panelId, renderer, force = false) {
+  const panel = $(panelId);
+  if (!panel) return;
+  if (force || !panel.dataset.loaded) panel.innerHTML = `<div class="empty">正在加载设置</div>`;
+  try {
+    const res = await api(`/api/settings/system/${encodeURIComponent(key)}`);
+    panel.dataset.loaded = "1";
+    renderer((res && res.data) || {});
+  } catch (err) {
+    panel.innerHTML = `<div class="empty">设置加载失败：${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function saveSystemSetting(key, body, reload) {
+  await api(`/api/settings/system/${encodeURIComponent(key)}`, { method: "POST", body });
+  toast("设置已保存");
+  if (typeof reload === "function") await reload(true);
+}
+
+async function loadNumberSettings(force = false) {
+  const panel = $("numberSettingsPanel");
+  if (!panel) return;
+  if (!state.numberSettings || force) panel.innerHTML = '<div class="empty">正在加载编号设置</div>';
+  try {
+    const res = await api("/api/settings/number/sku");
+    state.numberSettings = (res && res.data) || {};
+    renderNumberSettings(state.numberSettings);
+  } catch (err) {
+    panel.innerHTML = `<div class="empty">编号设置加载失败：${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderSettingsLogRows(rows = [], emptyText = "暂无记录") {
+  if (!rows.length) return `<div class="empty">${emptyText}</div>`;
+  return rows.map((row) => {
+    const title = row.batch_no
+      ? `${escapeHtml(row.batch_no)} · ${Number(row.changed_count || 0)} 个商品`
+      : `${escapeHtml(row.old_code || "-")} → ${escapeHtml(row.new_code || "-")}`;
+    const detail = row.batch_no
+      ? `${escapeHtml(row.first_new_code || "-")} 到 ${escapeHtml(row.last_new_code || "-")} · ${escapeHtml(row.finished_at || "")}`
+      : `${escapeHtml(row.note || "手动调整")} · ${escapeHtml(row.created_at || "")}`;
+    return `
+      <div class="settings-log-row">
+        <div><strong>${title}</strong><small>${detail}</small></div>
+        <span class="tag">${row.batch_no ? "重编码" : "设置"}</span>
+      </div>`;
+  }).join("");
+}
+
+function renderNumberSettings(settings = {}) {
+  const panel = $("numberSettingsPanel");
+  if (!panel) return;
+  const nextCode = settings.next_code || settings.configured_code || "SJ1001";
+  panel.innerHTML = `
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>商品编号设置</h3>
+          <p>只控制后续新建商品、泡袋上传脚本的自动编号，不改历史 SKU。</p>
+        </div>
+        <span class="tag green-outline">下一个可用：${escapeHtml(nextCode)}</span>
+      </div>
+      <div class="settings-summary-grid">
+        <div class="setting-stat"><span>下一个可用编号</span><strong>${escapeHtml(nextCode)}</strong></div>
+        <div class="setting-stat"><span>起始编号</span><strong>${escapeHtml(settings.start_code || "SJ1001")}</strong></div>
+        <div class="setting-stat"><span>手动下一号</span><strong>${escapeHtml(settings.configured_code || "SJ1570")}</strong></div>
+        <div class="setting-stat"><span>当前已用 SJ 编号</span><strong>${Number(settings.numeric_used_count || settings.used_count || 0)}</strong></div>
+        <div class="setting-stat"><span>已用最大编号</span><strong>${escapeHtml(settings.used_max_code || "-")}</strong></div>
+      </div>
+      <div class="settings-grid">
+        <label class="setting-field">编号前缀
+          <input id="skuNumberPrefix" value="${escapeAttr(settings.prefix || "SJ")}">
+        </label>
+        <label class="setting-field">起始号
+          <input id="skuStartNumber" type="number" min="1" value="${escapeAttr(settings.start_number || 1001)}">
+        </label>
+        <label class="setting-field">手动调整下一号
+          <input id="skuNextCode" value="${escapeAttr(settings.next_code || settings.configured_code || "SJ1001")}" placeholder="SJ1570">
+        </label>
+        <label class="setting-field">补零位数
+          <input id="skuPadWidth" type="number" min="1" max="10" value="${escapeAttr(settings.pad_width || 4)}">
+        </label>
+        <label class="setting-field">数据库商品数
+          <input value="${escapeAttr(settings.total_sku_count || 0)}" disabled>
+        </label>
+        <label class="setting-field full">跳过号
+          <textarea id="skuSkippedNumbers" placeholder="一行一个，例如 SJ0999 或 999">${escapeHtml(settings.skipped_numbers_text || "")}</textarea>
+        </label>
+        <label class="setting-field full">备注
+          <textarea id="skuNumberNote" placeholder="例如：泡袋和礼盒统一从 SJ1570 往后走">${escapeHtml(settings.note || "")}</textarea>
+        </label>
+      </div>
+      <div class="print-template-note">手动下一号是后续新商品的最低起点；跳过号会永远避开。保存不会重排旧商品。</div>
+      <div class="print-settings-actions">
+        <button id="refreshNumberSettings" type="button">刷新</button>
+        <button class="primary" id="saveNumberSettings" type="button">保存编号设置</button>
+      </div>
+    </section>
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>编号记录</h3>
+          <p>这里看最近的手动调整和上次重编码迁移记录。</p>
+        </div>
+      </div>
+      <div class="settings-log-list">
+        ${renderSettingsLogRows(settings.change_logs || [], "暂无手动调整记录")}
+      </div>
+      <div class="print-template-note">最近重编码批次</div>
+      <div class="settings-log-list">
+        ${renderSettingsLogRows(settings.recode_batches || [], "暂无重编码记录")}
+      </div>
+    </section>`;
+}
+
+function collectNumberSettings() {
+  const nextCodeValue = $("skuNextCode") ? $("skuNextCode").value : "";
+  const prefixValue = $("skuNumberPrefix") ? $("skuNumberPrefix").value : "SJ";
+  return {
+    prefix: prefixValue,
+    next_code: nextCodeValue,
+    start_number: $("skuStartNumber") ? Number($("skuStartNumber").value || 1001) : 1001,
+    skipped_numbers: settingListValue("skuSkippedNumbers"),
+    pad_width: $("skuPadWidth") ? Number($("skuPadWidth").value || 4) : 4,
+    note: $("skuNumberNote") ? $("skuNumberNote").value : ""
+  };
+}
+
+async function saveNumberSettings() {
+  const button = $("saveNumberSettings");
+  if (button) { button.classList.add("loading"); button.textContent = "保存中"; }
+  try {
+    const res = await api("/api/settings/number/sku", { method: "POST", body: collectNumberSettings() });
+    state.numberSettings = (res && res.data) || {};
+    renderNumberSettings(state.numberSettings);
+    toast("编号设置已保存");
+  } finally {
+    const nextButton = $("saveNumberSettings");
+    if (nextButton) { nextButton.classList.remove("loading"); nextButton.textContent = "保存编号设置"; }
+  }
+}
+
+async function loadProductBasicSettings(force = false) {
+  return loadSystemSetting("product_basic", "productSettingsPanel", renderProductBasicSettings, force);
+}
+
+function renderProductBasicSettings(data = {}) {
+  const panel = $("productSettingsPanel");
+  if (!panel) return;
+  const value = data.value || {};
+  const categories = value.categories || [];
+  const units = value.units || [];
+  const bagTypes = value.bag_types || [];
+  panel.innerHTML = `
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>商品基础设置</h3>
+          <p>分类、单位、泡袋版型和新建商品默认规则。</p>
+        </div>
+        <span class="tag green-outline">商品中心</span>
+      </div>
+      <div class="settings-summary-grid">
+        <div class="setting-stat"><span>分类</span><strong>${categories.length}</strong></div>
+        <div class="setting-stat"><span>单位</span><strong>${units.length}</strong></div>
+        <div class="setting-stat"><span>泡袋版型</span><strong>${bagTypes.length}</strong></div>
+      </div>
+      <div class="settings-grid">
+        <div class="setting-block full">
+          <div class="setting-block-title"><span>分类管理</span><button type="button" data-add-setting-row="product-category">新增分类</button></div>
+          <div class="setting-list" id="productCategorySettingRows">
+            ${categories.map((item, index) => settingCategoryRowHtml(item, index)).join("")}
+          </div>
+        </div>
+        <div class="setting-block">
+          <div class="setting-block-title"><span>单位管理</span><button type="button" data-add-setting-row="product-unit">新增单位</button></div>
+          <div class="setting-list" id="productUnitSettingRows">
+            ${units.map((unit) => settingTextRowHtml("product-unit", unit, { placeholder: "单位名称" })).join("")}
+          </div>
+        </div>
+        <div class="setting-block">
+          <div class="setting-block-title"><span>泡袋版型</span><button type="button" data-add-setting-row="bag-type">新增版型</button></div>
+          <div class="setting-list" id="bagTypeSettingRows">
+            ${bagTypes.map((type) => settingTextRowHtml("bag-type", type, { placeholder: "版型名称" })).join("")}
+          </div>
+        </div>
+        <label class="setting-field">默认件规
+          <input id="productDefaultCasePack" value="${escapeAttr(value.default_case_pack_qty || "")}" placeholder="例如 20">
+        </label>
+        <label class="setting-field">默认单位
+          <input id="productDefaultUnit" value="${escapeAttr(value.default_unit || "套")}">
+        </label>
+        <label class="print-toggle"><input id="productDefaultStockItem" type="checkbox" ${checkedAttr(value.default_is_stock_item)}> 新建商品默认扣库存</label>
+      </div>
+      <div class="print-template-note">分类的扣库存开关会影响后续新建商品默认库存规则，不需要手写格式。</div>
+      <div class="print-settings-actions">
+        <button class="primary" id="saveProductBasicSettings" type="button">保存商品基础设置</button>
+      </div>
+    </section>`;
+}
+
+function collectProductBasicSettings() {
+  const categories = Array.from(document.querySelectorAll("#productCategorySettingRows [data-setting-row='product-category']"))
+    .map((row, index) => {
+      const name = settingRowValue(row, ".setting-category-name");
+      if (!name) return null;
+      const active = row.querySelector("[data-stock-value].active");
+      const fixedNoStock = /泡袋|茶袋/.test(name);
+      return { key: name, name, sort_order: index + 1, is_stock_item: fixedNoStock ? 0 : Number(active ? active.dataset.stockValue : 1) };
+    })
+    .filter(Boolean);
+  return {
+    categories,
+    units: settingRowsValues("productUnitSettingRows"),
+    bag_types: settingRowsValues("bagTypeSettingRows"),
+    default_case_pack_qty: $("productDefaultCasePack") ? $("productDefaultCasePack").value : "",
+    default_unit: $("productDefaultUnit") ? $("productDefaultUnit").value : "套",
+    default_is_stock_item: checkedValue("productDefaultStockItem")
+  };
+}
+
+async function loadInventoryRuleSettings(force = false) {
+  return loadSystemSetting("inventory_rules", "inventorySettingsPanel", renderInventoryRuleSettings, force);
+}
+
+function warehouseOptions(warehouses = [], selected = "") {
+  return warehouses.map((warehouse) => `<option value="${Number(warehouse.id || 0)}" ${Number(warehouse.id || 0) === Number(selected || 0) ? "selected" : ""}>${escapeHtml(warehouse.name || `仓库${warehouse.id}`)}</option>`).join("");
+}
+
+function fixedNoStockCategoryReason(category = {}) {
+  const name = String(category.name || "");
+  const type = String(category.product_type || "").toLowerCase();
+  if (type === "bag" || /泡袋|茶袋/.test(name)) return "泡袋固定不扣库存";
+  return "";
+}
+
+function renderInventoryRuleSettings(data = {}) {
+  const panel = $("inventorySettingsPanel");
+  if (!panel) return;
+  const value = data.value || {};
+  const warehouses = data.warehouses || [];
+  const categories = (data.categories || []).filter((category) => Number(category.id || 0) > 0);
+  const nonStockIds = new Set((value.non_stock_category_ids || []).map((id) => Number(id)));
+  const stockIds = new Set((value.stock_category_ids || []).map((id) => Number(id)));
+  const nonStockKeywords = value.non_stock_category_keywords || [];
+  const categoryRows = categories.map((category) => {
+    const id = Number(category.id || 0);
+    const name = category.name || `分类${id}`;
+    const fixedReason = fixedNoStockCategoryReason(category);
+    const keywordNoStock = nonStockKeywords.some((word) => word && name.includes(word));
+    const tracksStock = fixedReason ? false : (stockIds.has(id) ? true : (nonStockIds.has(id) || keywordNoStock ? false : true));
+    return `<div class="setting-row" data-inventory-category-id="${id}" data-inventory-category-name="${escapeAttr(name)}" ${fixedReason ? 'data-fixed-non-stock="1"' : ""}>
+      <div class="setting-row-name"><strong>${escapeHtml(name)}</strong><span>${Number(category.total || 0)} 个商品</span></div>
+      ${fixedReason ? `<span class="tag green-outline">${escapeHtml(fixedReason)}</span>` : `<div class="setting-segment" data-stock-toggle>
+        <button type="button" class="${tracksStock ? "active" : ""}" data-stock-value="1">扣库存</button>
+        <button type="button" class="${!tracksStock ? "active" : ""}" data-stock-value="0">不扣库存</button>
+      </div>`}
+    </div>`;
+  }).join("");
+  panel.innerHTML = `
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>库存规则设置</h3>
+          <p>礼盒、纸箱等按库存扣减；泡袋按业务规则固定不扣库存。</p>
+        </div>
+        <span class="tag green-outline">${Number(value.allow_negative_stock || 0) ? "允许负库存" : "不允许负库存"}</span>
+      </div>
+      <div class="settings-grid">
+        <div class="setting-block full">
+          <div class="setting-block-title"><span>分类库存规则</span><span>泡袋不提供开关，固定不扣库存</span></div>
+          <div class="setting-list" id="inventoryCategoryRuleRows">${categoryRows || '<div class="empty">暂无分类</div>'}</div>
+        </div>
+        <label class="setting-field">默认出库仓库
+          <select id="inventoryDefaultWarehouse">${warehouseOptions(warehouses, value.default_out_warehouse_id)}</select>
+        </label>
+        <label class="print-toggle"><input id="inventoryAllowNegative" type="checkbox" ${checkedAttr(value.allow_negative_stock)}> 允许负库存开单</label>
+      </div>
+      <div class="print-template-note">保存后，新建商品会按分类默认是否扣库存；销售开单会使用默认出库仓库和负库存规则。</div>
+      <div class="print-settings-actions">
+        <button class="primary" id="saveInventoryRuleSettings" type="button">保存库存规则</button>
+      </div>
+    </section>`;
+}
+
+function collectInventoryRuleSettings() {
+  const rows = Array.from(document.querySelectorAll("#inventoryCategoryRuleRows [data-inventory-category-id]"));
+  const stockIds = [];
+  const nonStockIds = [];
+  const stockNames = [];
+  const nonStockNames = [];
+  rows.forEach((row) => {
+    const id = Number(row.dataset.inventoryCategoryId || 0);
+    const name = row.dataset.inventoryCategoryName || "";
+    const active = row.querySelector("[data-stock-value].active");
+    const stock = row.dataset.fixedNonStock === "1" ? false : Number(active ? active.dataset.stockValue : 1) === 1;
+    if (stock) {
+      stockIds.push(id);
+      if (name) stockNames.push(name);
+    } else {
+      nonStockIds.push(id);
+      if (name) nonStockNames.push(name);
+    }
+  });
+  return {
+    stock_category_ids: stockIds,
+    non_stock_category_ids: nonStockIds,
+    stock_category_keywords: stockNames,
+    non_stock_category_keywords: nonStockNames,
+    default_out_warehouse_id: $("inventoryDefaultWarehouse") ? Number($("inventoryDefaultWarehouse").value || 0) : 0,
+    allow_negative_stock: checkedValue("inventoryAllowNegative")
+  };
+}
+
+async function loadPaymentRuleSettings(force = false) {
+  return loadSystemSetting("payment_rules", "paymentSettingsPanel", renderPaymentRuleSettings, force);
+}
+
+function renderPaymentRuleSettings(data = {}) {
+  const panel = $("paymentSettingsPanel");
+  if (!panel) return;
+  const value = data.value || {};
+  const statuses = value.payment_statuses || [];
+  const methods = value.paid_methods || [];
+  const reasons = value.balance_adjust_reasons || [];
+  const monthlyRule = value.monthly_customer_rule || "客户选择月结时销售单计入欠款，结款后改为已付。";
+  panel.innerHTML = `
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>收款 / 结款设置</h3>
+          <p>付款状态、默认收款方式、余额调整原因和月结说明。</p>
+        </div>
+        <span class="tag green-outline">${escapeHtml(value.default_payment_status || "已付")}</span>
+      </div>
+      <div class="settings-grid">
+        <div class="setting-block">
+          <div class="setting-block-title"><span>付款状态</span><button type="button" data-add-setting-row="payment-status">新增状态</button></div>
+          <div class="setting-list" id="paymentStatusRows">
+            ${statuses.map((item) => settingPaymentRowHtml("payment-status", item, value.default_payment_status || "已付")).join("")}
+          </div>
+        </div>
+        <div class="setting-block">
+          <div class="setting-block-title"><span>已付方式</span><button type="button" data-add-setting-row="payment-method">新增方式</button></div>
+          <div class="setting-list" id="paymentMethodRows">
+            ${methods.map((item) => settingPaymentRowHtml("payment-method", item, value.default_paid_method || "微信")).join("")}
+          </div>
+        </div>
+        <div class="setting-block full">
+          <div class="setting-block-title"><span>余额调整原因模板</span><button type="button" data-add-setting-row="balance-reason">新增原因</button></div>
+          <div class="setting-list" id="balanceReasonRows">
+            ${reasons.map((item) => settingTextRowHtml("balance-reason", item, { placeholder: "原因名称" })).join("")}
+          </div>
+        </div>
+        <div class="setting-block full">
+          <div class="setting-block-title"><span>月结客户规则</span><span>固定业务流程</span></div>
+          <div class="setting-rule-card">
+            <strong>月结销售单计入客户欠款</strong>
+            <span>${escapeHtml(monthlyRule)}</span>
+            <input id="paymentMonthlyRule" type="hidden" value="${escapeAttr(monthlyRule)}">
+          </div>
+        </div>
+      </div>
+      <div class="print-settings-actions">
+        <button class="primary" id="savePaymentRuleSettings" type="button">保存收款结款设置</button>
+      </div>
+    </section>`;
+}
+
+function collectPaymentRuleSettings() {
+  const statuses = settingRowsValues("paymentStatusRows");
+  const methods = settingRowsValues("paymentMethodRows");
+  const defaultStatusRow = document.querySelector("#paymentStatusRows input[type='radio']:checked");
+  const defaultMethodRow = document.querySelector("#paymentMethodRows input[type='radio']:checked");
+  return {
+    payment_statuses: statuses,
+    paid_methods: methods,
+    default_payment_status: defaultStatusRow ? settingRowValue(defaultStatusRow.closest("[data-setting-row]")) : (statuses[0] || "已付"),
+    default_paid_method: defaultMethodRow ? settingRowValue(defaultMethodRow.closest("[data-setting-row]")) : (methods[0] || "微信"),
+    balance_adjust_reasons: settingRowsValues("balanceReasonRows"),
+    monthly_customer_rule: $("paymentMonthlyRule") ? $("paymentMonthlyRule").value : ""
+  };
+}
+
+async function loadPermissionSettings(force = false) {
+  const panel = $("userSettingsPanel");
+  if (!panel) return;
+  if (force || !panel.dataset.loaded) panel.innerHTML = '<div class="empty">正在加载用户权限</div>';
+  try {
+    const res = await api(`/api/users?${query({ page: 1, page_size: 200 })}`);
+    const list = normalizeList(res);
+    panel.dataset.loaded = "1";
+    renderPermissionSettings(list, (res.data && res.data.total) || list.length);
+  } catch (err) {
+    panel.innerHTML = `<div class="empty">用户权限加载失败：${escapeHtml(err.message)}</div>`;
+  }
+}
+
+const roleCodeByLabel = {
+  "管理员": "admin",
+  "老板": "admin",
+  "员工": "staff",
+  "客户": "customer",
+  "访客": "guest"
+};
+const roleLabelByCode = {
+  admin: "管理员",
+  staff: "员工",
+  warehouse: "员工",
+  designer: "员工",
+  readonly: "访客",
+  customer: "客户",
+  guest: "访客"
+};
+
+function roleCode(labelOrCode) {
+  const value = String(labelOrCode || "").trim();
+  return roleCodeByLabel[value] || value;
+}
+
+function roleLabel(value) {
+  const clean = String(value || "").trim();
+  return roleLabelByCode[clean] || clean || "未设置";
+}
+
+function userRoleOptionsFromRules() {
+  return [
+    ["admin", "管理员"],
+    ["staff", "员工"],
+    ["customer", "客户"],
+    ["guest", "访客"]
+  ];
+}
+
+function renderPermissionSettings(list = [], total = 0) {
+  const panel = $("userSettingsPanel");
+  if (!panel) return;
+  const activeCount = list.filter((user) => Number(user.is_active || 0) === 1).length;
+  const adminCount = list.filter((user) => String(user.role || "") === "admin" || Number(user.is_admin || 0) === 1).length;
+  panel.innerHTML = `
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>用户权限</h3>
+          <p>直接维护账号当前角色和启用状态，权限拦截由后端按角色处理。</p>
+        </div>
+        <span class="tag green-outline">共 ${Number(total || list.length)} 个账号</span>
+      </div>
+      <div class="settings-summary-grid">
+        <div class="setting-stat"><span>启用账号</span><strong>${activeCount}</strong></div>
+        <div class="setting-stat"><span>管理员</span><strong>${adminCount}</strong></div>
+        <div class="setting-stat"><span>待处理账号</span><strong>${Math.max(0, Number(total || list.length) - activeCount)}</strong></div>
+      </div>
+      ${renderUserList(list)}
+      <div class="print-settings-actions">
+        <button type="button" onclick="setCustomerTab('users');setView('customers');">打开用户管理</button>
+        <button class="primary" type="button" onclick="loadPermissionSettings(true)">刷新</button>
+      </div>
+    </section>`;
+}
+
+async function loadImageSettings(force = false) {
+  return loadSystemSetting("image_rules", "imageSettingsPanel", renderImageSettings, force);
+}
+
+function renderImageSettings(data = {}) {
+  const panel = $("imageSettingsPanel");
+  if (!panel) return;
+  const value = data.value || {};
+  const summary = data.media_summary || {};
+  const assetRules = [
+    "按商品 SPU + 大分类归档，未绑定图片单独展示。",
+    "按图片类型归档：主图、详情页、颜色图、待绑定。",
+    "按上传时间归档，绑定后再进入商品分组。"
+  ];
+  const currentAssetRule = value.asset_category_rule || assetRules[0];
+  const assetRuleOptions = assetRules.map((rule) => `<option value="${escapeAttr(rule)}" ${rule === currentAssetRule ? "selected" : ""}>${escapeHtml(rule)}</option>`).join("");
+  panel.innerHTML = `
+    <section class="settings-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>图片 / OSS 设置</h3>
+          <p>商品图上传后进入图片资产表，主图、详情页、颜色图都从这里绑定。</p>
+        </div>
+        <span class="tag green-outline">OSS / 图片资产</span>
+      </div>
+      <div class="settings-summary-grid">
+        <div class="setting-stat"><span>全部图片</span><strong>${Number(summary.total || 0)}</strong></div>
+        <div class="setting-stat"><span>主图</span><strong>${Number(summary.main || 0)}</strong></div>
+        <div class="setting-stat"><span>详情页</span><strong>${Number(summary.detail || 0)}</strong></div>
+        <div class="setting-stat"><span>颜色图</span><strong>${Number(summary.color || 0)}</strong></div>
+        <div class="setting-stat"><span>待绑定</span><strong>${Number(summary.pending || 0)}</strong></div>
+      </div>
+      <div class="settings-grid">
+        <label class="setting-field">OSS 上传路径
+          <input id="imageOssPath" value="${escapeAttr(value.oss_path || "")}">
+        </label>
+        <label class="setting-field">缩略图规则
+          <input id="imageThumbRule" value="${escapeAttr(value.thumbnail_rule || "")}">
+        </label>
+        <label class="setting-field">未绑定图片清理天数
+          <input id="imagePendingCleanupDays" type="number" min="1" value="${escapeAttr(value.pending_cleanup_days || 30)}">
+        </label>
+        <label class="print-toggle"><input id="imageAutoCompress" type="checkbox" ${checkedAttr(value.auto_compress)}> 上传后压缩/缩略图</label>
+        <label class="setting-field full">图片资产分类规则
+          <select id="imageAssetRule">
+            ${assetRules.includes(currentAssetRule) ? "" : `<option value="${escapeAttr(currentAssetRule)}" selected>${escapeHtml(currentAssetRule)}</option>`}
+            ${assetRuleOptions}
+          </select>
+        </label>
+      </div>
+      <div class="print-template-note">上传插件继续使用现有 OSS 配置；图片绑定关系写在 product_media，不依赖 ShopXO 图片表。</div>
+      <div class="print-settings-actions">
+        <button type="button" onclick="setView('product-assets')">打开图片资产</button>
+        <button type="button" onclick="chooseProductUpload('asset')">上传图片</button>
+        <button class="primary" id="saveImageSettings" type="button">保存图片设置</button>
+        <button class="primary" type="button" onclick="loadImageSettings(true)">刷新</button>
+      </div>
+    </section>`;
+}
+
+function collectImageSettings() {
+  return {
+    oss_path: $("imageOssPath") ? $("imageOssPath").value : "",
+    thumbnail_rule: $("imageThumbRule") ? $("imageThumbRule").value : "",
+    pending_cleanup_days: $("imagePendingCleanupDays") ? Number($("imagePendingCleanupDays").value || 30) : 30,
+    auto_compress: checkedValue("imageAutoCompress"),
+    asset_category_rule: $("imageAssetRule") ? $("imageAssetRule").value : ""
+  };
+}
+
+const MINIAPP_MODULE_TYPES = [
+  { type: "banner", label: "轮播", desc: "顶部轮播图" },
+  { type: "nav", label: "导航", desc: "快捷入口" },
+  { type: "image", label: "图片", desc: "单图广告" },
+  { type: "hot_zone", label: "热区", desc: "图片热区" },
+  { type: "product_shelf", label: "商品区", desc: "商品列表" }
+];
+
+async function loadMiniappDesignSettings(force = false) {
+  return loadSystemSetting("miniapp_design", "miniappSettingsPanel", renderMiniappDesignSettings, force);
+}
+
+function miniappModuleTypeLabel(type) {
+  const row = MINIAPP_MODULE_TYPES.find((item) => item.type === type);
+  return row ? row.label : "模块";
+}
+
+function miniappModuleTypeOptions(current = "nav") {
+  return MINIAPP_MODULE_TYPES.map((item) => (
+    `<option value="${escapeAttr(item.type)}" ${item.type === current ? "selected" : ""}>${escapeHtml(item.label)}</option>`
+  )).join("");
+}
+
+function miniappDraft() {
+  if (!state.miniappDesignDraft) {
+    state.miniappDesignDraft = {
+      version: 1,
+      home: { title: "肆计包装", subtitle: "茶包装产品展示", modules: [] }
+    };
+  }
+  const home = state.miniappDesignDraft.home || {};
+  if (!Array.isArray(home.modules)) home.modules = [];
+  state.miniappDesignDraft.home = home;
+  return state.miniappDesignDraft;
+}
+
+function miniappHome() {
+  return miniappDraft().home;
+}
+
+function miniappModules() {
+  return miniappHome().modules || [];
+}
+
+function defaultMiniappModule(type = "nav") {
+  const id = `${type}_${Date.now()}`;
+  if (type === "banner") {
+    return { id, type, enabled: 1, title: "首页轮播", items: [{ title: "肆计包装", url: "/pages/goods-category/goods-category", image: "" }] };
+  }
+  if (type === "product_shelf") {
+    return { id, type, enabled: 1, title: "推荐产品", keywords: "", category_id: "", limit: 8 };
+  }
+  if (type === "image" || type === "hot_zone") {
+    return { id, type, enabled: 1, title: miniappModuleTypeLabel(type), items: [{ title: "肆计包装", url: "/pages/goods-category/goods-category", image: "" }] };
+  }
+  return {
+    id,
+    type: "nav",
+    enabled: 1,
+    title: "快捷导航",
+    items: [
+      { title: "分类", url: "/pages/goods-category/goods-category", image: "" },
+      { title: "订单", url: "/pages/order/order", image: "" },
+      { title: "我的", url: "/pages/user/user", image: "" }
+    ]
+  };
+}
+
+function miniappItemIcon(item = {}, fallback = "") {
+  const title = String(item.title || fallback || "项").trim();
+  return escapeHtml(title.slice(0, 1) || "项");
+}
+
+function miniappPreviewModule(module = {}, index = 0) {
+  const type = module.type || "nav";
+  const active = Number(state.miniappSelectedIndex || 0) === index ? "active" : "";
+  const disabled = Number(module.enabled ?? 1) ? "" : "disabled";
+  const title = module.title || miniappModuleTypeLabel(type);
+  if (type === "banner") {
+    const items = Array.isArray(module.items) && module.items.length ? module.items : [{ title: "轮播图" }];
+    return `<button type="button" class="miniapp-preview-module ${active} ${disabled} banner" data-miniapp-select-module="${index}">
+      <div class="miniapp-preview-banner">
+        <strong>${escapeHtml(items[0].title || title || "首页轮播")}</strong>
+        <span>${escapeHtml(items.length)} 张轮播</span>
+      </div>
+    </button>`;
+  }
+  if (type === "nav") {
+    const items = Array.isArray(module.items) ? module.items : [];
+    return `<button type="button" class="miniapp-preview-module ${active} ${disabled}" data-miniapp-select-module="${index}">
+      <div class="miniapp-preview-nav">
+        ${items.slice(0, 8).map((item) => `<span><i>${miniappItemIcon(item)}</i>${escapeHtml(item.title || "导航")}</span>`).join("") || "<em>暂无导航</em>"}
+      </div>
+    </button>`;
+  }
+  if (type === "product_shelf") {
+    const products = Array.isArray(module.products) ? module.products : [];
+    return `<button type="button" class="miniapp-preview-module ${active} ${disabled}" data-miniapp-select-module="${index}">
+      <div class="miniapp-preview-title">${escapeHtml(title || "商品区")}</div>
+      <div class="miniapp-preview-products">
+        ${(products.length ? products.slice(0, 4) : [{ title: "商品卡片" }, { title: "商品卡片" }, { title: "商品卡片" }, { title: "商品卡片" }]).map((item) => `
+          <span><b></b><i>${escapeHtml(item.title || item.name || "商品卡片")}</i></span>
+        `).join("")}
+      </div>
+    </button>`;
+  }
+  const item = Array.isArray(module.items) && module.items.length ? module.items[0] : {};
+  return `<button type="button" class="miniapp-preview-module ${active} ${disabled}" data-miniapp-select-module="${index}">
+    <div class="miniapp-preview-image ${type === "hot_zone" ? "hot" : ""}">
+      <strong>${escapeHtml(item.title || title || miniappModuleTypeLabel(type))}</strong>
+      <span>${escapeHtml(miniappModuleTypeLabel(type))}</span>
+    </div>
+  </button>`;
+}
+
+function miniappOutlineRow(module = {}, index = 0, total = 0) {
+  const active = Number(state.miniappSelectedIndex || 0) === index ? "active" : "";
+  const off = Number(module.enabled ?? 1) ? "" : "off";
+  return `<div class="miniapp-outline-row ${active} ${off}" data-miniapp-select-module="${index}">
+    <button type="button" class="miniapp-outline-main" data-miniapp-select-module="${index}">
+      <strong>${escapeHtml(module.title || miniappModuleTypeLabel(module.type))}</strong>
+      <span>${escapeHtml(miniappModuleTypeLabel(module.type))}${off ? " / 已隐藏" : ""}</span>
+    </button>
+    <button type="button" data-miniapp-module-move="-1" data-miniapp-index="${index}" ${index <= 0 ? "disabled" : ""}>↑</button>
+    <button type="button" data-miniapp-module-move="1" data-miniapp-index="${index}" ${index >= total - 1 ? "disabled" : ""}>↓</button>
+    <button type="button" class="setting-delete" data-miniapp-module-remove data-miniapp-index="${index}" title="删除">×</button>
+  </div>`;
+}
+
+function miniappItemsEditor(module = {}) {
+  const type = module.type || "nav";
+  const items = Array.isArray(module.items) ? module.items : [];
+  const label = type === "banner" ? "轮播项" : type === "nav" ? "导航项" : "图片入口";
+  return `<div class="setting-block full">
+    <div class="setting-block-title"><span>${escapeHtml(label)}</span><button type="button" data-miniapp-add-item>新增一项</button></div>
+    <div class="miniapp-item-editor">
+      ${items.map((item, index) => `
+        <div class="miniapp-item-row" data-miniapp-item-index="${index}">
+          <input data-miniapp-item-field="title" value="${escapeAttr(item.title || "")}" placeholder="标题">
+          <input data-miniapp-item-field="url" value="${escapeAttr(item.url || "")}" placeholder="跳转路径">
+          <input data-miniapp-item-field="image" value="${escapeAttr(item.image || "")}" placeholder="图片地址">
+          <button type="button" class="setting-delete" data-miniapp-remove-item="${index}" title="删除">×</button>
+        </div>
+      `).join("") || '<div class="empty">还没有内容项</div>'}
+    </div>
+  </div>`;
+}
+
+function miniappInspectorHtml() {
+  const modules = miniappModules();
+  const selected = modules[Number(state.miniappSelectedIndex || 0)];
+  if (!selected) {
+    return `<div class="miniapp-inspector-empty">从左侧新增模块，或在中间预览里选择一个模块。</div>`;
+  }
+  const type = selected.type || "nav";
+  return `
+    <div class="miniapp-inspector-head">
+      <strong>${escapeHtml(selected.title || miniappModuleTypeLabel(type))}</strong>
+      <span>${escapeHtml(miniappModuleTypeLabel(type))}设置</span>
+    </div>
+    <div class="settings-grid miniapp-inspector-grid">
+      <label class="setting-field">模块类型
+        <select data-miniapp-module-field="type">${miniappModuleTypeOptions(type)}</select>
+      </label>
+      <label class="print-toggle"><input type="checkbox" data-miniapp-module-field="enabled" ${checkedAttr(selected.enabled ?? 1)}> 显示模块</label>
+      <label class="setting-field full">模块标题
+        <input data-miniapp-module-field="title" value="${escapeAttr(selected.title || "")}" placeholder="例如：推荐产品">
+      </label>
+      ${type === "product_shelf" ? `
+        <label class="setting-field">搜索关键词
+          <input data-miniapp-module-field="keywords" value="${escapeAttr(selected.keywords || "")}" placeholder="例如：半斤礼盒">
+        </label>
+        <label class="setting-field">分类 ID
+          <input data-miniapp-module-field="category_id" value="${escapeAttr(selected.category_id || "")}" placeholder="留空为全部">
+        </label>
+        <label class="setting-field">展示数量
+          <input type="number" min="1" max="30" data-miniapp-module-field="limit" value="${escapeAttr(selected.limit || 8)}">
+        </label>
+      ` : miniappItemsEditor(selected)}
+    </div>`;
+}
+
+function renderMiniappDesignSettings(data = {}) {
+  const panel = $("miniappSettingsPanel");
+  if (!panel) return;
+  state.miniappDesignSettings = data;
+  const value = data.value || {};
+  const home = value.home || {};
+  state.miniappDesignDraft = {
+    version: Number(value.version || 1),
+    home: {
+      title: home.title || "肆计包装",
+      subtitle: home.subtitle || "茶包装产品展示",
+      modules: Array.isArray(home.modules) ? JSON.parse(JSON.stringify(home.modules)) : []
+    }
+  };
+  if (state.miniappSelectedIndex === undefined || state.miniappSelectedIndex >= miniappModules().length) {
+    state.miniappSelectedIndex = 0;
+  }
+  renderMiniappDesigner();
+}
+
+function renderMiniappDesigner() {
+  const panel = $("miniappSettingsPanel");
+  if (!panel) return;
+  const home = miniappHome();
+  const modules = miniappModules();
+  panel.innerHTML = `
+    <section class="settings-panel miniapp-design-panel">
+      <div class="settings-panel-head">
+        <div>
+          <h3>小程序首页设计</h3>
+          <p>左侧选组件，中间看手机预览，右侧改属性。保存后小程序首页接口直接读取这份设计。</p>
+        </div>
+        <span class="tag green-outline">${Number(modules.length || 0)} 个模块</span>
+      </div>
+      <div class="miniapp-designer">
+        <aside class="miniapp-palette">
+          <div class="miniapp-pane-title"><strong>组件库</strong><span>添加到首页</span></div>
+          <div class="miniapp-palette-grid">
+            ${MINIAPP_MODULE_TYPES.map((item) => `<button type="button" data-miniapp-add-module="${escapeAttr(item.type)}"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.desc)}</span></button>`).join("")}
+          </div>
+          <div class="miniapp-pane-title"><strong>页面结构</strong><span>点击选择</span></div>
+          <div class="miniapp-outline">
+            ${modules.map((module, index) => miniappOutlineRow(module, index, modules.length)).join("") || '<div class="empty">还没有模块</div>'}
+          </div>
+        </aside>
+        <main class="miniapp-canvas-wrap">
+          <div class="miniapp-phone">
+            <div class="miniapp-phone-bar"></div>
+            <div class="miniapp-phone-nav">
+              <strong>${escapeHtml(home.title || "肆计包装")}</strong>
+              <span>${escapeHtml(home.subtitle || "茶包装产品展示")}</span>
+            </div>
+            <div class="miniapp-phone-scroll">
+              ${modules.map((module, index) => miniappPreviewModule(module, index)).join("") || '<div class="miniapp-preview-empty">从左侧添加首页组件</div>'}
+            </div>
+            <div class="miniapp-phone-tabs"><span>首页</span><span>分类</span><span>订单</span><span>我的</span></div>
+          </div>
+        </main>
+        <aside class="miniapp-inspector">
+          <div class="miniapp-pane-title"><strong>页面设置</strong><span>首页基础信息</span></div>
+          <div class="settings-grid miniapp-page-grid">
+            <label class="setting-field full">首页标题
+              <input data-miniapp-home-field="title" value="${escapeAttr(home.title || "肆计包装")}">
+            </label>
+            <label class="setting-field full">副标题
+              <input data-miniapp-home-field="subtitle" value="${escapeAttr(home.subtitle || "茶包装产品展示")}">
+            </label>
+          </div>
+          <div class="miniapp-pane-title"><strong>组件属性</strong><span>当前选中模块</span></div>
+          ${miniappInspectorHtml()}
+        </aside>
+      </div>
+      <div class="print-template-note">跳转路径只保存首页、分类、订单、我的、商品搜索；旧购物车/支付路径会被后端清掉。</div>
+      <div class="print-settings-actions">
+        <button type="button" onclick="loadMiniappDesignSettings(true)">刷新</button>
+        <button class="primary" id="saveMiniappDesignSettings" type="button">保存首页设计</button>
+      </div>
+    </section>`;
+}
+
+function collectMiniappDesignSettings() {
+  return JSON.parse(JSON.stringify(miniappDraft()));
+}
+
+function addMiniappHomeModule(type = "nav") {
+  const modules = miniappModules();
+  modules.push(defaultMiniappModule(type));
+  state.miniappSelectedIndex = modules.length - 1;
+  renderMiniappDesigner();
+}
+
+function selectMiniappHomeModule(index = 0) {
+  const modules = miniappModules();
+  state.miniappSelectedIndex = Math.min(Math.max(Number(index || 0), 0), Math.max(modules.length - 1, 0));
+  renderMiniappDesigner();
+}
+
+function moveMiniappHomeModule(index, delta) {
+  const modules = miniappModules();
+  const current = Number(index || 0);
+  const next = current + Number(delta || 0);
+  if (next < 0 || next >= modules.length) return;
+  const temp = modules[current];
+  modules[current] = modules[next];
+  modules[next] = temp;
+  state.miniappSelectedIndex = next;
+  renderMiniappDesigner();
+}
+
+function removeMiniappHomeModule(index) {
+  const modules = miniappModules();
+  modules.splice(Number(index || 0), 1);
+  state.miniappSelectedIndex = Math.min(Number(state.miniappSelectedIndex || 0), Math.max(modules.length - 1, 0));
+  renderMiniappDesigner();
+}
+
+function updateMiniappHomeField(field, value) {
+  if (!["title", "subtitle"].includes(field)) return;
+  miniappHome()[field] = value;
+  renderMiniappDesigner();
+}
+
+function updateMiniappModuleField(field, value, checked = false) {
+  const module = miniappModules()[Number(state.miniappSelectedIndex || 0)];
+  if (!module) return;
+  if (field === "enabled") module.enabled = checked ? 1 : 0;
+  else if (field === "limit") module.limit = Number(value || 8);
+  else if (field === "type") {
+    const next = { ...defaultMiniappModule(value), id: module.id, title: module.title, enabled: module.enabled };
+    Object.assign(module, next);
+  } else if (["title", "keywords", "category_id"].includes(field)) {
+    module[field] = value;
+  }
+  renderMiniappDesigner();
+}
+
+function addMiniappItem() {
+  const module = miniappModules()[Number(state.miniappSelectedIndex || 0)];
+  if (!module) return;
+  if (!Array.isArray(module.items)) module.items = [];
+  module.items.push({ title: "", url: "/pages/goods-category/goods-category", image: "" });
+  renderMiniappDesigner();
+}
+
+function removeMiniappItem(index) {
+  const module = miniappModules()[Number(state.miniappSelectedIndex || 0)];
+  if (!module || !Array.isArray(module.items)) return;
+  module.items.splice(Number(index || 0), 1);
+  renderMiniappDesigner();
+}
+
+function updateMiniappItemField(row, field, value) {
+  const module = miniappModules()[Number(state.miniappSelectedIndex || 0)];
+  if (!module || !Array.isArray(module.items)) return;
+  const item = module.items[Number(row || 0)];
+  if (!item || !["title", "url", "image"].includes(field)) return;
+  item[field] = value;
+  renderMiniappDesigner();
 }
 
 function renderMessage(text) {
@@ -1103,6 +2283,16 @@ function openDrawer(mode = "ai", row = {}) {
     if (subtitle) subtitle.textContent = "";
     if (save) save.style.display = "none";
     body.innerHTML = salesDetailHtml(row);
+  } else if (mode === "customer_sales") {
+    if (title) title.textContent = "客户销售单";
+    if (subtitle) subtitle.textContent = row.customerName || "";
+    if (save) save.style.display = "none";
+    body.innerHTML = '<div class="empty">正在加载销售单...</div>';
+  } else if (mode === "customer_balance_ledger") {
+    if (title) title.textContent = "余额明细";
+    if (subtitle) subtitle.textContent = row.customerName || "";
+    if (save) save.style.display = "none";
+    body.innerHTML = '<div class="empty">正在加载余额明细...</div>';
   } else if (mode === "account_admin") {
     if (title) title.textContent = "账号审批";
     if (subtitle) subtitle.textContent = "新注册账号通过后才能进入系统。";
@@ -1521,6 +2711,8 @@ function renderSales(list, target, compact = false) {
     const productTotal = products.reduce((sum, p) => sum + quantityNumber(p.quantity ?? p.buy_number ?? p.num), 0);
     const count = productTotal || quantityNumber(card.total_quantity ?? card.buy_number_count ?? card.quantity ?? card.number);
     const hasMore = products.length > rows.length && !compact;
+    const isDeleted = ["canceled", "deleted"].includes(String(card.status || "")) || /取消|删除/.test(String(card.status_text || ""));
+    const statusTone = isDeleted ? "gray" : (String(card.status_text || "").includes("已") ? "green" : "amber");
     const productHtml = rows.length
       ? '<div class="product-lines' + (hasMore ? ' has-more' : '') + '" id="plines' + id + '">' + rows.map(function(p) {
         const qty = p.quantity ?? p.buy_number ?? p.num ?? "";
@@ -1529,21 +2721,23 @@ function renderSales(list, target, compact = false) {
         const unitNumber = Number(p.price || 0) || (qtyNumber > 0 ? totalNumber / qtyNumber : 0);
         const subtotal = totalNumber || (unitNumber * qtyNumber);
         return '<div class="product-row"><span class="product-name">' + escapeHtml([p.title, p.spec].filter(Boolean).join(" ")) + '</span><span class="product-qty">x' + escapeHtml(qty || "-") + '</span><span class="product-unit-price">¥' + money(unitNumber) + '</span><span class="product-price">¥' + money(subtotal) + '</span></div>';
-      }).join("") + (products.length > rows.length && !compact ? '<button class="expand-btn" onclick="openSalesDetail(' + id + ')">' + products.length + ' 项，查看全部</button>' : "") + '</div>'
+      }).join("") + (products.length > rows.length && !compact ? '<button class="expand-btn" onclick="event.stopPropagation(); openSalesDetail(' + id + ')">' + products.length + ' 项，查看全部</button>' : "") + '</div>'
       : '<div class="muted">' + escapeHtml(card.product_summary || "暂无商品信息") + '</div>';
     return `
-      <div class="business-card sales-card">
-        <div class="customer-name"><strong>${escapeHtml(card.customer_name || "客户")}</strong><span class="tag ${String(card.status_text || "").includes("已") ? "green" : "amber"}">${escapeHtml(card.status_text || "销售单")}</span></div>
+      <div class="business-card sales-card" data-open-sales-detail="${id}">
+        <div class="customer-name"><strong>${escapeHtml(card.customer_name || "客户")}</strong><span class="tag ${statusTone}">${escapeHtml(card.status_text || "销售单")}</span></div>
         <div class="muted">${escapeHtml(card.sales_no || `#${id}`)}</div>
         ${productHtml}
         <div class="kv">
           <div class="kv-row"><span>总数量</span><strong>${escapeHtml(quantityText(count))}</strong></div>
           <div class="kv-row"><span>总价</span><strong>¥${money(card.total_price || card.price)}</strong></div>
+          <div class="kv-row"><span>付款</span><strong>${escapeHtml(card.pay_status_text || payStatusText(card.pay_status))}</strong></div>
+          <div class="kv-row"><span>开单人</span><strong>${escapeHtml(operatorText(card))}</strong></div>
           <div class="kv-row"><span>时间</span><strong>${escapeHtml(card.date_text || card.date || card.add_time || "未记录")}</strong></div>
         </div>
         <div class="card-actions">
-          <button class="primary" onclick="printSales(${id})">打印</button>
-          <button class="danger" onclick="deleteSales(${id})">删除</button>
+          <button class="primary" onclick="event.stopPropagation(); printSales(${id})">打印</button>
+          ${isDeleted ? '<button disabled>已删除</button>' : `<button class="danger" onclick="event.stopPropagation(); deleteSales(${id})">删除</button>`}
         </div>
       </div>`;
   }).join("") : '<div class="empty">暂无销售单</div>';
@@ -1551,6 +2745,8 @@ function renderSales(list, target, compact = false) {
 
 function salesDetailHtml(card) {
   const products = normalizeProducts(card.products);
+  const detailIsDeleted = String(card.status || "") === "deleted" || Boolean(card.deleted_at);
+  const detailIsCanceled = String(card.status || "") === "canceled" && !detailIsDeleted;
   const rows = products.map((p, index) => {
     const qty = p.quantity ?? p.buy_number ?? p.num ?? "";
     const title = [p.title, p.spec].filter(Boolean).join(" ");
@@ -1563,24 +2759,73 @@ function salesDetailHtml(card) {
         <td>¥${money(p.total_price || (Number(p.price || 0) * Number(qty || 0)))}</td>
       </tr>`;
   }).join("");
+  const ledgerRows = Array.isArray(card.inventory_ledgers) ? card.inventory_ledgers : [];
+  const ledgerHtml = ledgerRows.length ? ledgerRows.map((row) => `
+    <div class="sales-flow-row">
+      <strong>${escapeHtml(row.biz_type_text || bizTypeText(row.biz_type))}</strong>
+      <span>${escapeHtml(row.warehouse_name || "仓库")} · ${escapeHtml(row.change_qty || "")} · ${escapeHtml(nativeDateText(row.occurred_at))} · ${escapeHtml(operatorText(row))}</span>
+      <em>${escapeHtml(row.note || row.ledger_no || "")}</em>
+    </div>`).join("") : '<div class="product-media-empty">暂无库存流水</div>';
+  const deleteFlow = [
+    "删除按钮只走自有库，不调用旧 ERP。",
+    "系统会把销售单改为已删除，并从普通列表、客户消费、余额欠款里隐藏。",
+    "删除时按原 sales_out 库存流水回滚，标签等不管库存的商品不会被加回库存。",
+    "如果这单是余额付款，会同步写余额退回流水；月结/未付只删除应收，不扣余额。"
+  ];
   return `
-    <div class="sales-detail-head">
-      <strong>${escapeHtml(card.customer_name || "客户")}</strong>
-      <span class="muted">${escapeHtml(card.sales_no || "")}</span>
+    <div class="sales-detail-bill">
+      <div class="sales-detail-head">
+        <div>
+          <strong>${escapeHtml(card.customer_name || "客户")}</strong>
+          <p>${escapeHtml(card.sales_no || "")}</p>
+        </div>
+        <span class="tag ${["canceled", "deleted"].includes(String(card.status || "")) ? "gray" : "green-outline"}">${escapeHtml(card.status_text || "销售单")}</span>
+      </div>
+      <div class="record-metrics sales-detail-metrics">
+        ${metricHtml("付款状态", [card.pay_status_text || payStatusText(card.pay_status), card.pay_type_text || payTypeText(card.pay_type)].filter(Boolean).join(" / "))}
+        ${metricHtml("应收金额", `¥${money(card.receivable_amount || card.total_price || 0)}`, "accent")}
+        ${metricHtml("总数量", quantityText(card.total_quantity || card.buy_number_count || 0))}
+        ${metricHtml("开单人", operatorText(card))}
+        ${metricHtml("开单时间", nativeDateText(card.sales_at || card.date_text))}
+        ${metricHtml("创建时间", nativeDateText(card.created_at))}
+        ${metricHtml("更新时间", nativeDateText(card.updated_at))}
+        ${detailIsCanceled && card.canceled_by_name ? metricHtml("取消人", card.canceled_by_name, "danger-metric") : ""}
+        ${detailIsCanceled && card.canceled_at ? metricHtml("取消时间", nativeDateText(card.canceled_at), "danger-metric") : ""}
+        ${detailIsCanceled && card.cancel_reason ? metricHtml("取消原因", card.cancel_reason, "danger-metric") : ""}
+        ${card.deleted_by_name ? metricHtml("删除人", card.deleted_by_name, "danger-metric") : ""}
+        ${card.deleted_at ? metricHtml("删除时间", nativeDateText(card.deleted_at), "danger-metric") : ""}
+        ${card.delete_reason ? metricHtml("删除原因", card.delete_reason, "danger-metric") : ""}
+      </div>
     </div>
     <div class="sales-detail-table-wrap">
       <table class="sales-detail-table">
         <thead><tr><th>#</th><th>商品</th><th>数量</th><th>单价</th><th>小计</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="5">暂无商品明细</td></tr>'}</tbody>
       </table>
-    </div>`;
+    </div>
+    <section class="sales-flow-section">
+      <h3>库存流水</h3>
+      <div class="sales-flow-list">${ledgerHtml}</div>
+    </section>
+    <section class="sales-flow-section">
+      <h3>删除流程</h3>
+      <div class="sales-delete-flow">${deleteFlow.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+    </section>`;
 }
 
-function openSalesDetail(id) {
+async function openSalesDetail(id) {
   const card = state.lastSalesCards.find((item) => Number(item.id || 0) === Number(id));
-  if (!card) return toast("没有找到销售单明细", true);
-  openDrawer("sales_detail", card);
+  if (!card && !id) return toast("没有找到销售单明细", true);
+  openDrawer("sales_detail", card || { id });
+  try {
+    const res = await api(`/api/sales/${encodeURIComponent(id)}/detail`);
+    const detail = res.data || {};
+    openDrawer("sales_detail", { ...(card || {}), ...detail });
+  } catch (err) {
+    toast(err.message || "销售单明细加载失败", true);
+  }
 }
+window.openSalesDetail = openSalesDetail;
 
 async function doPrintSales(id) {
   if (!id) return toast("没有取到销售单号，无法打印", true);
@@ -1590,7 +2835,7 @@ async function doPrintSales(id) {
     const res = await api(`/api/sales/${encodeURIComponent(id)}/print-task`, { method: "POST" });
     if (res.code !== 0) throw new Error(res.msg || "打印任务创建失败");
     if (btn) { btn.textContent = "已提交"; btn.classList.remove("loading"); }
-    toast("已提交打印");
+    toast("已创建打印任务，等待本地打印程序处理");
   } catch (err) {
     if (btn) { btn.textContent = "打印"; btn.classList.remove("loading"); }
     toast(err.message || "打印失败", true);
@@ -1601,7 +2846,7 @@ async function deleteSales(id) {
   if (!id) return;
   const ok = await confirmDialog({
     title: "删除销售单",
-    message: "确认删除这个销售单？删除后会按 ERP 规则处理库存和记录。",
+    message: "确认删除这个销售单？系统会在自有库里软删除这单，并把这单对应的库存出库流水回滚。",
     confirmText: "删除"
   });
   if (!ok) return false;
@@ -2033,6 +3278,9 @@ async function deleteWorkflowHistoryCard(id, historyCardId = "") {
 }
 
 async function loadInventory(keywordOverride, page) {
+  if (state.inventoryTab !== "cards") {
+    return loadInventoryManagement(page || 1);
+  }
   if (page !== undefined) state.inventoryPage = page;
   else if (keywordOverride !== undefined) state.inventoryPage = 1;
   const keyword = (keywordOverride ?? (($("inventoryKeyword") && $("inventoryKeyword").value) || "")).trim();
@@ -2161,7 +3409,762 @@ function inventoryCardHtml(card, compact = false) {
 function renderInventory(list) {
   const target = $("inventoryList");
   if (!target) return;
+  target.classList.remove("table-mode");
   target.innerHTML = list.length ? list.map((card) => inventoryCardHtml(card)).join("") : '<div class="empty">暂无库存数据</div>';
+}
+
+function tableHtml(headers, rows, emptyText = "暂无数据") {
+  if (!rows.length) return `<div class="empty">${escapeHtml(emptyText)}</div>`;
+  return `<div class="business-card table-panel"><table class="table-lite wide-table"><thead><tr>${headers.map((item) => `<th>${escapeHtml(item.label)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${headers.map((item) => `<td>${escapeHtml(item.render ? item.render(row) : (row[item.key] ?? ""))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+function nativeDate(value) {
+  if (!value) return "";
+  return String(value).replace("T", " ").slice(0, 19);
+}
+
+function nativeDateText(value) {
+  return nativeDate(value) || "-";
+}
+
+function mapText(map, value, fallback = "-") {
+  const key = String(value || "");
+  if (!key) return fallback;
+  return map[key] || key.replace(/_/g, " ");
+}
+
+const INVENTORY_DOC_TYPE_TEXT = {
+  purchase_in: "进货入库",
+  sales_out: "销售出库",
+  transfer_out: "调拨出库",
+  transfer_in: "调拨入库",
+  stocktake_gain: "盘盈入库",
+  stocktake_loss: "盘亏出库",
+  adjust_in: "调整入库",
+  adjust_out: "调整出库"
+};
+
+const INVENTORY_DIRECTION_TEXT = {
+  in: "入库",
+  out: "出库",
+  transfer: "调拨",
+  adjust: "调整"
+};
+
+const INVENTORY_STATUS_TEXT = {
+  draft: "草稿",
+  pending: "待确认",
+  approved: "已通过",
+  rejected: "已拒绝",
+  confirmed: "已确认",
+  completed: "已完成",
+  canceled: "已取消",
+  deleted: "已删除",
+  active: "启用",
+  inactive: "停用"
+};
+
+const INVENTORY_BIZ_TYPE_TEXT = {
+  purchase_in: "进货入库",
+  sales_out: "销售出库",
+  sales_delete: "删除回滚",
+  transfer_out: "调拨出库",
+  transfer_in: "调拨入库",
+  stocktake: "库存盘点",
+  stocktake_gain: "盘盈",
+  stocktake_loss: "盘亏",
+  init: "初始化",
+  adjust: "库存调整"
+};
+
+function docTypeText(value) {
+  return mapText(INVENTORY_DOC_TYPE_TEXT, value);
+}
+
+function directionText(value) {
+  return mapText(INVENTORY_DIRECTION_TEXT, value);
+}
+
+function inventoryStatusText(value) {
+  return mapText(INVENTORY_STATUS_TEXT, value);
+}
+
+function approvalStatusText(value) {
+  return mapText({
+    pending: "待审核",
+    approved: "已通过",
+    rejected: "已拒绝",
+    active: "启用",
+    inactive: "停用"
+  }, value);
+}
+
+function payStatusText(value) {
+  return mapText({
+    paid: "已付款",
+    unpaid: "未付款",
+    monthly: "月结",
+    partial: "部分付款",
+    refunded: "已退款"
+  }, value);
+}
+
+function payTypeText(value) {
+  return mapText({
+    wechat: "微信",
+    cash: "现金",
+    balance: "余额",
+    monthly: "月结",
+    account: "账户",
+    bank: "转账",
+    alipay: "支付宝"
+  }, value, "");
+}
+
+function bizTypeText(value) {
+  return mapText(INVENTORY_BIZ_TYPE_TEXT, value);
+}
+
+function inventoryHeaders() {
+  const commonProduct = [
+    { label: "商品", render: (row) => row.title || row["产品名称"] || row.title_snapshot || "" },
+    { label: "颜色", render: (row) => row.color || row.spec || row["【颜色】"] || row.color_snapshot || "" },
+    { label: "编号", render: (row) => row.sku_no || row.sku_no_snapshot || "" }
+  ];
+  if (state.inventoryTab === "balances") {
+    return commonProduct.concat([
+      { label: "仓库", render: (row) => row.warehouse_name || row["【仓库】"] || "" },
+      { label: "库存", render: (row) => row.inventory || row["库存数量"] || row.quantity || 0 },
+      { label: "可用", render: (row) => row.available_qty || row.inventory || row.quantity || 0 }
+    ]);
+  }
+  if (state.inventoryTab === "stock-documents") {
+    return [
+      { label: "单号", key: "doc_no" },
+      { label: "类型", render: (row) => docTypeText(row.doc_type) },
+      { label: "方向", render: (row) => directionText(row.direction) },
+      { label: "仓库", key: "warehouse_name" },
+      { label: "数量", key: "total_quantity" },
+      { label: "状态", render: (row) => inventoryStatusText(row.status) },
+      { label: "操作人", render: (row) => operatorText(row) },
+      { label: "时间", render: (row) => nativeDate(row.confirmed_at || row.created_at) },
+      { label: "备注", key: "note" }
+    ];
+  }
+  if (state.inventoryTab === "stocktakes") {
+    return [
+      { label: "盘点单", key: "stocktake_no" },
+      { label: "仓库", key: "warehouse_name" },
+      { label: "状态", render: (row) => inventoryStatusText(row.status) },
+      { label: "差异", key: "total_diff_qty" },
+      { label: "操作人", render: (row) => operatorText(row) },
+      { label: "时间", render: (row) => nativeDate(row.confirmed_at || row.created_at) },
+      { label: "备注", key: "note" }
+    ];
+  }
+  if (state.inventoryTab === "transfers") {
+    return [
+      { label: "调拨单", key: "transfer_no" },
+      { label: "调出", key: "from_warehouse_name" },
+      { label: "调入", key: "to_warehouse_name" },
+      { label: "数量", key: "total_quantity" },
+      { label: "状态", render: (row) => inventoryStatusText(row.status) },
+      { label: "操作人", render: (row) => operatorText(row) },
+      { label: "时间", render: (row) => nativeDate(row.confirmed_at || row.created_at) },
+      { label: "备注", key: "note" }
+    ];
+  }
+  if (state.inventoryTab === "ledger") {
+    return commonProduct.concat([
+      { label: "仓库", key: "warehouse_name" },
+      { label: "变动", key: "change_qty" },
+      { label: "变动前", key: "before_qty" },
+      { label: "变动后", key: "after_qty" },
+      { label: "业务", render: (row) => bizTypeText(row.biz_type) },
+      { label: "操作人", render: (row) => operatorText(row) },
+      { label: "时间", render: (row) => nativeDate(row.occurred_at || row.created_at) }
+    ]);
+  }
+  return [
+    { label: "仓库", key: "name" },
+    { label: "编码", key: "code" },
+    { label: "类型", key: "type" },
+    { label: "默认销售", render: (row) => Number(row.is_default_sales || 0) ? "是" : "否" },
+    { label: "默认入库", render: (row) => Number(row.is_default_inbound || 0) ? "是" : "否" }
+  ];
+}
+
+function metricHtml(label, value, tone = "") {
+  return `<div class="record-metric ${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "-")}</strong></div>`;
+}
+
+function operatorText(row) {
+  return row.operator_name || row.created_by_name || row.canceled_by_name || row.operator_username || row.created_by_username || row.canceled_by_username || "未记录";
+}
+
+function signedMoneyText(value) {
+  const number = Number(value || 0);
+  const sign = number < 0 ? "-" : "";
+  return `${sign}¥${money(Math.abs(number))}`;
+}
+
+function signedDeltaText(value) {
+  const number = Number(value || 0);
+  const sign = number > 0 ? "+" : (number < 0 ? "-" : "");
+  return `${sign}¥${money(Math.abs(number))}`;
+}
+
+function inventoryRecordHtml(row) {
+  if (state.inventoryTab === "balances") {
+    return `<article class="record-card inventory-record">
+      <div class="record-main">
+        <div><h3>${escapeHtml(row.title || row["产品名称"] || "商品")}</h3><p>${escapeHtml([row.color || row.spec || row["【颜色】"], row.sku_no || row.sku_no_snapshot].filter(Boolean).join(" · ") || "未记录颜色")}</p></div>
+        <span class="tag green">${escapeHtml(row.warehouse_name || row["【仓库】"] || "仓库")}</span>
+      </div>
+      <div class="record-metrics">
+        ${metricHtml("当前库存", row.inventory || row.quantity || 0, "accent")}
+        ${metricHtml("可用库存", row.available_qty || row.inventory || row.quantity || 0)}
+        ${metricHtml("锁定", row.locked_qty || 0)}
+      </div>
+    </article>`;
+  }
+  if (state.inventoryTab === "stock-documents") {
+    return `<article class="record-card inventory-record">
+      <div class="record-main">
+        <div><h3>${escapeHtml(row.doc_no || "出入库单")}</h3><p>${escapeHtml(row.warehouse_name || "仓库未记录")} · ${escapeHtml(nativeDateText(row.confirmed_at || row.created_at))}</p></div>
+        <span class="tag green-outline">${escapeHtml(docTypeText(row.doc_type))}</span>
+      </div>
+      <div class="record-metrics">
+        ${metricHtml("方向", directionText(row.direction))}
+        ${metricHtml("数量", row.total_quantity || 0, "accent")}
+        ${metricHtml("状态", inventoryStatusText(row.status))}
+        ${metricHtml("操作人", operatorText(row))}
+      </div>
+      ${row.note ? `<p class="record-note">${escapeHtml(row.note)}</p>` : ""}
+    </article>`;
+  }
+  if (state.inventoryTab === "stocktakes") {
+    return `<article class="record-card inventory-record">
+      <div class="record-main">
+        <div><h3>${escapeHtml(row.stocktake_no || "盘点单")}</h3><p>${escapeHtml(row.warehouse_name || "仓库未记录")} · ${escapeHtml(nativeDateText(row.confirmed_at || row.created_at))}</p></div>
+        <span class="tag gray">${escapeHtml(inventoryStatusText(row.status))}</span>
+      </div>
+      <div class="record-metrics">
+        ${metricHtml("盘点差异", row.total_diff_qty || 0, Number(row.total_diff_qty || 0) !== 0 ? "accent" : "")}
+        ${metricHtml("操作人", operatorText(row))}
+        ${metricHtml("备注", row.note || "-")}
+      </div>
+    </article>`;
+  }
+  if (state.inventoryTab === "transfers") {
+    return `<article class="record-card inventory-record">
+      <div class="record-main">
+        <div><h3>${escapeHtml(row.transfer_no || "调拨单")}</h3><p>${escapeHtml(nativeDateText(row.confirmed_at || row.created_at))}</p></div>
+        <span class="tag green-outline">${escapeHtml(inventoryStatusText(row.status))}</span>
+      </div>
+      <div class="record-route">
+        <strong>${escapeHtml(row.from_warehouse_name || "调出仓")}</strong>
+        <span>→</span>
+        <strong>${escapeHtml(row.to_warehouse_name || "调入仓")}</strong>
+      </div>
+      <div class="record-metrics">
+        ${metricHtml("调拨数量", row.total_quantity || 0, "accent")}
+        ${metricHtml("操作人", operatorText(row))}
+        ${metricHtml("备注", row.note || "-")}
+      </div>
+    </article>`;
+  }
+  if (state.inventoryTab === "ledger") {
+    return `<article class="record-card inventory-record">
+      <div class="record-main">
+        <div><h3>${escapeHtml(row.title || row.title_snapshot || "商品")}</h3><p>${escapeHtml([row.color || row.color_snapshot, row.sku_no || row.sku_no_snapshot, row.warehouse_name].filter(Boolean).join(" · "))}</p></div>
+        <span class="tag gold">${escapeHtml(bizTypeText(row.biz_type))}</span>
+      </div>
+      <div class="record-metrics">
+        ${metricHtml("变动", row.change_qty || 0, Number(row.change_qty || 0) !== 0 ? "accent" : "")}
+        ${metricHtml("变动前", row.before_qty || 0)}
+        ${metricHtml("变动后", row.after_qty || 0)}
+        ${metricHtml("操作人", operatorText(row))}
+        ${metricHtml("时间", nativeDateText(row.occurred_at || row.created_at))}
+      </div>
+    </article>`;
+  }
+  return `<article class="record-card inventory-record">
+    <div class="record-main">
+      <div><h3>${escapeHtml(row.name || "仓库")}</h3><p>${escapeHtml(row.code || "无编码")}</p></div>
+      <span class="tag green">${Number(row.is_enabled ?? 1) ? "启用" : "停用"}</span>
+    </div>
+    <div class="record-metrics">
+      ${metricHtml("仓库类型", mapText({ self: "自有仓", supplier: "供应商仓", virtual: "虚拟仓" }, row.warehouse_type || row.type))}
+      ${metricHtml("默认销售", Number(row.is_default_sales || 0) ? "是" : "否")}
+      ${metricHtml("默认入库", Number(row.is_default_inbound || 0) ? "是" : "否")}
+    </div>
+  </article>`;
+}
+
+function inventoryEndpoint() {
+  return {
+    balances: "/api/inventory/balances",
+    "stock-documents": "/api/stock-documents",
+    stocktakes: "/api/stocktakes",
+    transfers: "/api/transfers",
+    ledger: "/api/inventory/ledger",
+    warehouses: "/api/warehouses"
+  }[state.inventoryTab] || "/api/inventory/balances";
+}
+
+async function loadInventoryManagement(page = 1) {
+  state.inventoryPage = page;
+  const keyword = (($("inventoryKeyword") && $("inventoryKeyword").value) || "").trim();
+  const target = $("inventoryList");
+  if (target) {
+    target.classList.add("table-mode");
+    target.innerHTML = skeletonCards(2);
+  }
+  const endpoint = inventoryEndpoint();
+  const res = await api(`${endpoint}?${query({ keyword, page: state.inventoryPage, page_size: 50 })}`);
+  const list = normalizeList(res);
+  state.lastInventoryRows = list;
+  state.inventoryTotal = (res.data && res.data.total) || list.length;
+  setBadge("inventory", state.inventoryTotal);
+  renderInventoryManagement(list);
+  renderInventoryManagementPager();
+}
+
+function renderInventoryManagement(list) {
+  const target = $("inventoryList");
+  if (!target) return;
+  target.classList.add("table-mode");
+  target.innerHTML = list.length
+    ? `<div class="management-list">${list.map((row) => inventoryRecordHtml(row)).join("")}</div>`
+    : '<div class="empty">暂无库存记录</div>';
+}
+
+function renderInventoryManagementPager() {
+  const pager = $("inventoryPager");
+  if (!pager) return;
+  const pageSize = 50;
+  const totalPages = Math.max(1, Math.ceil(state.inventoryTotal / pageSize));
+  if (totalPages <= 1) { pager.innerHTML = ""; return; }
+  pager.innerHTML =
+    '<button ' + (state.inventoryPage <= 1 ? "disabled" : "") + ' onclick="loadInventoryManagement(' + (state.inventoryPage - 1) + ')">上一页</button>' +
+    '<span class="page-info">' + state.inventoryPage + ' / ' + totalPages + '</span>' +
+    '<button ' + (state.inventoryPage >= totalPages ? "disabled" : "") + ' onclick="loadInventoryManagement(' + (state.inventoryPage + 1) + ')">下一页</button>';
+}
+window.loadInventoryManagement = loadInventoryManagement;
+
+function setInventoryTab(tab) {
+  state.inventoryTab = tab || "cards";
+  state.inventoryPage = 1;
+  document.querySelectorAll("[data-inventory-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.inventoryTab === state.inventoryTab);
+  });
+  if (state.inventoryTab === "cards") loadInventory(undefined, 1);
+  else loadInventoryManagement(1);
+}
+
+async function loadCustomers(page = 1) {
+  state.customerPage = page;
+  const keyword = (($("customerKeyword") && $("customerKeyword").value) || "").trim();
+  const target = $("customerList");
+  if (target) target.innerHTML = skeletonCards(4);
+  const endpoint = state.customerTab === "users" ? "/api/users" : "/api/customers";
+  const res = await api(`${endpoint}?${query({ keyword, page: state.customerPage, page_size: state.customerPageSize, limit: LIST_LIMITS.customers })}`);
+  const list = normalizeList(res);
+  state.lastCustomers = list;
+  state.customerTotal = (res.data && res.data.total) || list.length;
+  setBadge("customers", state.customerTotal);
+  renderCustomers(list);
+  renderCustomerPager();
+}
+window.loadCustomers = loadCustomers;
+
+function renderCustomers(list) {
+  const target = $("customerList");
+  if (!target) return;
+  if (state.customerTab === "users") {
+    target.innerHTML = renderUserList(list);
+    return;
+  }
+  target.innerHTML = list.length ? `<div class="customer-card-grid">${list.map((customer) => {
+    const customerId = Number(customer.id || customer.customer_id || 0);
+    const customerName = customer.name || customer.customer_name || "客户";
+    return `
+    <article class="record-card customer-card" data-open-customer-sales="${customerId}" data-customer-name="${escapeAttr(customerName)}">
+      <div class="record-main">
+        <div>
+          <h3>${escapeHtml(customerName)}</h3>
+          <p>${escapeHtml(customer.phone || customer.mobile || customer.contacts_mobile || "未绑定电话")}</p>
+        </div>
+      </div>
+      <div class="record-metrics customer-metrics">
+        ${metricHtml("最近下单", nativeDateText(customer.latest_order_at))}
+        ${metricHtml("最近金额", `¥${money(customer.latest_order_amount || 0)}`, "accent")}
+        ${metricHtml("近1年消费", `¥${money(customer.year_amount || 0)}`, "accent")}
+        ${metricHtml("余额", signedMoneyText(customer.balance_amount || 0), Number(customer.balance_amount || 0) < 0 ? "accent danger-metric" : "")}
+      </div>
+      <div class="customer-actions">
+        <button type="button" data-open-customer-sales="${customerId}" data-customer-name="${escapeAttr(customerName)}">销售单</button>
+        <button type="button" data-customer-balance-action="receipt" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">收款</button>
+        <button type="button" data-customer-balance-action="recharge" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">充值</button>
+        <button type="button" class="primary-action" data-customer-balance-action="settlement" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">结款</button>
+        <button type="button" data-customer-balance-action="adjust" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">调整余额</button>
+        <button type="button" data-open-balance-ledger="${customerId}" data-customer-name="${escapeAttr(customerName)}">余额明细</button>
+      </div>
+    </article>
+  `;
+  }).join("")}</div>` : '<div class="empty">暂无客户</div>';
+}
+
+function userRoleText(role) {
+  return roleLabel(role);
+}
+
+function renderRoleButtons(user, roleNames = []) {
+  const roles = userRoleOptionsFromRules(roleNames);
+  const current = roleCode(user.role);
+  if (current && !roles.some(([value]) => value === current)) roles.push([current, roleLabel(current)]);
+  return `<div class="role-buttons">${roles.map(([value, label]) => `<button type="button" class="${String(user.role || "") === value ? "active" : ""}" data-user-role="${escapeAttr(value)}" data-user-id="${Number(user.id || 0)}">${label}</button>`).join("")}</div>`;
+}
+
+function renderUserList(list, roleNames = []) {
+  if (!list.length) return '<div class="empty">暂无用户</div>';
+  return `<div class="management-list user-list">${list.map((user) => {
+    const active = Number(user.is_active || 0) === 1;
+    const current = roleCode(user.role);
+    return `<article class="record-card user-row">
+      <div class="user-main">
+        <div>
+          <h3>${escapeHtml(user.display_name || user.party_name || user.account_display || "用户")}</h3>
+          <p>${escapeHtml(user.account_display || user.username || "")}${user.phone ? ` · ${escapeHtml(user.phone)}` : ""}${user.party_name ? ` · 绑定客户：${escapeHtml(user.party_name)}` : ""}</p>
+        </div>
+        <button type="button" class="enable-toggle ${active ? "on" : ""}" data-user-active="${active ? 0 : 1}" data-user-id="${Number(user.id || 0)}">${active ? "已启用" : "已停用"}</button>
+      </div>
+      <div class="user-controls">
+        <div>
+          <span>角色</span>
+          ${renderRoleButtons({ ...user, role: current }, roleNames)}
+        </div>
+        <div class="user-status">
+          <span>状态</span>
+          <strong>${escapeHtml(userRoleText(current))} · ${escapeHtml(approvalStatusText(user.approval_status || (active ? "active" : "inactive")))}</strong>
+        </div>
+      </div>
+    </article>`;
+  }).join("")}</div>`;
+}
+
+function customerSalesFilterHtml(customerId, customerName, active = {}) {
+  const safeName = escapeAttr(customerName || "客户");
+  const activePeriod = active.period || "";
+  const month = active.month || "";
+  const nowYear = new Date().getFullYear();
+  const selectedYear = Number(active.year || (month ? String(month).slice(0, 4) : nowYear)) || nowYear;
+  const selectedMonth = month ? Number(String(month).slice(5, 7)) : 0;
+  const yearOptions = [nowYear, nowYear - 1, nowYear - 2].map((year) => (
+    `<option value="${year}" ${year === selectedYear ? "selected" : ""}>${year}年</option>`
+  )).join("");
+  const monthButtons = Array.from({ length: 12 }, (_, i) => i + 1).map((num) => {
+    const monthValue = `${selectedYear}-${String(num).padStart(2, "0")}`;
+    return `<button type="button" class="${selectedMonth === num ? "active" : ""}" data-customer-sales-month="${Number(customerId)}" data-customer-name="${safeName}" data-month-value="${monthValue}">${num}月</button>`;
+  }).join("");
+  return `<div class="customer-sales-filter">
+    <button type="button" class="${activePeriod === "" && !month ? "active" : ""}" data-customer-sales-filter="${Number(customerId)}" data-customer-name="${safeName}" data-period="">全部</button>
+    <button type="button" class="${activePeriod === "1m" ? "active" : ""}" data-customer-sales-filter="${Number(customerId)}" data-customer-name="${safeName}" data-period="1m">最近1个月</button>
+    <button type="button" class="${activePeriod === "3m" ? "active" : ""}" data-customer-sales-filter="${Number(customerId)}" data-customer-name="${safeName}" data-period="3m">最近3个月</button>
+    <div class="month-filter"><select id="customerSalesYear">${yearOptions}</select></div>
+    <div class="month-button-grid">${monthButtons}</div>
+  </div>`;
+}
+
+function customerSalesHtml(customerId, customerName, list, total, summary = {}, active = {}) {
+  const filter = customerSalesFilterHtml(customerId, customerName, active);
+  const summaryHtml = `<div class="drawer-summary">
+    <strong>${escapeHtml(summary.label || customerName)}</strong>
+    <span>共 ${escapeHtml(summary.total ?? total ?? list.length)} 单 · 合计 ¥${money(summary.total_amount || 0)} · 余额 ${signedMoneyText(summary.balance_amount || 0)}</span>
+  </div>`;
+  if (!list.length) return `<div class="management-list customer-sales-list">${filter}${summaryHtml}<div class="empty">${escapeHtml(summary.label || customerName)} 暂无绑定销售单</div></div>`;
+  return `<div class="management-list customer-sales-list">
+    ${filter}
+    ${summaryHtml}
+    ${list.map((row) => `<article class="record-card customer-sale-card">
+      <div class="record-main">
+        <div><h3>${escapeHtml(row.sales_no || `销售单#${row.id}`)}</h3><p>${escapeHtml(nativeDateText(row.sales_at))}</p></div>
+        <span class="tag green-outline">${escapeHtml(row.pay_status_text || payStatusText(row.pay_status))}</span>
+      </div>
+      <div class="record-metrics">
+        ${metricHtml("数量", row.total_quantity || 0)}
+        ${metricHtml("应收金额", `¥${money(row.receivable_amount || row.goods_amount || 0)}`, "accent")}
+        ${metricHtml("付款", [row.pay_type_text || payTypeText(row.pay_type), row.pay_status_text || payStatusText(row.pay_status)].filter(Boolean).join(" / "))}
+        ${metricHtml("开单人", operatorText(row))}
+      </div>
+      ${row.items_preview ? `<p class="record-note">${escapeHtml(row.items_preview)}</p>` : ""}
+    </article>`).join("")}
+  </div>`;
+}
+
+async function openCustomerSales(customerId, customerName = "客户", filters = {}) {
+  if (!customerId) return;
+  openDrawer("customer_sales", { customerName });
+  const body = $("drawerBody");
+  if (body) body.innerHTML = '<div class="empty">正在加载销售单...</div>';
+  const res = await api(`/api/customers/${customerId}/sales?${query({ page: 1, page_size: 100, period: filters.period || "", month: filters.month || "" })}`);
+  const list = normalizeList(res);
+  if (body) body.innerHTML = customerSalesHtml(
+    customerId,
+    customerName,
+    list,
+    (res.data && res.data.total) || list.length,
+    (res.data && res.data.summary) || {},
+    filters
+  );
+}
+window.openCustomerSales = openCustomerSales;
+
+function balanceLedgerHtml(customerName, list, total, summary = {}) {
+  const header = `<div class="drawer-summary balance-ledger-summary">
+    <strong>${escapeHtml(customerName || summary.customer_name || "客户")}</strong>
+    <span>当前余额 ${signedMoneyText(summary.balance_amount || 0)} · 未结 ¥${money(summary.debt_amount || 0)} · 共 ${total || list.length} 条</span>
+  </div>`;
+  if (!list.length) {
+    return `<div class="management-list balance-ledger-list">${header}<div class="empty">暂无余额流水</div></div>`;
+  }
+  return `<div class="management-list balance-ledger-list">
+    ${header}
+    ${list.map((row) => {
+      const delta = Number(row.balance_delta || 0);
+      const deltaTone = delta < 0 ? "negative" : (delta > 0 ? "positive" : "");
+      const title = [row.entry_type_text || row.entry_type || "余额流水", row.pay_type_text || ""].filter(Boolean).join(" / ");
+      return `<article class="record-card balance-ledger-card">
+        <div class="record-main">
+          <div>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(nativeDateText(row.created_at))}${row.ledger_no ? ` · ${escapeHtml(row.ledger_no)}` : ""}</p>
+          </div>
+          <strong class="balance-ledger-delta ${deltaTone}">${escapeHtml(signedDeltaText(row.balance_delta || 0))}</strong>
+        </div>
+        <div class="record-metrics">
+          ${metricHtml("金额", `¥${money(row.amount || 0)}`)}
+          ${metricHtml("抵扣", `¥${money(row.applied_amount || 0)}`)}
+          ${metricHtml("月份", row.related_month || "-")}
+          ${metricHtml("操作人", operatorText(row))}
+        </div>
+        ${row.note ? `<p class="record-note">${escapeHtml(row.note)}</p>` : ""}
+      </article>`;
+    }).join("")}
+  </div>`;
+}
+
+async function openCustomerBalanceLedger(customerId, customerName = "客户") {
+  if (!customerId) return;
+  openDrawer("customer_balance_ledger", { customerName });
+  const body = $("drawerBody");
+  if (body) body.innerHTML = '<div class="empty">正在加载余额明细...</div>';
+  const res = await api(`/api/customers/${customerId}/balance-ledger?${query({ page: 1, page_size: 100 })}`);
+  const list = normalizeList(res);
+  if (body) body.innerHTML = balanceLedgerHtml(
+    customerName,
+    list,
+    (res.data && res.data.total) || list.length,
+    (res.data && res.data.summary) || {}
+  );
+}
+window.openCustomerBalanceLedger = openCustomerBalanceLedger;
+
+function paymentTypeOptions(selected = "wechat") {
+  const options = [
+    ["wechat", "微信"],
+    ["cash", "现金"],
+    ["bank", "转账"],
+    ["alipay", "支付宝"]
+  ];
+  return options.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function customerById(customerId) {
+  const id = Number(customerId || 0);
+  return (state.lastCustomers || []).find((customer) => Number(customer.id || customer.customer_id || 0) === id) || {};
+}
+
+function balanceActionTitle(action) {
+  return {
+    receipt: "收款",
+    recharge: "充值",
+    settlement: "结款",
+    adjust: "调整余额"
+  }[String(action || "")] || "余额操作";
+}
+
+function selectedBalanceMonth() {
+  const value = document.querySelector("[data-balance-month].active");
+  return value ? value.dataset.balanceMonth : "";
+}
+
+async function loadBalanceMonthSummary(customerId, month) {
+  const box = $("balanceMonthSummary");
+  if (!box || !customerId || !month) return;
+  box.textContent = "正在读取月份销售单...";
+  const res = await api(`/api/customers/${customerId}/sales?${query({ page: 1, page_size: 1, month })}`);
+  const summary = (res.data && res.data.summary) || {};
+  const unpaid = Number(summary.unpaid_amount || 0);
+  const total = Number(summary.total_amount || 0);
+  const amountInput = $("balanceAmountInput");
+  if (amountInput) amountInput.value = unpaid > 0 ? money(unpaid) : "";
+  box.textContent = `${summary.label || month}：共 ${summary.total || 0} 单，合计 ¥${money(total)}，未结 ¥${money(unpaid)}`;
+}
+
+function openCustomerBalanceDialog(customerId, customerName, action) {
+  if (!customerId) return;
+  const title = balanceActionTitle(action);
+  const isSettlement = action === "settlement";
+  const isAdjust = action === "adjust";
+  const customer = customerById(customerId);
+  const currentBalance = customer.balance_amount;
+  const now = new Date();
+  const year = now.getFullYear();
+  const currentMonth = `${year}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  let mask = $("customerBalanceMask");
+  if (!mask) {
+    mask = document.createElement("div");
+    mask.id = "customerBalanceMask";
+    mask.className = "confirm-mask";
+    document.body.appendChild(mask);
+  }
+  const monthButtons = Array.from({ length: 12 }, (_, i) => i + 1).map((num) => {
+    const value = `${year}-${String(num).padStart(2, "0")}`;
+    return `<button type="button" class="${value === currentMonth ? "active" : ""}" data-balance-month="${value}">${num}月</button>`;
+  }).join("");
+  mask.innerHTML = `
+    <div class="confirm-box balance-form-box" role="dialog" aria-modal="true">
+      <h3 class="confirm-title">${escapeHtml(title)} · ${escapeHtml(customerName || "客户")}</h3>
+      <div class="balance-form">
+        ${isSettlement ? `
+          <label>结款月份
+            <select id="balanceYearSelect">
+              <option value="${year}">${year}年</option>
+              <option value="${year - 1}">${year - 1}年</option>
+              <option value="${year - 2}">${year - 2}年</option>
+            </select>
+          </label>
+          <div class="balance-month-grid">${monthButtons}</div>
+          <div class="balance-summary" id="balanceMonthSummary">请选择月份</div>
+        ` : ""}
+        ${isAdjust ? `<div class="balance-summary">当前余额 ${signedMoneyText(currentBalance || 0)}。输入正数就是增加余额，输入负数就是减少余额。</div>` : ""}
+        <label>${isSettlement ? "本次收款金额" : (isAdjust ? "调整金额" : "金额")}
+          <input id="balanceAmountInput" type="number" ${isAdjust ? "" : 'min="0"'} step="0.01" placeholder="${isAdjust ? "例如 100 或 -50" : "0.00"}">
+        </label>
+        ${isAdjust ? "" : `<label>收款方式
+          <select id="balancePayType">${paymentTypeOptions("wechat")}</select>
+        </label>`}
+        <label>备注
+          <textarea id="balanceNoteInput" placeholder="可不填"></textarea>
+        </label>
+      </div>
+      <div class="confirm-actions" style="margin-top:14px;">
+        <button id="customerBalanceCancel">取消</button>
+        <button class="danger-confirm" id="customerBalanceOk">确认${escapeHtml(title)}</button>
+      </div>
+    </div>`;
+  const close = () => mask.classList.remove("open");
+  $("customerBalanceCancel").onclick = close;
+  $("customerBalanceOk").onclick = () => submitCustomerBalanceAction(customerId, customerName, action).catch((err) => toast(err.message, true));
+  mask.onclick = (event) => { if (event.target === mask) close(); };
+  if (isSettlement) {
+    mask.querySelectorAll("[data-balance-month]").forEach((button) => {
+      button.onclick = () => {
+        const selectedYear = Number(($("balanceYearSelect") && $("balanceYearSelect").value) || year);
+        const monthNum = String(button.dataset.balanceMonth || "").slice(5, 7);
+        const monthValue = `${selectedYear}-${monthNum}`;
+        mask.querySelectorAll("[data-balance-month]").forEach((node) => node.classList.toggle("active", node === button));
+        button.dataset.balanceMonth = monthValue;
+        loadBalanceMonthSummary(customerId, monthValue).catch((err) => toast(err.message, true));
+      };
+    });
+    $("balanceYearSelect").onchange = () => {
+      const active = mask.querySelector("[data-balance-month].active") || mask.querySelector("[data-balance-month]");
+      if (active) active.click();
+    };
+    loadBalanceMonthSummary(customerId, currentMonth).catch((err) => toast(err.message, true));
+  }
+  requestAnimationFrame(() => mask.classList.add("open"));
+}
+window.openCustomerBalanceDialog = openCustomerBalanceDialog;
+
+async function submitCustomerBalanceAction(customerId, customerName, action) {
+  const amount = Number(($("balanceAmountInput") && $("balanceAmountInput").value) || 0);
+  const isAdjust = action === "adjust";
+  if (isAdjust) {
+    if (!Number.isFinite(amount) || amount === 0) throw new Error("请输入调整金额，不能为0");
+  } else if (!amount || amount <= 0) {
+    throw new Error("请输入正确金额");
+  }
+  const body = {
+    action,
+    amount,
+    pay_type: ($("balancePayType") && $("balancePayType").value) || (isAdjust ? "adjustment" : "wechat"),
+    note: ($("balanceNoteInput") && $("balanceNoteInput").value.trim()) || ""
+  };
+  if (action === "settlement") {
+    body.month = selectedBalanceMonth();
+    if (!body.month) throw new Error("请选择结款月份");
+  }
+  const res = await api(`/api/customers/${customerId}/balance`, { method: "POST", body });
+  const mask = $("customerBalanceMask");
+  if (mask) mask.classList.remove("open");
+  const data = res.data || {};
+  toast(action === "settlement"
+    ? `结款完成：${data.month || ""} ${data.order_count || 0} 单`
+    : `${balanceActionTitle(action)}完成`
+  );
+  await loadCustomers(state.customerPage);
+  if (action === "settlement") {
+    openCustomerSales(customerId, customerName, { month: body.month }).catch((err) => toast(err.message, true));
+  }
+}
+
+async function updateUserRole(userId, role) {
+  if (!userId || !role) return;
+  await api(`/api/users/${userId}`, { method: "PATCH", body: { role } });
+  toast("角色已更新");
+  if ($("settings") && $("settings").classList.contains("active") && state.settingsTab === "users") {
+    loadPermissionSettings(true);
+  } else {
+    loadCustomers(state.customerPage);
+  }
+}
+window.updateUserRole = updateUserRole;
+
+async function updateUserActive(userId, isActive) {
+  if (!userId) return;
+  await api(`/api/users/${userId}`, { method: "PATCH", body: { is_active: Number(isActive || 0) } });
+  toast(Number(isActive || 0) ? "账号已启用" : "账号已停用");
+  if ($("settings") && $("settings").classList.contains("active") && state.settingsTab === "users") {
+    loadPermissionSettings(true);
+  } else {
+    loadCustomers(state.customerPage);
+  }
+}
+window.updateUserActive = updateUserActive;
+
+function renderCustomerPager() {
+  const pager = $("customerPager");
+  if (!pager) return;
+  if (state.customerTab !== "users") { pager.innerHTML = ""; return; }
+  const totalPages = Math.max(1, Math.ceil(state.customerTotal / state.customerPageSize));
+  if (totalPages <= 1) { pager.innerHTML = ""; return; }
+  pager.innerHTML =
+    '<button ' + (state.customerPage <= 1 ? "disabled" : "") + ' onclick="loadCustomers(' + (state.customerPage - 1) + ')">上一页</button>' +
+    '<span class="page-info">' + state.customerPage + ' / ' + totalPages + '</span>' +
+    '<button ' + (state.customerPage >= totalPages ? "disabled" : "") + ' onclick="loadCustomers(' + (state.customerPage + 1) + ')">下一页</button>';
+}
+
+function setCustomerTab(tab) {
+  state.customerTab = tab || "customers";
+  state.customerPage = 1;
+  document.querySelectorAll("[data-customer-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.customerTab === state.customerTab);
+  });
+  loadCustomers(1);
 }
 
 function inventoryActionForm(row = {}) {
@@ -2380,7 +4383,7 @@ async function searchSaleProducts() {
     const id = Number(product.id || product.product_id || 0);
     const title = product.title || product.name || "商品";
     const specs = Number(product.spec_count || productVariants(product).length || 1);
-    const stock = product.inventory ?? 0;
+    const stock = productTracksInventory(product) ? (product.inventory ?? 0) : "不管库存";
     const category = product.product_category_text || product.simple_desc || "";
     return `<button class="choice" data-sale-product-id="${id}"><strong>${escapeHtml(title)}</strong><div class="muted">${escapeHtml(category)} · ${specs} 个颜色/规格 · 库存 ${escapeHtml(stock)} · ${productPriceText(product)}</div></button>`;
   }).join("") : '<div class="empty">没有商品结果</div>';
@@ -2396,7 +4399,12 @@ function saleWarehouseOptions(selected) {
   ].map((item) => `<option value="${item.id}" ${String(item.id) === value ? "selected" : ""}>${item.name}</option>`).join("");
 }
 
+function productTracksInventory(item) {
+  return Number((item && item.is_stock_item) ?? 1) !== 0;
+}
+
 function saleVariantStockText(variant) {
+  if (!productTracksInventory(variant)) return "不管库存";
   if (variant.inventory !== undefined && variant.inventory !== null && variant.inventory !== "") return `库存 ${variant.inventory}`;
   return "库存 -";
 }
@@ -2432,7 +4440,8 @@ async function selectSaleProductVariant(product, variant) {
     price,
     warehouse_id: Number($("saleWarehouse")?.value || 2),
     image: productImage(variant) || productImage(product),
-    inventory: variant.inventory ?? product.inventory ?? ""
+    inventory: variant.inventory ?? product.inventory ?? "",
+    is_stock_item: Number((variant.is_stock_item ?? product.is_stock_item ?? 1))
   };
   state.saleProduct = line;
   if (!$("saleProduct")) return;
@@ -2527,7 +4536,7 @@ function renderSaleLines() {
     <tr>
       <td>
         <div class="sale-product-name">${escapeHtml(line.title)}</div>
-        <div class="sale-product-sub">ID ${escapeHtml(line.product_id)}${line.coding ? ` · ${escapeHtml(line.coding)}` : ""}</div>
+        <div class="sale-product-sub">ID ${escapeHtml(line.product_id)}${line.coding ? ` · ${escapeHtml(line.coding)}` : ""}${productTracksInventory(line) ? "" : " · 不管库存"}</div>
       </td>
       <td>${escapeHtml(line.spec || "默认")}</td>
       <td class="qty-cell"><input type="number" min="1" value="${escapeAttr(line.buy_number)}" data-sale-line-index="${index}" data-sale-line-field="buy_number"></td>
@@ -2572,9 +4581,25 @@ function clearSaleForm() {
   $("saleCustomerChoices").innerHTML = "";
   $("saleProductChoices").innerHTML = "";
   $("saleSelectedCustomer").textContent = "未选择客户";
+  if ($("salePaymentStatus")) $("salePaymentStatus").value = "paid";
+  if ($("salePayType")) $("salePayType").value = "wechat";
+  syncSalePaymentUi();
   if ($("saleResultCard")) $("saleResultCard").innerHTML = "<strong>开单结果</strong><p>提交后这里会显示销售单号、打印和删除入口。</p>";
   setDefaultSaleCreateTime(true);
   renderSaleLines();
+}
+
+function salePaymentPayload() {
+  const status = ($("salePaymentStatus") && $("salePaymentStatus").value) || "paid";
+  if (status === "monthly") return { pay_status: "monthly", pay_type: "monthly" };
+  if (status === "unpaid") return { pay_status: "unpaid", pay_type: "" };
+  return { pay_status: "paid", pay_type: ($("salePayType") && $("salePayType").value) || "wechat" };
+}
+
+function syncSalePaymentUi() {
+  const status = ($("salePaymentStatus") && $("salePaymentStatus").value) || "paid";
+  const field = $("salePayTypeField");
+  if (field) field.style.display = status === "paid" ? "" : "none";
 }
 
 async function quickSale() {
@@ -2585,6 +4610,7 @@ async function quickSale() {
   if (!state.saleLines.length) await addSaleLine();
   const warehouseId = Number($('saleWarehouse').value || 2);
   const createTime = saleCreateTimeText();
+  const payment = salePaymentPayload();
   if (!createTime) throw new Error('请选择创建时间');
   const invalid = state.saleLines.find((line) => Number(line.buy_number || 0) <= 0 || Number(line.price || 0) < 0 || !Number(line.warehouse_id || 0));
   if (invalid) throw new Error('请检查商品数量、单价和仓库');
@@ -2599,6 +4625,8 @@ async function quickSale() {
         customer_name: state.saleCustomer.name,
         warehouse_id: warehouseId,
         create_time: createTime,
+        pay_status: payment.pay_status,
+        pay_type: payment.pay_type,
         products: state.saleLines.map((line) => ({
           product_id: line.product_id,
           unit_id: line.unit_id || 1,
@@ -2679,21 +4707,95 @@ function renderProductCategories() {
   const bar = $("productCategoryBar");
   if (!bar) return;
   const list = state.productCategories.length ? state.productCategories : [{ id: "", name: "全部产品", total: state.productTotal || "" }];
-  bar.innerHTML = list.map((category) => {
-    const id = category.id ?? "";
-    const active = String(id) === String(state.productCategoryId || "");
-    const total = category.total !== undefined && category.total !== "" ? ` ${category.total}` : "";
-    return `<button class="${active ? "active" : ""}" onclick="selectProductCategory('${escapeAttr(id)}')">${escapeHtml(category.name || "分类")}${escapeHtml(total)}</button>`;
-  }).join("");
+  const tree = productCategoryTree(list);
+  const activeGroupKey = state.productCategoryGroupKey || productCategoryGroupKeyForId(state.productCategoryId, tree);
+  const activeGroup = tree.groups.find((group) => group.key === activeGroupKey);
+  const majorHtml = [
+    `<button class="${!activeGroupKey && !state.productCategoryId ? "active" : ""}" onclick="selectProductCategoryGroup('', '')">全部产品${tree.total ? ` ${escapeHtml(tree.total)}` : ""}</button>`,
+    ...tree.groups.map((group) => {
+      const active = group.key === activeGroupKey && !state.productCategoryId;
+      return `<button class="${active ? "active" : ""}" onclick="selectProductCategoryGroup('${escapeAttr(group.key)}', '')">${escapeHtml(group.name)}${group.total ? ` ${escapeHtml(group.total)}` : ""}</button>`;
+    })
+  ].join("");
+  const childHtml = activeGroup ? [
+    `<button class="${!state.productCategoryId ? "active" : ""}" onclick="selectProductCategoryGroup('${escapeAttr(activeGroup.key)}', '')">全部${escapeHtml(activeGroup.name)}${activeGroup.total ? ` ${escapeHtml(activeGroup.total)}` : ""}</button>`,
+    ...activeGroup.children.map((category) => {
+      const id = category.id ?? "";
+      const active = String(id) === String(state.productCategoryId || "");
+      const total = category.total !== undefined && category.total !== "" ? ` ${category.total}` : "";
+      return `<button class="${active ? "active" : ""}" onclick="selectProductCategoryGroup('${escapeAttr(activeGroup.key)}', '${escapeAttr(id)}')">${escapeHtml(category.name || "分类")}${escapeHtml(total)}</button>`;
+    })
+  ].join("") : "";
+  bar.innerHTML = `<div class="product-category-level product-category-major">${majorHtml}</div>${activeGroup ? `<div class="product-category-level product-category-child">${childHtml}</div>` : ""}`;
 }
 
 function selectProductCategory(id) {
   state.productCategoryId = id || "";
+  state.productCategoryGroupKey = productCategoryGroupKeyForId(id) || "";
   state.productPage = 1;
   renderProductCategories();
   loadProducts(1);
 }
 window.selectProductCategory = selectProductCategory;
+
+function selectProductCategoryGroup(groupKey = "", categoryId = "") {
+  state.productCategoryGroupKey = groupKey || "";
+  state.productCategoryId = categoryId || "";
+  state.productPage = 1;
+  renderProductCategories();
+  loadProducts(1);
+}
+window.selectProductCategoryGroup = selectProductCategoryGroup;
+
+function productCategoryGroupKeyForId(id, tree = null) {
+  if (!id) return "";
+  const data = tree || productCategoryTree(state.productCategories);
+  for (const group of data.groups || []) {
+    if ((group.children || []).some((category) => String(category.id ?? "") === String(id))) return group.key;
+  }
+  return "";
+}
+
+function productCategoryMajor(category = {}) {
+  const name = String(category.name || "");
+  if (/快递|纸箱|物流|纸盒/.test(name)) return { key: "shipping", name: "快递纸箱", order: 30 };
+  if (/泡袋|茶袋|袋|大红袍|肉桂|水仙|红茶|品种茶|公版|空白|宽版/.test(name)) return { key: "bag", name: "泡袋", order: 20 };
+  if (/礼盒|小盒|盒/.test(name)) return { key: "gift_box", name: "礼盒", order: 10 };
+  return { key: "other", name: "其他", order: 90 };
+}
+
+function productCategoryTree(list = []) {
+  const categories = (list || []).filter((category) => String(category.id ?? "") !== "");
+  const all = (list || []).find((category) => String(category.id ?? "") === "") || { total: state.productTotal || "" };
+  const parents = categories.filter((category) => !Number(category.pid || category.parent_id || 0));
+  const hasRealChildren = categories.some((category) => Number(category.pid || category.parent_id || 0));
+  const groups = new Map();
+  const addGroupCategory = (groupInfo, category) => {
+    const current = groups.get(groupInfo.key) || { ...groupInfo, total: 0, children: [] };
+    current.children.push(category);
+    current.total += Number(category.total || 0);
+    groups.set(groupInfo.key, current);
+  };
+  if (hasRealChildren) {
+    const byId = new Map(categories.map((category) => [String(category.id ?? ""), category]));
+    categories.forEach((category) => {
+      const pid = String(category.pid || category.parent_id || "");
+      if (!pid || pid === "0") return;
+      const parent = byId.get(pid) || {};
+      addGroupCategory({ key: `cat_${pid}`, name: parent.name || "其他", order: Number(parent.sort_order || parent.id || 99) }, category);
+    });
+    parents.filter((parent) => !categories.some((category) => String(category.pid || category.parent_id || "") === String(parent.id ?? ""))).forEach((parent) => {
+      const info = productCategoryMajor(parent);
+      addGroupCategory(info, parent);
+    });
+  } else {
+    categories.forEach((category) => addGroupCategory(productCategoryMajor(category), category));
+  }
+  return {
+    total: all.total !== undefined && all.total !== "" ? all.total : state.productTotal || "",
+    groups: Array.from(groups.values()).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, "zh-Hans-CN"))
+  };
+}
 
 async function loadProducts(page) {
   if (page !== undefined) state.productPage = page;
@@ -2702,7 +4804,10 @@ async function loadProducts(page) {
   const keyword = ($("productKeyword") && $("productKeyword").value.trim()) || "";
   const target = $("productList");
   if (target) target.innerHTML = skeletonCards(Math.min(state.productPageSize, 8));
-  const res = await api(`/api/product/list?${query({ keyword, page: state.productPage, page_size: state.productPageSize, category_id: state.productCategoryId, group: 1 })}`);
+  const tree = productCategoryTree(state.productCategories);
+  const activeGroup = tree.groups.find((group) => group.key === state.productCategoryGroupKey);
+  const categoryIds = !state.productCategoryId && activeGroup ? activeGroup.children.map((category) => category.id).filter(Boolean).join(",") : "";
+  const res = await api(`/api/product/list?${query({ keyword, page: state.productPage, page_size: state.productPageSize, category_id: state.productCategoryId, category_ids: categoryIds, group: 1 })}`);
   let list = normalizeList(res);
   if (!list.length && res.data && Array.isArray(res.data)) list = res.data;
   state.lastProducts = list;
@@ -2738,7 +4843,7 @@ function renderProductPager() {
 }
 
 function productImage(product) {
-  const images = product.main_images || product.images || product.image || "";
+  const images = product.spu_main_image_url || product.main_images || product.images || product.image || "";
   if (Array.isArray(images)) return images[0] || "";
   const text = String(images || "").trim();
   if (!text) return "";
@@ -2764,6 +4869,43 @@ function productPriceText(product) {
   return `¥${money(min || product.price || 0)}`;
 }
 
+function productColorNames(product) {
+  const colors = [];
+  const add = (value) => {
+    const clean = String(value || "").trim();
+    if (clean && !colors.includes(clean)) colors.push(clean);
+  };
+  if (Array.isArray(product.color_names)) product.color_names.forEach(add);
+  if (Array.isArray(product.available_colors)) product.available_colors.forEach(add);
+  productVariants(product).forEach((row) => add(row.color || row.spec));
+  return colors;
+}
+
+function productColorCount(product) {
+  const explicit = Number(product.color_count);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return Math.max(1, productColorNames(product).length);
+}
+
+function productColorText(product) {
+  const text = String(product.color_text || "").trim();
+  if (text) return text;
+  const colors = productColorNames(product);
+  return colors.length ? colors.join(" / ") : "默认颜色";
+}
+
+function productColorSummaryHtml(product) {
+  return `<div class="muted product-color-summary">${escapeHtml(productColorText(product))}</div>`;
+}
+
+function productCasePackText(product) {
+  const piece = String(product.piece_text || "").trim();
+  if (piece) return `件规：${piece.replace(/^件规[:：]\s*/, "").replace(/个/g, "套")}`;
+  const qty = String(product.case_pack_qty || "").trim();
+  if (qty) return `件规：1件${qty}套`;
+  return "件规：未设置";
+}
+
 function productVariantHtml(product) {
   const rows = productVariants(product).slice(0, 6);
   return rows.map((row) => {
@@ -2783,9 +4925,9 @@ function renderProducts(list) {
     const img = productImage(product);
     const shelves = isMallShelved(product);
     const statusOk = Number(product.status || 0) === 0;
-    const specs = Number(product.spec_count || productVariants(product).length || 1);
-    const category = product.product_category_text || product.simple_desc || "未分类";
-    const coding = product.coding || product.product_code || id || "";
+    const colors = productColorCount(product);
+    const packText = productCasePackText(product);
+    const purchaseText = product.purchase_policy === "one_case" || Number(product.is_one_case_purchase || 0) ? "1件起订" : "按订单量";
     return `
       <article class="product-card" style="--tone:${tones[index % tones.length]}">
         <div class="product-image ${img ? "has-img" : ""}">${img ? `<img src="${escapeAttr(img)}">` : ""}</div>
@@ -2793,14 +4935,15 @@ function renderProducts(list) {
           <div class="product-main">
             <div class="product-title-row">
               <h3>${escapeHtml(product.title || product.name || "商品")}</h3>
-              <span class="product-count">${escapeHtml(specs)} 规格</span>
+              <span class="product-count">${escapeHtml(colors)} 颜色</span>
             </div>
-            <div class="muted">${escapeHtml(category)} · 编号 ${escapeHtml(coding)}</div>
-            <div class="product-price-row"><strong>${productPriceText(product)}</strong></div>
+            ${productColorSummaryHtml(product)}
+            <div class="product-price-row"><strong>${productPriceText(product)}</strong><span>${escapeHtml(packText)}</span></div>
           </div>
           <div class="product-tags">
             <span class="tag ${statusOk ? "green" : "green-outline"}">${escapeHtml(product.status_text || "正常")}</span>
             <span class="tag ${shelves ? "green" : "green-outline"}">${shelves ? "商城已上架" : "商城未上架"}</span>
+            <span class="tag green-outline">${purchaseText}</span>
           </div>
           <div class="card-actions"><button onclick="editProduct(${Number(id || 0)})">编辑</button><button class="danger" onclick="deleteProduct(${Number(id || 0)})">删除</button><button class="product-shelf-button" onclick="shelvesProduct(${Number(id || 0)}, ${shelves ? 0 : 1})">${shelves ? "商城下架" : "商城上架"}</button></div>
         </div>
@@ -2816,7 +4959,11 @@ function productDataFromOptionsPayload(payload) {
   const data = payload && payload.data ? payload.data : payload;
   if (!data || typeof data !== "object") return {};
   if (data.data && typeof data.data === "object") {
-    return { ...data.data, product_group_data: data.product_group_data || data.data.product_group_data || [] };
+    return {
+      ...data.data,
+      product_group_data: data.product_group_data || data.data.product_group_data || [],
+      media_assets: data.data.media_assets || data.media_assets || []
+    };
   }
   return data;
 }
@@ -2836,6 +4983,8 @@ function mergeProductCategories(list) {
 async function loadProductOptions(productId = "") {
   const res = await api(`/api/product/options${productId ? `?id=${encodeURIComponent(productId)}` : ""}`);
   const data = res.data || {};
+  const mediaAssets = (data.data && data.data.media_assets) || data.media_assets || [];
+  if (Array.isArray(mediaAssets)) state.productMediaAssets = mediaAssets;
   if (Array.isArray(data.product_category)) {
     const savedCategories = state.productCategories.slice();
     const all = state.productCategories.find((item) => item.id === "") || { id: "", name: "全部产品", total: state.productTotal || "" };
@@ -2916,19 +5065,31 @@ function productMainImages() {
 function setProductMainImages(images) {
   const list = (images || []).filter(Boolean);
   if ($("drawerProductMainImages")) $("drawerProductMainImages").value = JSON.stringify(list);
-  const preview = $("drawerProductImagePreview");
-  if (preview) {
-    preview.classList.toggle("empty-upload", !list[0]);
-    preview.innerHTML = list[0]
-      ? `<img src="${escapeAttr(list[0])}" alt=""><span class="product-image-remove" onclick="event.stopPropagation(); removeProductMainImage();">×</span>`
-      : '<span>+</span><strong>上传主图</strong>';
-  }
+  renderProductMainImageRow(list);
 }
 
 function removeProductMainImage() {
   setProductMainImages([]);
 }
 window.removeProductMainImage = removeProductMainImage;
+
+function productMainImageRowHtml(images = []) {
+  const first = (images || []).filter(Boolean)[0] || "";
+  if (!first) {
+    return `<button type="button" id="drawerProductImagePreview" class="product-image-preview empty-upload" onclick="openProductAssetPicker('main')"><span>+</span><strong>上传/选择</strong></button>`;
+  }
+  return `
+    <button type="button" id="drawerProductImagePreview" class="product-image-preview" onclick="openProductAssetPicker('main')">
+      <img src="${escapeAttr(first)}" alt="">
+      <span class="product-image-remove" onclick="event.stopPropagation(); removeProductMainImage();">×</span>
+    </button>
+    <button type="button" class="product-detail-item product-upload-tile product-main-upload" onclick="openProductAssetPicker('main')"><span>+</span><strong>上传/选择</strong></button>`;
+}
+
+function renderProductMainImageRow(images = productMainImages()) {
+  const row = $("drawerProductMainImageRow");
+  if (row) row.innerHTML = productMainImageRowHtml(images);
+}
 
 function productDetailImages() {
   try {
@@ -2945,7 +5106,7 @@ function setProductDetailImages(images) {
   const grid = $("drawerProductDetailGrid");
   if (grid) {
     const imagesHtml = list.map((url, index) => `<div class="product-detail-item"><img src="${escapeAttr(url)}" alt=""><button type="button" class="product-detail-remove" onclick="removeProductDetailImage(${index})">×</button></div>`).join("");
-    grid.innerHTML = imagesHtml + '<button type="button" class="product-detail-item product-upload-tile" onclick="chooseProductUpload(\'detail\')"><span>+</span><strong>上传</strong></button>';
+    grid.innerHTML = imagesHtml + '<button type="button" class="product-detail-item product-upload-tile" onclick="openProductAssetPicker(\'detail\')"><span>+</span><strong>上传/选择</strong></button>';
   }
 }
 
@@ -2961,12 +5122,9 @@ function removeProductSpecImage(index) {
   const card = cards[Number(index || 0)];
   if (!card) return;
   const input = card.querySelector(".drawerSpecImages");
-  const preview = card.querySelector(".product-spec-image");
   if (input) input.value = "";
-  if (preview) {
-    preview.classList.add("empty-upload");
-    preview.innerHTML = "<span>+</span><strong>规格图</strong>";
-  }
+  const row = card.querySelector(".product-spec-image-row");
+  if (row) row.innerHTML = productSpecImageButtonsHtml("", Number(index || 0));
 }
 window.removeProductSpecImage = removeProductSpecImage;
 
@@ -2974,28 +5132,721 @@ function productRowsForForm(product = {}) {
   const rows = Array.isArray(product.product_group_data) && product.product_group_data.length ? product.product_group_data : [product];
   return rows.map((row) => {
     const base = Array.isArray(row.base) && row.base.length ? row.base[0] : {};
+    const specImage = row.spec_image_url || row.sku_image_url || base.images || "";
     return {
       local_key: localKey(),
       id: row.id || "",
       base_id: base.id || "",
       spec: row.spec || "",
       coding: row.coding || base.coding || "",
-      barcode: base.barcode || "",
-      unit_id: base.unit_id || row.unit_id || (state.productUnits[0] && state.productUnits[0].id) || 1,
-      price: base.price || row.price || "",
-      cost_price: base.cost_price || row.cost_price || "",
-      images: row.images || "",
-      image_url: row.images || ""
-    };
+    barcode: base.barcode || "",
+    unit_id: base.unit_id || row.unit_id || (state.productUnits[0] && state.productUnits[0].id) || 1,
+    price: base.price || row.price || "",
+    cost_price: base.cost_price || row.cost_price || "",
+    is_stock_item: Number((row.is_stock_item ?? base.is_stock_item ?? 1)),
+    images: specImage,
+    image_url: specImage
+  };
   });
 }
 
+function productMediaAssetType(asset) {
+  return asset.media_type_text || {
+    main_image: "主图",
+    detail_image: "详情页",
+    color_image: "颜色图",
+    pending: "待绑定",
+    image: "旧图片"
+  }[String(asset.media_type || "")] || "图片";
+}
+
+function productAssetBindingText(asset = {}) {
+  const type = String(asset.media_type || "");
+  if (type === "pending") return "待绑定";
+  const name = asset.binding_text || asset.product_name || asset.spu_title || "";
+  if (name) return name;
+  if (asset.spu_id) return `产品#${asset.spu_id}`;
+  return "待绑定";
+}
+
+function productAssetTitleText(asset = {}) {
+  return productAssetBindingText(asset);
+}
+
+function productAssetSourceText(asset = {}) {
+  return asset.source_text || {
+    migration: "迁移导入",
+    upload: "上传",
+    native_api: "系统保存",
+    webui: "WebUI上传",
+    manual: "手工维护",
+    shopxo: "商城迁移",
+    erp: "ERP迁移"
+  }[String(asset.source || "")] || asset.source || "-";
+}
+
+function productAssetGroupText(asset = {}) {
+  return asset.asset_group_text || (asset.media_type === "pending" ? "待绑定图片" : productAssetBindingText(asset));
+}
+
+function productAssetGroupKey(asset = {}) {
+  return asset.asset_group_key || productAssetGroupText(asset);
+}
+
+function productMediaAssetsHtml(assets = []) {
+  const list = Array.isArray(assets) ? assets.slice(0, 36) : [];
+  if (!list.length) return '<div class="product-media-empty">暂无图片资产</div>';
+  return list.map((asset, index) => {
+    const url = asset.url || "";
+    const type = String(asset.media_type || "pending");
+    return `<div class="product-media-asset ${type === "pending" ? "pending" : ""}">
+      ${lazyImageHtml(url, 120)}
+      <div>
+        <strong>${escapeHtml(productMediaAssetType(asset))}</strong>
+        <span>${escapeHtml(productAssetBindingText(asset))}</span>
+      </div>
+      <div class="product-media-actions">
+        <button type="button" onclick="applyProductAsset(${index}, 'main')">设主图</button>
+        <button type="button" onclick="applyProductAsset(${index}, 'detail')">加详情</button>
+        <button type="button" onclick="applyProductAsset(${index}, 'spec')">设颜色图</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderProductMediaAssets() {
+  const box = $("drawerProductMediaAssets");
+  if (box) box.innerHTML = productMediaAssetsHtml(state.productMediaAssets);
+}
+
+function drawerProductIdValue() {
+  return Number(($("drawerProductId") && $("drawerProductId").value) || 0);
+}
+
+function drawerProductTitleValue() {
+  return (($("drawerProductTitle") && $("drawerProductTitle").value) || "").trim() || "当前产品";
+}
+
+function currentProductAssets() {
+  const title = drawerProductTitleValue();
+  const productId = drawerProductIdValue();
+  const rows = [];
+  productMainImages().forEach((url, index) => {
+    rows.push({
+      id: "",
+      spu_id: productId || "",
+      media_type: "main_image",
+      media_type_text: "主图",
+      url,
+      product_name: title,
+      binding_text: `${title} / 主图`,
+      asset_group_text: "本产品图片",
+      source: "drawer_main",
+      source_text: "当前主图",
+      sort_order: index
+    });
+  });
+  productDetailImages().forEach((url, index) => {
+    rows.push({
+      id: "",
+      spu_id: productId || "",
+      media_type: "detail_image",
+      media_type_text: "详情页",
+      url,
+      product_name: title,
+      binding_text: `${title} / 详情图`,
+      asset_group_text: "本产品图片",
+      source: "drawer_detail",
+      source_text: "当前详情页",
+      sort_order: index
+    });
+  });
+  Array.from(document.querySelectorAll(".product-spec-card")).forEach((card, index) => {
+    const url = (card.querySelector(".drawerSpecImages") && card.querySelector(".drawerSpecImages").value) || "";
+    if (!url) return;
+    const color = (card.querySelector(".drawerSpecName") && card.querySelector(".drawerSpecName").value.trim()) || "默认颜色";
+    rows.push({
+      id: "",
+      spu_id: productId || "",
+      media_type: "color_image",
+      media_type_text: "颜色图",
+      url,
+      product_name: title,
+      binding_text: `${title} / ${color}`,
+      asset_group_text: "本产品图片",
+      sku_color: color,
+      source: "drawer_spec",
+      source_text: "当前颜色图",
+      sort_order: index
+    });
+  });
+  (state.productMediaAssets || [])
+    .filter((asset) => {
+      if (!productId) return false;
+      const type = String(asset.media_type || "");
+      if (type === "pending") return false;
+      if (productId && asset.spu_id && Number(asset.spu_id) !== Number(productId)) return false;
+      return ["main_image", "detail_image", "color_image", "image"].includes(type) || asset.spu_id;
+    })
+    .forEach((asset) => rows.push(asset));
+  const seen = new Set();
+  return rows.filter((asset) => {
+    const key = asset.url || "";
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function assetListForPicker() {
+  const tab = state.productAssetPickerTab || "pending";
+  let list = [];
+  if (tab === "product_assets") list = currentProductAssets();
+  else if (tab === "all") list = state.productMediaAssets || [];
+  else list = (state.productMediaAssets || []).filter((asset) => String(asset.media_type || "") === "pending" || !asset.spu_id);
+  const keyword = String(state.productAssetPickerKeyword || "").trim().toLowerCase();
+  if (!keyword) return list;
+  return list.filter((asset) => productAssetKeywordText(asset).includes(keyword));
+}
+
+function applyProductAsset(index, target, specIndex = 0) {
+  const source = target === "asset-list" ? state.productAssets : assetListForPicker();
+  const asset = source[Number(index || 0)];
+  const url = asset && asset.url;
+  if (!url) return;
+  if (target === "detail") {
+    setProductDetailImages(productDetailImages().concat(url));
+    toast("已加入详情页");
+    return;
+  }
+  if (target === "spec") {
+    const cards = Array.from(document.querySelectorAll(".product-spec-card"));
+    const card = cards[Number(specIndex || 0)] || cards[0];
+    if (!card) return;
+    const input = card.querySelector(".drawerSpecImages");
+    if (input) input.value = url;
+    const row = card.querySelector(".product-spec-image-row");
+    if (row) row.innerHTML = productSpecImageButtonsHtml(url, Number(specIndex || 0));
+    toast("已设为颜色图");
+    return;
+  }
+  setProductMainImages([url]);
+  toast("已设为主图");
+}
+window.applyProductAsset = applyProductAsset;
+
+function openProductAssetPicker(type = "main", index = 0) {
+  state.productAssetPickerTarget = { type, index };
+  state.productAssetPickerTab = drawerProductIdValue() || currentProductAssets().length ? "product_assets" : "pending";
+  state.productAssetPickerKeyword = "";
+  let mask = $("productAssetPickerMask");
+  if (!mask) {
+    mask = document.createElement("div");
+    mask.id = "productAssetPickerMask";
+    mask.className = "confirm-mask";
+    mask.innerHTML = `
+      <div class="confirm-box asset-picker-box" role="dialog" aria-modal="true">
+        <div class="asset-picker-head">
+          <div><h3 class="confirm-title">选择图片资产</h3><p class="confirm-message">可以选已有图片，也可以上传新图片。</p></div>
+          <button type="button" id="productAssetPickerClose">关闭</button>
+        </div>
+        <div class="asset-picker-actions">
+          <button type="button" class="primary" id="productAssetPickerUpload">上传新图片</button>
+        </div>
+        <div class="asset-picker-search">
+          <input id="productAssetPickerKeyword" type="search" placeholder="搜索产品 / 分类 / 颜色 / 图片来源">
+          <button type="button" id="productAssetPickerClear">清空</button>
+        </div>
+        <div class="segmented asset-picker-tabs" id="productAssetPickerTabs">
+          <button type="button" data-picker-asset-tab="pending">未绑定</button>
+          <button type="button" data-picker-asset-tab="product_assets">本产品图片</button>
+          <button type="button" data-picker-asset-tab="all">全部图片</button>
+        </div>
+        <div class="asset-picker-grid" id="productAssetPickerGrid"></div>
+      </div>`;
+    document.body.appendChild(mask);
+  }
+  const searchInput = $("productAssetPickerKeyword");
+  if (searchInput) searchInput.value = "";
+  renderProductAssetPicker();
+  loadPickerAssets(state.productAssetPickerTab).catch((err) => toast(err.message, true));
+  $("productAssetPickerUpload").onclick = () => chooseProductUpload(type, index);
+  $("productAssetPickerClose").onclick = closeProductAssetPicker;
+  if ($("productAssetPickerKeyword")) {
+    $("productAssetPickerKeyword").oninput = (event) => {
+      state.productAssetPickerKeyword = event.target.value || "";
+      renderProductAssetPicker();
+    };
+  }
+  if ($("productAssetPickerClear")) {
+    $("productAssetPickerClear").onclick = () => {
+      state.productAssetPickerKeyword = "";
+      const input = $("productAssetPickerKeyword");
+      if (input) input.value = "";
+      renderProductAssetPicker();
+    };
+  }
+  $("productAssetPickerTabs").onclick = (event) => {
+    const button = event.target.closest("[data-picker-asset-tab]");
+    if (!button) return;
+    state.productAssetPickerTab = button.dataset.pickerAssetTab || "";
+    loadPickerAssets(state.productAssetPickerTab).catch((err) => toast(err.message, true));
+  };
+  mask.onclick = (event) => { if (event.target === mask) closeProductAssetPicker(); };
+  requestAnimationFrame(() => mask.classList.add("open"));
+}
+window.openProductAssetPicker = openProductAssetPicker;
+
+async function loadPickerAssets(tab = "") {
+  const productId = drawerProductIdValue();
+  const params = { limit: 2000 };
+  if (tab === "pending") params.media_type = "pending";
+  if (tab === "product_assets" && productId) params.product_id = productId;
+  const res = await api(`/api/product/media?${query(params)}`);
+  state.productMediaAssets = normalizeList(res);
+  renderProductAssetPicker();
+}
+
+function closeProductAssetPicker() {
+  const mask = $("productAssetPickerMask");
+  if (mask) mask.classList.remove("open");
+}
+window.closeProductAssetPicker = closeProductAssetPicker;
+
+function renderProductAssetPicker() {
+  const grid = $("productAssetPickerGrid");
+  if (!grid) return;
+  document.querySelectorAll("[data-picker-asset-tab]").forEach((button) => {
+    button.classList.toggle("active", (button.dataset.pickerAssetTab || "") === (state.productAssetPickerTab || ""));
+  });
+  const list = assetListForPicker().slice(0, 80);
+  grid.innerHTML = list.length ? list.map((asset, index) => `
+    <button type="button" class="asset-pick-card" data-pick-product-asset="${index}">
+      ${lazyImageHtml(asset.url || "", 180)}
+      <strong>${escapeHtml(productAssetTitleText(asset))}</strong>
+      <span>${escapeHtml(productAssetGroupText(asset))}</span>
+      <em>${escapeHtml(productMediaAssetType(asset))}</em>
+    </button>
+  `).join("") : `<div class="empty">${state.productAssetPickerKeyword ? "没有匹配图片" : "暂无可选图片，先上传一张。"}</div>`;
+}
+
+function productAssetMajorGroup(asset = {}) {
+  const type = String(asset.media_type || "");
+  const text = [
+    asset.asset_group_text,
+    asset.category_name,
+    asset.product_name,
+    asset.spu_title,
+    asset.series,
+    asset.size_label,
+    asset.bag_type,
+    asset.tea_type,
+    asset.product_type,
+    asset.category_product_type
+  ].join(" ");
+  const lower = text.toLowerCase();
+  if (type === "pending" || (!asset.spu_id && !asset.product_name)) return { key: "pending", text: "待绑定", order: 90 };
+  if (/快递|纸箱|shipping/.test(text) || lower.includes("shipping")) return { key: "shipping", text: "快递纸箱", order: 30 };
+  if (/泡袋|大红袍|肉桂|水仙|红茶|品种茶|公版|空白|宽版/.test(text) || lower.includes("bag")) return { key: "bag", text: "泡袋", order: 20 };
+  if (/礼盒|小盒|gift|box/.test(text) || lower.includes("gift_box")) return { key: "gift_box", text: "礼盒", order: 10 };
+  return { key: "other", text: "其他产品", order: 80 };
+}
+
+function productAssetKeywordText(asset = {}) {
+  const major = productAssetMajorGroup(asset);
+  return [
+    asset.url,
+    asset.media_type,
+    asset.media_type_text,
+    asset.product_name,
+    asset.spu_title,
+    asset.binding_text,
+    asset.asset_group_text,
+    asset.category_name,
+    asset.series,
+    asset.size_label,
+    asset.sku_color,
+    asset.sku_no,
+    asset.bag_type,
+    asset.tea_type,
+    asset.source_text,
+    asset.source,
+    major.text
+  ].join(" ").toLowerCase();
+}
+
+function uniqueAssetPush(list, asset) {
+  if (!asset || !asset.url) return;
+  const key = [asset.media_type, asset.spu_id || "", asset.sku_color || "", asset.url].join("|");
+  if (list.some((item) => [item.media_type, item.spu_id || "", item.sku_color || "", item.url].join("|") === key)) return;
+  list.push(asset);
+}
+
+function productAssetsByProduct(list = []) {
+  const map = new Map();
+  (list || []).forEach((asset) => {
+    if (!asset || String(asset.media_type || "") === "pending" || !asset.spu_id) return;
+    const key = `spu:${asset.spu_id}`;
+    const major = productAssetMajorGroup(asset);
+    const current = map.get(key) || {
+      key,
+      spu_id: asset.spu_id,
+      title: asset.product_name || asset.spu_title || `产品#${asset.spu_id}`,
+      groupText: productAssetGroupText(asset),
+      major,
+      main: [],
+      detail: [],
+      color: [],
+      assets: [],
+      colors: new Set(),
+      updatedAt: ""
+    };
+    if (!current.title || /^产品#/.test(current.title)) current.title = asset.product_name || asset.spu_title || current.title;
+    if (!current.groupText || current.groupText === "待绑定图片") current.groupText = productAssetGroupText(asset);
+    if (major.order < current.major.order) current.major = major;
+    uniqueAssetPush(current.assets, asset);
+    if (asset.media_type === "main_image") uniqueAssetPush(current.main, asset);
+    else if (asset.media_type === "detail_image") uniqueAssetPush(current.detail, asset);
+    else if (asset.media_type === "color_image") {
+      uniqueAssetPush(current.color, asset);
+      current.colors.add(asset.sku_color || "默认颜色");
+    }
+    const time = String(asset.updated_at || asset.created_at || "");
+    if (time > current.updatedAt) current.updatedAt = time;
+    map.set(key, current);
+  });
+  return Array.from(map.values()).map((group) => {
+    group.colorNames = Array.from(group.colors).sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+    group.imageCount = group.main.length + group.detail.length + group.color.length;
+    group.preview = (group.main[0] || group.color[0] || group.detail[0] || {}).url || "";
+    return group;
+  }).sort((a, b) => {
+    if (a.major.order !== b.major.order) return a.major.order - b.major.order;
+    return a.title.localeCompare(b.title, "zh-Hans-CN");
+  });
+}
+
+function productAssetMajorGroups(list = []) {
+  const map = new Map();
+  (list || []).forEach((asset) => {
+    const group = productAssetMajorGroup(asset);
+    if (state.productAssetView !== "all" && group.key === "pending") return;
+    const current = map.get(group.key) || { ...group, count: 0 };
+    current.count += 1;
+    map.set(group.key, current);
+  });
+  return Array.from(map.values()).sort((a, b) => a.order - b.order);
+}
+
+function renderProductAssetGroups(list = []) {
+  const bar = $("assetGroupBar");
+  if (!bar) return;
+  if (state.productAssetView === "pending") {
+    state.productAssetGroup = "";
+    bar.innerHTML = "";
+    return;
+  }
+  const groups = productAssetMajorGroups(list);
+  if (state.productAssetGroup && !groups.some((group) => group.key === state.productAssetGroup)) {
+    state.productAssetGroup = "";
+  }
+  bar.innerHTML = [
+    `<button type="button" class="${!state.productAssetGroup ? "active" : ""}" data-asset-group="">全部分类</button>`,
+    ...groups.map((group) => `<button type="button" class="${group.key === state.productAssetGroup ? "active" : ""}" data-asset-group="${escapeAttr(group.key)}">${escapeHtml(group.text)} ${escapeHtml(group.count)}</button>`)
+  ].join("");
+}
+
+function assetProductCountsHtml(group) {
+  return `<div class="asset-count-row">
+    <div><span>主图</span><strong>${group.main.length}</strong></div>
+    <div><span>详情</span><strong>${group.detail.length}</strong></div>
+    <div><span>颜色</span><strong>${Math.max(group.colorNames.length, group.color.length ? 1 : 0)}</strong></div>
+  </div>`;
+}
+
+function assetProductThumbsHtml(group) {
+  const thumbs = [].concat(group.main, group.detail, group.color).slice(0, 5);
+  if (!thumbs.length) return '<div class="asset-mini-strip empty">暂无图片</div>';
+  return `<div class="asset-mini-strip">${thumbs.map((asset) => lazyImageHtml(asset.url || "", 120)).join("")}</div>`;
+}
+
+function assetProductCardHtml(group, compact = false) {
+  const colors = group.colorNames.length ? group.colorNames.join("、") : (group.color.length ? "默认颜色" : "未设置");
+  return `<article class="asset-product-card ${compact ? "compact" : ""}">
+    <div class="asset-product-top">
+      ${lazyImageHtml(group.preview || "", 260, group.title)}
+      <div>
+        <h3 title="${escapeAttr(group.title)}">${escapeHtml(group.title)}</h3>
+        <p>${escapeHtml([group.groupText, group.major.text].filter(Boolean).join(" · "))}</p>
+        <span>颜色：${escapeHtml(colors)}</span>
+      </div>
+    </div>
+    ${assetProductCountsHtml(group)}
+    ${assetProductThumbsHtml(group)}
+    <button type="button" class="asset-open-button" data-open-asset-product-detail="${escapeAttr(group.key)}">查看图片</button>
+  </article>`;
+}
+
+function calculateProductAssetPageSize(view = state.productAssetView || "products") {
+  const target = $("productAssetList");
+  if (!target) return view === "all" || view === "pending" ? 80 : 40;
+  const rect = target.getBoundingClientRect();
+  const width = target.clientWidth || rect.width || window.innerWidth || 1000;
+  const isFlat = view === "all" || view === "pending";
+  const minWidth = isFlat ? 170 : 300;
+  const cardHeight = isFlat ? 240 : 260;
+  const gap = 10;
+  const columns = Math.max(1, Math.floor((width + gap) / (minWidth + gap)));
+  const available = Math.max(cardHeight, window.innerHeight - rect.top - 46);
+  const rows = Math.max(1, Math.floor((available + gap) / (cardHeight + gap)));
+  const cap = isFlat ? 120 : 80;
+  return Math.max(columns, Math.min(cap, rows * columns));
+}
+
+function productAssetPageItems(list = []) {
+  const totalPages = Math.max(1, Math.ceil(list.length / Math.max(1, state.productAssetPageSize)));
+  state.productAssetPage = Math.max(1, Math.min(Number(state.productAssetPage || 1), totalPages));
+  const start = (state.productAssetPage - 1) * state.productAssetPageSize;
+  return list.slice(start, start + state.productAssetPageSize);
+}
+
+function renderProductAssetProductList(list = []) {
+  const target = $("productAssetList");
+  if (!target) return 0;
+  const groups = productAssetsByProduct(list);
+  state.productAssetProductGroups = groups;
+  const visible = productAssetPageItems(groups);
+  target.innerHTML = groups.length
+    ? `<div class="asset-product-grid">${visible.map((group) => assetProductCardHtml(group)).join("")}</div><div class="asset-list-summary">共 ${escapeHtml(groups.length)} 个产品 · ${escapeHtml(list.length)} 张图片</div>`
+    : '<div class="empty">暂无已绑定商品图片</div>';
+  return groups.length;
+}
+
+function renderProductAssetCategoryList(list = []) {
+  const target = $("productAssetList");
+  if (!target) return 0;
+  const products = productAssetsByProduct(list);
+  state.productAssetProductGroups = products;
+  const visibleProducts = productAssetPageItems(products);
+  const categories = new Map();
+  visibleProducts.forEach((group) => {
+    const current = categories.get(group.major.key) || { ...group.major, products: [], imageCount: 0 };
+    current.products.push(group);
+    current.imageCount += group.imageCount;
+    categories.set(group.major.key, current);
+  });
+  const ordered = Array.from(categories.values()).sort((a, b) => a.order - b.order);
+  target.innerHTML = ordered.length ? `<div class="asset-category-list">${ordered.map((category) => `
+    <section class="asset-category-section">
+      <div class="asset-category-head">
+        <div><h2>${escapeHtml(category.text)}</h2><p>${escapeHtml(category.products.length)} 个产品 · ${escapeHtml(category.imageCount)} 张图片</p></div>
+      </div>
+      <div class="asset-product-grid compact">${category.products.map((group) => assetProductCardHtml(group, true)).join("")}</div>
+    </section>
+  `).join("")}</div><div class="asset-list-summary">共 ${escapeHtml(products.length)} 个产品 · 按分类分组</div>` : '<div class="empty">暂无分类图片</div>';
+  return products.length;
+}
+
+function assetFlatCardHtml(asset) {
+  return `<article class="asset-card">
+    ${asset.id ? `<button type="button" class="asset-delete" data-delete-asset-id="${Number(asset.id)}">×</button>` : ""}
+    ${lazyImageHtml(asset.url || "", 260, productAssetTitleText(asset))}
+    <div class="asset-card-body">
+      <div class="record-main">
+        <div><h3 title="${escapeAttr(productAssetTitleText(asset))}">${escapeHtml(productAssetTitleText(asset))}</h3><p>${escapeHtml(productAssetGroupText(asset))}</p></div>
+        <span class="tag ${asset.media_type === "pending" ? "gold" : "green-outline"}">${escapeHtml(productMediaAssetType(asset))}</span>
+      </div>
+      <div class="asset-card-meta">
+        <span>${escapeHtml(productAssetSourceText(asset))}</span>
+        <span>${escapeHtml(nativeDateText(asset.updated_at || asset.created_at))}</span>
+      </div>
+    </div>
+  </article>`;
+}
+
+function renderProductAssetFlatList(list = [], emptyText = "暂无图片资产") {
+  const target = $("productAssetList");
+  if (!target) return 0;
+  const visible = productAssetPageItems(list);
+  target.innerHTML = list.length
+    ? `<div class="asset-card-grid">${visible.map((asset) => assetFlatCardHtml(asset)).join("")}</div><div class="asset-list-summary">共 ${escapeHtml(list.length)} 张图片</div>`
+    : `<div class="empty">${escapeHtml(emptyText)}</div>`;
+  return list.length;
+}
+
+function renderCurrentProductAssets() {
+  const keyword = (($("assetKeyword") && $("assetKeyword").value) || "").trim().toLowerCase();
+  const raw = state.productAssets || [];
+  const filterKey = [state.productAssetView || "products", state.productAssetGroup || "", keyword].join("|");
+  if (filterKey !== state.productAssetLastFilter) {
+    state.productAssetPage = 1;
+    state.productAssetLastFilter = filterKey;
+  }
+  renderProductAssetGroups(raw);
+  const view = state.productAssetView || "products";
+  state.productAssetPageSize = calculateProductAssetPageSize(view);
+  let list = raw.filter((asset) => {
+    const major = productAssetMajorGroup(asset);
+    const groupOk = !state.productAssetGroup || major.key === state.productAssetGroup;
+    const keywordOk = !keyword || productAssetKeywordText(asset).includes(keyword);
+    return groupOk && keywordOk;
+  });
+  if (view === "pending") list = list.filter((asset) => String(asset.media_type || "") === "pending" || !asset.spu_id);
+  if (view === "products" || view === "categories") list = list.filter((asset) => String(asset.media_type || "") !== "pending" && asset.spu_id);
+  let count = 0;
+  if (view === "categories") count = renderProductAssetCategoryList(list);
+  else if (view === "pending") count = renderProductAssetFlatList(list, "暂无待绑定图片");
+  else if (view === "all") count = renderProductAssetFlatList(list, "暂无图片资产");
+  else count = renderProductAssetProductList(list);
+  state.productAssetTotal = count;
+  setBadge("product-assets", count);
+  renderProductAssetPager();
+}
+
+function renderProductAssetPager() {
+  const pager = $("assetPager");
+  if (!pager) return;
+  const totalPages = Math.max(1, Math.ceil(Number(state.productAssetTotal || 0) / Math.max(1, state.productAssetPageSize)));
+  if (totalPages <= 1) { pager.innerHTML = ""; return; }
+  pager.innerHTML =
+    '<button ' + (state.productAssetPage <= 1 ? "disabled" : "") + ' onclick="loadProductAssetPage(' + (state.productAssetPage - 1) + ')">上一页</button>' +
+    '<span class="page-info">' + state.productAssetPage + ' / ' + totalPages + ' · 每页 ' + state.productAssetPageSize + '</span>' +
+    '<button ' + (state.productAssetPage >= totalPages ? "disabled" : "") + ' onclick="loadProductAssetPage(' + (state.productAssetPage + 1) + ')">下一页</button>';
+}
+
+function loadProductAssetPage(page) {
+  state.productAssetPage = Math.max(1, Number(page || 1));
+  renderCurrentProductAssets();
+}
+window.loadProductAssetPage = loadProductAssetPage;
+
+async function loadProductAssets() {
+  const target = $("productAssetList");
+  if (target) target.innerHTML = skeletonCards(4);
+  const res = await api(`/api/product/media?${query({ limit: 6000 })}`);
+  state.productAssets = normalizeList(res);
+  renderCurrentProductAssets();
+}
+window.loadProductAssets = loadProductAssets;
+
+function assetDetailTileHtml(asset, options = {}) {
+  const label = options.label || "";
+  return `<div class="asset-detail-tile">
+    ${asset.id ? `<button type="button" class="asset-delete" data-delete-asset-id="${Number(asset.id)}">×</button>` : ""}
+    ${lazyImageHtml(asset.url || "", 620, asset.sku_color || productMediaAssetType(asset))}
+    ${label ? `<span>${escapeHtml(label)}</span>` : ""}
+  </div>`;
+}
+
+function assetDetailSectionHtml(title, list = [], emptyText = "暂无图片") {
+  return `<section class="asset-detail-section">
+    <div class="asset-detail-section-head"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(list.length)} 张</span></div>
+    ${list.length ? `<div class="asset-detail-grid">${list.map((asset) => assetDetailTileHtml(asset)).join("")}</div>` : `<div class="product-media-empty">${escapeHtml(emptyText)}</div>`}
+  </section>`;
+}
+
+function assetColorSectionsHtml(list = []) {
+  if (!list.length) return assetDetailSectionHtml("颜色图", [], "暂无颜色图");
+  const map = new Map();
+  list.forEach((asset) => {
+    const color = asset.sku_color || "默认颜色";
+    const current = map.get(color) || [];
+    current.push(asset);
+    map.set(color, current);
+  });
+  return `<section class="asset-detail-section">
+    <div class="asset-detail-section-head"><strong>颜色图</strong><span>${escapeHtml(map.size)} 个颜色</span></div>
+    <div class="asset-color-list">${Array.from(map.entries()).map(([color, assets]) => `
+      <div class="asset-color-block">
+        <h4>${escapeHtml(color)}</h4>
+        <div class="asset-detail-grid">${assets.map((asset) => assetDetailTileHtml(asset)).join("")}</div>
+      </div>
+    `).join("")}</div>
+  </section>`;
+}
+
+function openProductAssetDetail(key) {
+  const group = (state.productAssetProductGroups || []).find((item) => item.key === key);
+  if (!group) return;
+  state.productAssetDetailKey = key;
+  let mask = $("productAssetDetailMask");
+  if (!mask) {
+    mask = document.createElement("div");
+    mask.id = "productAssetDetailMask";
+    mask.className = "confirm-mask";
+    document.body.appendChild(mask);
+  }
+  const colors = group.colorNames.length ? group.colorNames.join("、") : "未设置";
+  mask.innerHTML = `
+    <div class="confirm-box asset-detail-box" role="dialog" aria-modal="true">
+      <div class="asset-picker-head">
+        <div>
+          <h3 class="confirm-title">${escapeHtml(group.title)}</h3>
+          <p class="confirm-message">${escapeHtml([group.groupText, group.major.text, `颜色：${colors}`].filter(Boolean).join(" · "))}</p>
+        </div>
+        <button type="button" id="productAssetDetailClose">关闭</button>
+      </div>
+      ${assetProductCountsHtml(group)}
+      <div class="asset-detail-sections">
+        ${assetDetailSectionHtml("主图", group.main, "暂无主图")}
+        ${assetDetailSectionHtml("详情页", group.detail, "暂无详情页图片")}
+        ${assetColorSectionsHtml(group.color)}
+      </div>
+    </div>`;
+  $("productAssetDetailClose").onclick = closeProductAssetDetail;
+  mask.onclick = (event) => { if (event.target === mask) closeProductAssetDetail(); };
+  requestAnimationFrame(() => mask.classList.add("open"));
+}
+window.openProductAssetDetail = openProductAssetDetail;
+
+function closeProductAssetDetail() {
+  const mask = $("productAssetDetailMask");
+  if (mask) mask.classList.remove("open");
+}
+window.closeProductAssetDetail = closeProductAssetDetail;
+
+async function deleteProductAsset(id) {
+  if (!id) return;
+  const ok = await confirmDialog({ title: "删除图片资产", message: "确认删除这张图片记录？不会删除 OSS 原图，只从资产表停用。", confirmText: "删除" });
+  if (!ok) return;
+  await api(`/api/product/media/${id}`, { method: "DELETE" });
+  toast("图片资产已删除");
+  closeProductAssetDetail();
+  await loadProductAssets();
+}
+window.deleteProductAsset = deleteProductAsset;
+
+function setAssetView(view) {
+  state.productAssetView = view || "products";
+  state.productAssetGroup = "";
+  document.querySelectorAll("[data-asset-view]").forEach((button) => {
+    button.classList.toggle("active", (button.dataset.assetView || "") === state.productAssetView);
+  });
+  if ((state.productAssets || []).length) renderCurrentProductAssets();
+  else loadProductAssets().catch((err) => toast(err.message, true));
+}
+window.setAssetView = setAssetView;
+
+function setAssetTab(tab) {
+  setAssetView(tab || "products");
+}
+window.setAssetTab = setAssetTab;
+
+function setAssetGroup(group) {
+  state.productAssetGroup = group || "";
+  if ((state.productAssets || []).length) renderCurrentProductAssets();
+  else loadProductAssets().catch((err) => toast(err.message, true));
+}
+window.setAssetGroup = setAssetGroup;
+
 function productForm(product = {}) {
+  state.productMediaAssets = Array.isArray(product.media_assets) ? product.media_assets : state.productMediaAssets;
   const mainImages = Array.isArray(product.main_images_list) ? product.main_images_list : (productImage(product) ? [productImage(product)] : []);
   const desc = parseSimpleDesc(product.simple_desc || "");
   const detailImages = htmlToImages(product.content || "");
   const categoryIds = Array.isArray(product.product_category_ids) ? product.product_category_ids.map(Number).filter(Boolean) : [];
   const rows = productRowsForForm(product);
+  const oneCaseChecked = (product.purchase_policy || (Number(product.is_one_case_purchase || 0) ? "one_case" : "order_qty")) === "one_case" ? "checked" : "";
   return `
     <input id="drawerProductId" type="hidden" value="${escapeAttr(product.id || product.product_id || "")}">
     <input id="drawerProductMainImages" type="hidden" value="${escapeAttr(JSON.stringify(mainImages))}">
@@ -3004,12 +5855,13 @@ function productForm(product = {}) {
     <label>商品名称</label><input id="drawerProductTitle" value="${escapeAttr(product.title || product.name || "")}">
     <div class="product-image-editor">
       <label>主图</label>
-      <button type="button" id="drawerProductImagePreview" class="product-image-preview ${mainImages[0] ? "" : "empty-upload"}" onclick="chooseProductUpload('main')">${mainImages[0] ? `<img src="${escapeAttr(mainImages[0])}" alt=""><span class="product-image-remove" onclick="event.stopPropagation(); removeProductMainImage();">×</span>` : "<span>+</span><strong>上传主图</strong>"}</button>
+      <div class="product-main-image-row" id="drawerProductMainImageRow">${productMainImageRowHtml(mainImages)}</div>
     </div>
     <label>分类（可多选）</label><div class="product-category-editor" id="drawerProductCategories"></div>
     <label>ERP 状态</label><select id="drawerProductStatus">${statusOptions(product.status ?? 0)}</select>
     <div class="two-col"><div><label>规格数量</label><input id="drawerProductDescNumber" type="number" step="1" value="${escapeAttr(desc.desc_number)}"></div><div><label>规格单位</label><select id="drawerProductDescUnit">${unitOptions(desc.desc_unit_id)}</select></div></div>
-    <label>详情图片</label>
+    <label class="product-stock-toggle"><input id="drawerProductOneCase" type="checkbox" ${oneCaseChecked}> 1件起订</label>
+    <div class="product-section-row"><label>详情图片</label></div>
     <div class="product-detail-grid" id="drawerProductDetailGrid"></div>
     <label>规格 / 颜色</label>
     <div id="drawerProductSpecs">${productSpecsHtml(rows)}</div>
@@ -3027,7 +5879,8 @@ function productSpecsFromDom() {
     coding: card.querySelector(".drawerSpecCoding").value.trim(),
     barcode: card.querySelector(".drawerSpecBarcode").value.trim(),
     price: card.querySelector(".drawerSpecPrice").value || 0,
-    cost_price: card.querySelector(".drawerSpecCostPrice").value || 0
+    cost_price: card.querySelector(".drawerSpecCostPrice").value || 0,
+    is_stock_item: card.querySelector(".drawerSpecStockItem")?.checked ? 1 : 0
   }));
 }
 
@@ -3036,18 +5889,32 @@ function productSpecsHtml(rows) {
   return list.map((spec, index) => productSpecHtml(spec, index, list.length)).join("");
 }
 
+function productSpecImageButtonsHtml(img = "", index = 0) {
+  if (!img) {
+    return `<button type="button" class="product-spec-upload product-upload-tile" onclick="openProductAssetPicker('spec', ${index})"><span>+</span><strong>上传/选择</strong></button>`;
+  }
+  return `
+    <button type="button" class="product-spec-image" onclick="openProductAssetPicker('spec', ${index})">
+      <img src="${escapeAttr(img)}" alt="">
+      <span class="product-image-remove" onclick="event.stopPropagation(); removeProductSpecImage(${index});">×</span>
+    </button>
+    <button type="button" class="product-spec-upload product-upload-tile" onclick="openProductAssetPicker('spec', ${index})"><span>+</span><strong>上传/选择</strong></button>`;
+}
+
 function productSpecHtml(spec = {}, index = 0, total = 1) {
   const img = spec.image_url || spec.images || "";
+  const stockChecked = Number(spec.is_stock_item ?? 1) !== 0 ? "checked" : "";
   return `
     <div class="product-spec-card" data-index="${index}">
       <input class="drawerSpecId" type="hidden" value="${escapeAttr(spec.id || "")}">
       <input class="drawerSpecBaseId" type="hidden" value="${escapeAttr(spec.base_id || "")}">
       <input class="drawerSpecImages" type="hidden" value="${escapeAttr(img || "")}">
       <div class="product-spec-head"><span>规格 ${index + 1}</span>${total > 1 ? `<button type="button" onclick="removeProductSpec(${index})">删除</button>` : ""}</div>
-      <div class="product-spec-image-row"><button type="button" class="product-spec-image ${img ? "" : "empty-upload"}" onclick="chooseProductUpload('spec', ${index})">${img ? `<img src="${escapeAttr(img)}" alt=""><span class="product-image-remove" onclick="event.stopPropagation(); removeProductSpecImage(${index});">×</span>` : "<span>+</span><strong>规格图</strong>"}</button></div>
+      <div class="product-spec-image-row">${productSpecImageButtonsHtml(img, index)}</div>
       <div class="two-col"><div><label>颜色/规格</label><input class="drawerSpecName" value="${escapeAttr(spec.spec || "")}"></div><div><label>单位</label><select class="drawerSpecUnit">${unitOptions(spec.unit_id || 1)}</select></div></div>
       <div class="two-col"><div><label>商品编码</label><input class="drawerSpecCoding" value="${escapeAttr(spec.coding || "")}"></div><div><label>条码</label><input class="drawerSpecBarcode" value="${escapeAttr(spec.barcode || "")}"></div></div>
       <div class="two-col"><div><label>售价</label><input class="drawerSpecPrice" type="number" step="0.01" value="${escapeAttr(spec.price || "")}"></div><div><label>成本价</label><input class="drawerSpecCostPrice" type="number" step="0.01" value="${escapeAttr(spec.cost_price || "")}"></div></div>
+      <label class="product-stock-toggle"><input class="drawerSpecStockItem" type="checkbox" ${stockChecked}> 管理库存</label>
     </div>`;
 }
 
@@ -3130,6 +5997,7 @@ function productSavePayload({ id, title, categoryIds, specs }) {
       images: spec.images || mainImages[0] || "",
       spec: spec.spec || "",
       coding: spec.coding || "",
+      is_stock_item: Number(spec.is_stock_item ?? 1) ? 1 : 0,
       note: "",
       default_warehouse_position: "",
       unit: {
@@ -3152,6 +6020,7 @@ function productSavePayload({ id, title, categoryIds, specs }) {
     title,
     product_category_id: categoryIds,
     status: Number($("drawerProductStatus").value || 0),
+    purchase_policy: $("drawerProductOneCase")?.checked ? "one_case" : "order_qty",
     simple_desc: buildSimpleDescFromDrawer(),
     content: detailImagesToHtml(productDetailImages()),
     main_images: mainImages,
@@ -3169,20 +6038,28 @@ async function uploadProductImage(file) {
   const target = state.productUploadTarget || { type: "main" };
   if (target.type === "detail") {
     setProductDetailImages(productDetailImages().concat(url));
+  } else if (target.type === "asset") {
+    state.productAssets = [{ media_type: "pending", media_type_text: "待绑定", url, storage: "oss" }]
+      .concat((state.productAssets || []).filter((asset) => asset.url !== url));
+    state.productAssetGroup = "";
+    setAssetView("pending");
   } else if (target.type === "spec") {
     const cards = Array.from(document.querySelectorAll(".product-spec-card"));
     const card = cards[Number(target.index || 0)];
     if (card) {
       const input = card.querySelector(".drawerSpecImages");
-      const preview = card.querySelector(".product-spec-image");
       if (input) input.value = url;
-      if (preview) {
-        preview.classList.remove("empty-upload");
-        preview.innerHTML = `<img src="${escapeAttr(url)}" alt=""><span class="product-image-remove" onclick="event.stopPropagation(); removeProductSpecImage(${Number(target.index || 0)});">×</span>`;
-      }
+      const row = card.querySelector(".product-spec-image-row");
+      if (row) row.innerHTML = productSpecImageButtonsHtml(url, Number(target.index || 0));
     }
   } else {
     setProductMainImages(url ? [url] : []);
+  }
+  if (url) {
+    state.productMediaAssets = [{ media_type: "pending", media_type_text: "待绑定", url, storage: "oss" }]
+      .concat((state.productMediaAssets || []).filter((asset) => asset.url !== url));
+    renderProductMediaAssets();
+    renderProductAssetPicker();
   }
   state.productUploadTarget = null;
   const input = $("productImageInput");
@@ -3244,11 +6121,31 @@ async function handleQuickAction(action) {
   if (action === "workflow") return openDrawer("workflow");
 }
 
+function scrollParentForNumberInput(input) {
+  let node = input && input.parentElement;
+  while (node && node !== document.body) {
+    const style = window.getComputedStyle(node);
+    const canScroll = /(auto|scroll)/.test(style.overflowY || "") && node.scrollHeight > node.clientHeight;
+    if (canScroll) return node;
+    node = node.parentElement;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
+function blockNumberInputWheel(event) {
+  const input = event.target && event.target.closest ? event.target.closest('input[type="number"]') : null;
+  if (!input) return;
+  event.preventDefault();
+  const scroller = scrollParentForNumberInput(input);
+  if (scroller) scroller.scrollTop += event.deltaY;
+}
+
 function bindEvents() {
   const bind = (id, event, handler) => {
     const el = $(id);
     if (el) el.addEventListener(event, handler);
   };
+  document.addEventListener("wheel", blockNumberInputWheel, { passive: false });
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
@@ -3284,6 +6181,199 @@ function bindEvents() {
       removeSaleLine(Number(removeSaleLineButton.dataset.removeSaleLine));
       return;
     }
+    const salesDetailCard = event.target.closest("[data-open-sales-detail]");
+    if (salesDetailCard && !event.target.closest("button, a, input, select, textarea")) {
+      event.preventDefault();
+      openSalesDetail(Number(salesDetailCard.dataset.openSalesDetail)).catch((err) => toast(err.message, true));
+      return;
+    }
+    const customerBalanceButton = event.target.closest("[data-customer-balance-action]");
+    if (customerBalanceButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      openCustomerBalanceDialog(
+        Number(customerBalanceButton.dataset.customerId),
+        customerBalanceButton.dataset.customerName || "客户",
+        customerBalanceButton.dataset.customerBalanceAction || "receipt"
+      );
+      return;
+    }
+    const customerBalanceLedgerButton = event.target.closest("[data-open-balance-ledger]");
+    if (customerBalanceLedgerButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      openCustomerBalanceLedger(
+        Number(customerBalanceLedgerButton.dataset.openBalanceLedger),
+        customerBalanceLedgerButton.dataset.customerName || "客户"
+      ).catch((err) => toast(err.message, true));
+      return;
+    }
+    const customerSalesButton = event.target.closest("[data-open-customer-sales]");
+    if (customerSalesButton) {
+      event.preventDefault();
+      openCustomerSales(Number(customerSalesButton.dataset.openCustomerSales), customerSalesButton.dataset.customerName || "客户").catch((err) => toast(err.message, true));
+      return;
+    }
+    const customerSalesFilter = event.target.closest("[data-customer-sales-filter]");
+    if (customerSalesFilter) {
+      event.preventDefault();
+      openCustomerSales(
+        Number(customerSalesFilter.dataset.customerSalesFilter),
+        customerSalesFilter.dataset.customerName || "客户",
+        { period: customerSalesFilter.dataset.period || "" }
+      ).catch((err) => toast(err.message, true));
+      return;
+    }
+    const customerSalesMonth = event.target.closest("[data-customer-sales-month]");
+    if (customerSalesMonth) {
+      event.preventDefault();
+      const yearSelect = $("customerSalesYear");
+      const monthValue = customerSalesMonth.dataset.monthValue || "";
+      const month = yearSelect && monthValue ? `${yearSelect.value}-${monthValue.slice(5, 7)}` : monthValue;
+      openCustomerSales(
+        Number(customerSalesMonth.dataset.customerSalesMonth),
+        customerSalesMonth.dataset.customerName || "客户",
+        { month, year: yearSelect ? yearSelect.value : "" }
+      ).catch((err) => toast(err.message, true));
+      return;
+    }
+    const pickAssetButton = event.target.closest("[data-pick-product-asset]");
+    if (pickAssetButton) {
+      event.preventDefault();
+      const target = state.productAssetPickerTarget || { type: "main", index: 0 };
+      applyProductAsset(Number(pickAssetButton.dataset.pickProductAsset), target.type, target.index);
+      closeProductAssetPicker();
+      return;
+    }
+    const openAssetProductButton = event.target.closest("[data-open-asset-product-detail]");
+    if (openAssetProductButton) {
+      event.preventDefault();
+      openProductAssetDetail(openAssetProductButton.dataset.openAssetProductDetail || "");
+      return;
+    }
+    const deleteAssetButton = event.target.closest("[data-delete-asset-id]");
+    if (deleteAssetButton) {
+      event.preventDefault();
+      deleteProductAsset(Number(deleteAssetButton.dataset.deleteAssetId)).catch((err) => toast(err.message, true));
+      return;
+    }
+    const settingsTabButton = event.target.closest("[data-settings-tab]");
+    if (settingsTabButton) {
+      event.preventDefault();
+      setSettingsTab(settingsTabButton.dataset.settingsTab || "print");
+      return;
+    }
+    const addSettingButton = event.target.closest("[data-add-setting-row]");
+    if (addSettingButton) {
+      event.preventDefault();
+      addSettingRow(addSettingButton.dataset.addSettingRow || "");
+      return;
+    }
+    const removeSettingButton = event.target.closest("[data-remove-setting-row]");
+    if (removeSettingButton) {
+      event.preventDefault();
+      const row = removeSettingButton.closest("[data-setting-row]");
+      if (row) row.remove();
+      return;
+    }
+    const stockValueButton = event.target.closest("[data-stock-value]");
+    if (stockValueButton) {
+      event.preventDefault();
+      toggleSettingSegment(stockValueButton);
+      return;
+    }
+    const addMiniappModuleButton = event.target.closest("[data-miniapp-add-module]");
+    if (addMiniappModuleButton) {
+      event.preventDefault();
+      addMiniappHomeModule(addMiniappModuleButton.dataset.miniappAddModule || "nav");
+      return;
+    }
+    const moveMiniappModuleButton = event.target.closest("[data-miniapp-module-move]");
+    if (moveMiniappModuleButton) {
+      event.preventDefault();
+      moveMiniappHomeModule(Number(moveMiniappModuleButton.dataset.miniappIndex || state.miniappSelectedIndex || 0), Number(moveMiniappModuleButton.dataset.miniappModuleMove || 0));
+      return;
+    }
+    const removeMiniappModuleButton = event.target.closest("[data-miniapp-module-remove]");
+    if (removeMiniappModuleButton) {
+      event.preventDefault();
+      removeMiniappHomeModule(Number(removeMiniappModuleButton.dataset.miniappIndex || state.miniappSelectedIndex || 0));
+      return;
+    }
+    const selectMiniappModuleButton = event.target.closest("[data-miniapp-select-module]");
+    if (selectMiniappModuleButton) {
+      event.preventDefault();
+      selectMiniappHomeModule(Number(selectMiniappModuleButton.dataset.miniappSelectModule || 0));
+      return;
+    }
+    if (event.target.closest("[data-miniapp-add-item]")) {
+      event.preventDefault();
+      addMiniappItem();
+      return;
+    }
+    const removeMiniappItemButton = event.target.closest("[data-miniapp-remove-item]");
+    if (removeMiniappItemButton) {
+      event.preventDefault();
+      removeMiniappItem(Number(removeMiniappItemButton.dataset.miniappRemoveItem || 0));
+      return;
+    }
+    if (event.target.closest("#savePrintSettings")) {
+      event.preventDefault();
+      savePrintSettings().catch((err) => toast(err.message || "打印设置保存失败", true));
+      return;
+    }
+    if (event.target.closest("#previewPrintSettings")) {
+      event.preventDefault();
+      previewPrintSettings();
+      return;
+    }
+    if (event.target.closest("#refreshNumberSettings")) {
+      event.preventDefault();
+      loadNumberSettings(true).catch((err) => toast(err.message || "编号设置刷新失败", true));
+      return;
+    }
+    if (event.target.closest("#saveNumberSettings")) {
+      event.preventDefault();
+      saveNumberSettings().catch((err) => toast(err.message || "编号设置保存失败", true));
+      return;
+    }
+    if (event.target.closest("#saveProductBasicSettings")) {
+      event.preventDefault();
+      saveSystemSetting("product_basic", collectProductBasicSettings(), loadProductBasicSettings).catch((err) => toast(err.message || "商品基础设置保存失败", true));
+      return;
+    }
+    if (event.target.closest("#saveInventoryRuleSettings")) {
+      event.preventDefault();
+      saveSystemSetting("inventory_rules", collectInventoryRuleSettings(), loadInventoryRuleSettings).catch((err) => toast(err.message || "库存规则保存失败", true));
+      return;
+    }
+    if (event.target.closest("#savePaymentRuleSettings")) {
+      event.preventDefault();
+      saveSystemSetting("payment_rules", collectPaymentRuleSettings(), loadPaymentRuleSettings).catch((err) => toast(err.message || "收款结款设置保存失败", true));
+      return;
+    }
+    if (event.target.closest("#saveImageSettings")) {
+      event.preventDefault();
+      saveSystemSetting("image_rules", collectImageSettings(), loadImageSettings).catch((err) => toast(err.message || "图片设置保存失败", true));
+      return;
+    }
+    if (event.target.closest("#saveMiniappDesignSettings")) {
+      event.preventDefault();
+      saveSystemSetting("miniapp_design", collectMiniappDesignSettings(), loadMiniappDesignSettings).catch((err) => toast(err.message || "小程序设计保存失败", true));
+      return;
+    }
+    const userRoleButton = event.target.closest("[data-user-role][data-user-id]");
+    if (userRoleButton) {
+      event.preventDefault();
+      updateUserRole(Number(userRoleButton.dataset.userId), userRoleButton.dataset.userRole).catch((err) => toast(err.message, true));
+      return;
+    }
+    const userActiveButton = event.target.closest("[data-user-active][data-user-id]");
+    if (userActiveButton) {
+      event.preventDefault();
+      updateUserActive(Number(userActiveButton.dataset.userId), Number(userActiveButton.dataset.userActive)).catch((err) => toast(err.message, true));
+      return;
+    }
     const approveButton = event.target.closest("[data-approve-user-id]");
     if (approveButton) {
       event.preventDefault();
@@ -3301,6 +6391,32 @@ function bindEvents() {
     if (lineInput) {
       updateSaleLine(Number(lineInput.dataset.saleLineIndex), lineInput.dataset.saleLineField, lineInput.value);
     }
+    if (event.target && event.target.id === "salePaymentStatus") {
+      syncSalePaymentUi();
+    }
+    const miniappHomeField = event.target.closest("[data-miniapp-home-field]");
+    if (miniappHomeField) {
+      updateMiniappHomeField(miniappHomeField.dataset.miniappHomeField || "", miniappHomeField.value);
+      return;
+    }
+    const miniappModuleField = event.target.closest("[data-miniapp-module-field]");
+    if (miniappModuleField) {
+      updateMiniappModuleField(
+        miniappModuleField.dataset.miniappModuleField || "",
+        miniappModuleField.value,
+        miniappModuleField.checked
+      );
+      return;
+    }
+    const miniappItemField = event.target.closest("[data-miniapp-item-field]");
+    if (miniappItemField) {
+      const row = miniappItemField.closest("[data-miniapp-item-index]");
+      updateMiniappItemField(
+        row ? Number(row.dataset.miniappItemIndex || 0) : 0,
+        miniappItemField.dataset.miniappItemField || "",
+        miniappItemField.value
+      );
+    }
   });
   document.querySelectorAll("[data-workflow-filter]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3311,6 +6427,23 @@ function bindEvents() {
       loadWorkflow(1);
     });
   });
+  document.querySelectorAll("[data-inventory-tab]").forEach((button) => {
+    button.addEventListener("click", () => setInventoryTab(button.dataset.inventoryTab || "cards"));
+  });
+  document.querySelectorAll("[data-customer-tab]").forEach((button) => {
+    button.addEventListener("click", () => setCustomerTab(button.dataset.customerTab || "customers"));
+  });
+  document.querySelectorAll("[data-asset-view]").forEach((button) => {
+    button.addEventListener("click", () => setAssetView(button.dataset.assetView || "products"));
+  });
+  const assetGroupBar = $("assetGroupBar");
+  if (assetGroupBar) {
+    assetGroupBar.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-asset-group]");
+      if (!button) return;
+      setAssetGroup(button.dataset.assetGroup || "");
+    });
+  }
   $("sendButton").addEventListener("click", () => sendChat());
   $("chatInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") sendChat();
@@ -3367,10 +6500,17 @@ function bindEvents() {
   });
   bind("quickInvBtn", "click", () => {
     $("inventoryKeyword").value = $("quickInvKeyword").value;
+    setInventoryTab("cards");
     setView("inventory");
     loadInventory($("quickInvKeyword").value);
   });
   bind("inventorySearchBtn", "click", () => loadInventory(undefined, 1));
+  bind("customerSearchBtn", "click", () => loadCustomers(1));
+  bind("assetSearchBtn", "click", () => {
+    if ((state.productAssets || []).length) renderCurrentProductAssets();
+    else loadProductAssets().catch((err) => toast(err.message, true));
+  });
+  bind("assetUploadButton", "click", () => chooseProductUpload("asset"));
   bind("salesSearchBtn", "click", () => loadSales(1));
   bind("workflowSearchBtn", "click", () => loadWorkflow(1));
   bind("productSearchBtn", "click", () => loadProducts(1));

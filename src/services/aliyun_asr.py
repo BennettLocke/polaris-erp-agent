@@ -1,7 +1,7 @@
 """Aliyun Intelligent Speech Interaction helpers.
 
 The agent keeps business hotwords in Alibaba Cloud and stores only the
-resulting vocabulary id locally. The source of truth remains the ERP database.
+resulting vocabulary id locally. The source of truth is sjagent_core.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pymysql
 import yaml
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkcore.request import CommonRequest
@@ -27,7 +26,7 @@ STATE_PATH = ROOT_DIR / "data" / "aliyun_asr_hotwords.json"
 CONFIG_PATH = ROOT_DIR / "config.yaml"
 
 HOTWORD_NAME = "sjagent_business_hotwords"
-HOTWORD_DESCRIPTION = "sjagent auto sync from ERP products, colors, warehouses and customers"
+HOTWORD_DESCRIPTION = "sjagent auto sync from native products, colors, warehouses and customers"
 BUSINESS_WORDS = (
     "北极星",
     "开单",
@@ -179,29 +178,11 @@ def create_aliyun_token(force: bool = False) -> dict[str, Any]:
         return result
 
 
-def _db_config() -> dict[str, Any]:
-    config = _load_yaml_config()
-    return {
-        "host": _config_value(config, "database.host"),
-        "port": int(_config_value(config, "database.port", 3306)),
-        "user": _config_value(config, "database.user"),
-        "password": _config_value(config, "database.password"),
-        "database": _config_value(config, "database.name"),
-        "charset": _config_value(config, "database.charset", "utf8mb4"),
-        "cursorclass": pymysql.cursors.DictCursor,
-        "autocommit": True,
-    }
-
-
 def _fetch_rows(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     load_dotenv(ROOT_DIR / ".env")
-    conn = pymysql.connect(**_db_config())
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, params)
-            return list(cursor.fetchall())
-    finally:
-        conn.close()
+    from src.engine.native_db import get_native_db_client
+
+    return get_native_db_client().query(sql, params)
 
 
 def _clean_word(text: Any) -> str:
@@ -226,7 +207,7 @@ def _add(words: dict[str, int], text: Any, weight: int) -> None:
 
 
 def collect_hotwords(max_words: int = 500) -> tuple[dict[str, int], dict[str, int]]:
-    """Collect and normalize hotwords from ERP tables and static business terms."""
+    """Collect and normalize hotwords from native tables and static business terms."""
     words: dict[str, int] = {}
     source_counts = {"business": 0, "products": 0, "recent_sales": 0, "colors": 0, "warehouses": 0, "customers": 0}
 
@@ -248,10 +229,13 @@ def collect_hotwords(max_words: int = 500) -> tuple[dict[str, int], dict[str, in
 
     recent_sales_rows = _fetch_rows(
         """
-        SELECT title, spec
-        FROM sxo_plugins_erp_sales_detail
-        WHERE title IS NOT NULL AND title <> ''
-        ORDER BY upd_time DESC, id DESC
+        SELECT i.title_snapshot AS title, i.color_snapshot AS spec
+        FROM sales_order_item i
+        JOIN sales_order s ON s.id = i.sales_order_id
+        WHERE i.title_snapshot IS NOT NULL
+          AND i.title_snapshot <> ''
+          AND s.status NOT IN ('canceled', 'deleted')
+        ORDER BY i.created_at DESC, i.id DESC
         LIMIT 300
         """
     )
@@ -263,10 +247,20 @@ def collect_hotwords(max_words: int = 500) -> tuple[dict[str, int], dict[str, in
 
     product_rows = _fetch_rows(
         """
-        SELECT title, spec, simple_desc
-        FROM sxo_plugins_erp_product
-        WHERE title IS NOT NULL AND title <> ''
-        ORDER BY upd_time DESC, id DESC
+        SELECT
+            sp.title,
+            s.color AS spec,
+            CASE
+              WHEN sp.case_pack_qty IS NULL THEN ''
+              ELSE CONCAT('件规：1件', TRIM(TRAILING '.000' FROM CAST(sp.case_pack_qty AS CHAR)), '套')
+            END AS simple_desc
+        FROM product_sku s
+        JOIN product_spu sp ON sp.id = s.spu_id
+        WHERE s.deleted_at IS NULL
+          AND sp.deleted_at IS NULL
+          AND sp.title IS NOT NULL
+          AND sp.title <> ''
+        ORDER BY s.updated_at DESC, s.id DESC
         LIMIT 2000
         """
     )
@@ -288,7 +282,7 @@ def collect_hotwords(max_words: int = 500) -> tuple[dict[str, int], dict[str, in
                 _add(words, part, 2)
         source_counts["products"] += max(0, len(words) - before)
 
-    for row in _fetch_rows("SELECT name, alias FROM sxo_plugins_erp_warehouse WHERE is_enable = 1"):
+    for row in _fetch_rows("SELECT name, code AS alias FROM warehouse WHERE is_enabled = 1"):
         before = len(words)
         _add(words, row.get("name"), 4)
         _add(words, row.get("alias"), 3)
@@ -296,10 +290,12 @@ def collect_hotwords(max_words: int = 500) -> tuple[dict[str, int], dict[str, in
 
     customer_rows = _fetch_rows(
         """
-        SELECT name, company_name, contacts_name
-        FROM sxo_plugins_erp_company
-        WHERE is_enable = 1 AND is_customer = 1
-        ORDER BY upd_time DESC, id DESC
+        SELECT name, name AS company_name, contact_name AS contacts_name
+        FROM party
+        WHERE deleted_at IS NULL
+          AND status = 'active'
+          AND kind IN ('customer', 'both')
+        ORDER BY updated_at DESC, id DESC
         LIMIT 800
         """
     )
@@ -331,7 +327,7 @@ def get_hotword_state() -> dict[str, Any]:
 
 
 def sync_hotwords(force: bool = False) -> dict[str, Any]:
-    """Create or update Aliyun ASR hotword vocabulary from current ERP data."""
+    """Create or update Aliyun ASR hotword vocabulary from current native data."""
     cfg = get_aliyun_asr_config()
     words, source_counts = collect_hotwords(cfg.max_words)
     payload = json.dumps(words, ensure_ascii=False, separators=(",", ":"))

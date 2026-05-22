@@ -142,6 +142,7 @@ def match_learned(text: str) -> dict | None:
             extracted = compact_extraction(example.get("extracted") or {})
             if extracted.get("intent"):
                 logger.info(f"命中学习记忆: {text[:50]} -> {extracted.get('intent')}")
+                extracted["_source"] = example.get("source") or ""
                 return dict(extracted)
     return None
 

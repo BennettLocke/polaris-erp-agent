@@ -14,9 +14,9 @@ from queue import Queue
 from threading import Thread
 from typing import Any
 
-import pymysql
 
 from src.core.config import get_config
+from src.engine.native_db import get_native_db_client
 
 
 class VolcRealtimeAsrError(RuntimeError):
@@ -148,82 +148,47 @@ def _series_from_title(title: str) -> str:
 
 
 def _fetch_dynamic_hotwords(limit: int) -> tuple[str, ...]:
-    config = get_config()
-    db = config.db_config
+    db = get_native_db_client()
     words: list[str] = []
     seen: set[str] = set()
-    conn = pymysql.connect(
-        host=db["host"],
-        port=int(db.get("port") or 3306),
-        user=db["user"],
-        password=db["password"],
-        database=db["name"],
-        charset=db.get("charset") or "utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True,
+
+    customer_rows = db.query(
+        """
+        SELECT name, contact_name
+        FROM party
+        WHERE deleted_at IS NULL
+          AND is_enabled = 1
+          AND kind IN ('customer', 'both')
+        ORDER BY id DESC
+        LIMIT %s
+        """,
+        (limit,),
     )
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT name, company_name, contacts_name
-                FROM sxo_plugins_erp_company
-                WHERE is_enable = 1 AND is_customer = 1
-                ORDER BY id DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            for row in cursor.fetchall():
-                _add_hotword(words, seen, row.get("name"))
-                _add_hotword(words, seen, row.get("company_name"))
-                _add_hotword(words, seen, row.get("contacts_name"))
+    for row in customer_rows:
+        _add_hotword(words, seen, row.get("name"))
+        _add_hotword(words, seen, row.get("contact_name"))
 
-            cursor.execute(
-                """
-                SELECT DISTINCT p.title
-                FROM sxo_plugins_erp_product p
-                WHERE (
-                    p.title LIKE '%%半斤%%'
-                    OR p.title LIKE '%%3两%%'
-                    OR p.title LIKE '%%三两%%'
-                    OR p.title LIKE '%%2两%%'
-                    OR p.title LIKE '%%二两%%'
-                    OR p.title LIKE '%%1两%%'
-                    OR p.title LIKE '%%一两%%'
-                    OR p.title LIKE '%%2大盒%%'
-                    OR p.title LIKE '%%二大盒%%'
-                    OR p.title LIKE '%%两大盒%%'
-                    OR p.title LIKE '%%3小盒%%'
-                    OR p.title LIKE '%%三小盒%%'
-                    OR p.title LIKE '%%6小盒%%'
-                    OR p.title LIKE '%%六小盒%%'
-                    OR p.title LIKE '%%10小盒%%'
-                    OR p.title LIKE '%%十小盒%%'
-                  )
-                  AND p.title NOT LIKE '%%泡袋%%'
-                  AND p.title NOT LIKE '%%提袋%%'
-                  AND p.title NOT LIKE '%%内衬%%'
-                  AND p.title NOT LIKE '%%纸箱%%'
-                  AND p.title NOT LIKE '%%快递%%'
-                  AND p.title NOT LIKE '%%打包%%'
-                  AND p.title NOT LIKE '%%包装箱%%'
-                  AND p.title NOT LIKE '%%PVC%%'
-                ORDER BY p.id DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            for row in cursor.fetchall():
-                title = row.get("title") or ""
-                if not _is_gift_box_title(title):
-                    continue
-                _add_hotword(words, seen, title)
-                _add_hotword(words, seen, _series_from_title(title))
-    finally:
-        conn.close()
+    product_rows = db.query(
+        """
+        SELECT DISTINCT sp.title, sp.series
+        FROM product_spu sp
+        JOIN product_sku s ON s.spu_id = sp.id AND s.deleted_at IS NULL
+        WHERE sp.deleted_at IS NULL
+          AND s.status = 'active'
+          AND s.primary_category_id IN (1,2,3,4,7,8,9,10,11,14,15,18,19)
+        ORDER BY sp.id DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    for row in product_rows:
+        title = row.get("title") or ""
+        if not _is_gift_box_title(title):
+            continue
+        _add_hotword(words, seen, title)
+        _add_hotword(words, seen, row.get("series"))
+        _add_hotword(words, seen, _series_from_title(title))
     return tuple(words[:limit])
-
 
 def _dynamic_hotwords(config, limit: int) -> tuple[str, ...]:
     enabled = str(config.get("volc_asr.dynamic_hotwords", "true")).lower() not in {"0", "false", "no"}

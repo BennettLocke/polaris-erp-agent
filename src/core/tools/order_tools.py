@@ -1,100 +1,18 @@
+"""Native order, workflow and print tools.
+
+The tool names stay compatible with earlier agent flows, but every runtime
+operation now goes through sjagent_core.
 """
-订单工具 - 工作流订单、销售单、打印相关操作
-"""
-from src.engine.api_client import ERPSystemClient
-from src.engine.db_client import get_db_client
+
+from src.engine.native_db import get_native_db_client
 from src.core.tools.registry import tool
 from src.utils import get_logger
 
 logger = get_logger("sjagent.tools.order")
 
 
-def _list_rows(payload) -> list[dict]:
-    """Extract list rows from common ERP API response shapes."""
-    if isinstance(payload, list):
-        return [row for row in payload if isinstance(row, dict)]
-    if not isinstance(payload, dict):
-        return []
-    for key in ("list", "data", "rows", "items"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return [row for row in value if isinstance(row, dict)]
-        if isinstance(value, dict):
-            rows = _list_rows(value)
-            if rows:
-                return rows
-    return []
-
-
-def _sales_detail_rows(payload) -> list[dict]:
-    """Extract sales detail product rows from SalesDetail response."""
-    if not isinstance(payload, dict):
-        return []
-    data = payload.get("data", payload)
-    if isinstance(data, dict) and isinstance(data.get("data"), dict):
-        data = data["data"]
-    if not isinstance(data, dict):
-        return []
-    for key in ("detail", "details", "products", "product", "items", "goods"):
-        value = data.get(key)
-        if isinstance(value, list):
-            return [row for row in value if isinstance(row, dict)]
-    info = data.get("info")
-    if isinstance(info, dict):
-        for key in ("detail", "details", "products", "items", "goods"):
-            value = info.get(key)
-            if isinstance(value, list):
-                return [row for row in value if isinstance(row, dict)]
-    return []
-
-
-def _row_price(row: dict) -> float | None:
-    for key in ("price", "unit_price", "sales_price"):
-        value = row.get(key)
-        if value not in (None, ""):
-            try:
-                price = float(value)
-            except (TypeError, ValueError):
-                continue
-            if price > 0:
-                return price
-    return None
-
-
-def _row_customer_id(row: dict) -> int | None:
-    if not isinstance(row, dict):
-        return None
-    for key in ("customer_id", "company_id", "client_id"):
-        value = row.get(key)
-        if value not in (None, ""):
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                continue
-    customer = row.get("customer")
-    if isinstance(customer, dict):
-        return _row_customer_id(customer)
-    company = row.get("company")
-    if isinstance(company, dict):
-        return _row_customer_id(company)
-    return None
-
-
-def _sales_detail_customer_id(payload) -> int | None:
-    if not isinstance(payload, dict):
-        return None
-    data = payload.get("data", payload)
-    if isinstance(data, dict) and isinstance(data.get("data"), dict):
-        data = data["data"]
-    if not isinstance(data, dict):
-        return None
-    cid = _row_customer_id(data)
-    if cid:
-        return cid
-    info = data.get("info")
-    if isinstance(info, dict):
-        return _row_customer_id(info)
-    return None
+def _native_db():
+    return get_native_db_client()
 
 
 @tool("workflow_order_save", "保存工作流订单")
@@ -110,251 +28,151 @@ def workflow_order_save(
     order_type: int = 0,
     remark: str = "",
 ) -> dict:
-    """
-    创建工作流订单
-
-    Args:
-        customer_name: 客户名称
-        goods_name: 商品名称（用数据库标准值）
-        order_quantity: 订单数量
-        color: 颜色
-        order_images: 图片URL列表
-        is_screen_print: 是否丝印（0/1）
-        remark: 备注
-    """
-    client = ERPSystemClient()
     try:
-        result = client.workflow_order_save(
+        result = _native_db().save_workflow_order(
             order_id=order_id,
             customer_name=customer_name,
             customer_phone=customer_phone,
             goods_name=goods_name,
             order_quantity=order_quantity,
-            goods_color=color,
+            color=color,
             order_images=order_images or [],
             is_screen_print=is_screen_print,
             order_type=order_type,
             remark=remark,
         )
-        logger.info(f"工作流订单创建: goods_name={goods_name}, result={result}")
+        logger.info(f"native workflow order saved: goods_name={goods_name}, result={result}")
         return result
     except Exception as e:
-        logger.error(f"工作流订单创建失败: {e}")
+        logger.error(f"native workflow order save failed: {e}")
         return {"error": str(e)}
 
 
 @tool("workflow_order_list", "工作流订单列表")
-def workflow_order_list(
-    keyword: str = None,
-    page: int = 1,
-    page_size: int = 20,
-) -> dict:
-    """查询工作流订单列表"""
-    client = ERPSystemClient()
+def workflow_order_list(keyword: str = None, page: int = 1, page_size: int = 20) -> dict:
     try:
-        return client.workflow_order_list(keyword=keyword, page=page, page_size=page_size)
+        cards, total = _native_db().workflow_orders(
+            keyword=keyword or "",
+            page=page,
+            page_size=page_size,
+            status_filter="all",
+        )
+        return {"code": 0, "data": {"list": cards, "total": total, "page": page, "page_size": page_size}}
     except Exception as e:
-        logger.error(f"工作流订单列表查询失败: {e}")
+        logger.error(f"native workflow order list failed: {e}")
         return {"error": str(e)}
 
 
 @tool("workflow_order_detail", "工作流订单详情")
 def workflow_order_detail(order_id: int) -> dict:
-    """查询工作流订单详情"""
-    client = ERPSystemClient()
     try:
-        return client.workflow_order_detail(order_id)
+        rows = _native_db().query(
+            "SELECT * FROM workflow_order WHERE id=%s AND deleted_at IS NULL LIMIT 1",
+            (order_id,),
+        )
+        if not rows:
+            return {"code": 404, "msg": "工作流订单不存在"}
+        return {"code": 0, "data": rows[0]}
     except Exception as e:
-        logger.error(f"工作流订单详情查询失败: {e}")
+        logger.error(f"native workflow order detail failed: {e}")
         return {"error": str(e)}
 
 
 @tool("workflow_order_delete", "删除工作流订单")
 def workflow_order_delete(ids: str) -> dict:
-    """
-    删除工作流订单
-
-    Args:
-        ids: 工作流订单ID（多个用逗号分隔）
-    """
-    client = ERPSystemClient()
     try:
-        result = client.workflow_order_delete(ids=ids)
-        logger.info(f"工作流订单删除: ids={ids}")
+        result = _native_db().delete_workflow_orders(ids)
+        logger.info(f"native workflow order deleted: ids={ids}")
         return result
     except Exception as e:
-        logger.error(f"工作流订单删除失败: {e}")
+        logger.error(f"native workflow order delete failed: {e}")
         return {"error": str(e)}
 
 
 @tool("workflow_order_status_update", "更新工作流订单状态")
 def workflow_order_status_update(order_id: int, field: str, value: int) -> dict:
-    """
-    更新工作流订单状态。
-
-    Args:
-        order_id: 工作流订单ID
-        field: is_made/is_delivered/order_type
-        value: 0/1，order_type 可为 0/1/2
-    """
-    client = ERPSystemClient()
     try:
-        result = client.workflow_order_status_update(order_id=order_id, field=field, value=value)
-        logger.info(f"工作流订单状态更新: id={order_id}, field={field}, value={value}")
+        result = _native_db().update_workflow_status(order_id=order_id, field=field, value=value)
+        logger.info(f"native workflow status updated: id={order_id}, field={field}, value={value}")
         return result
     except Exception as e:
-        logger.error(f"工作流订单状态更新失败: {e}")
+        logger.error(f"native workflow status update failed: {e}")
         return {"error": str(e)}
 
 
-@tool("sales_print_task", "创建打印任务")
+@tool("sales_print_task", "创建销售单打印任务")
 def sales_print_task(sales_id: int) -> dict:
-    """
-    为销售单创建打印任务
-
-    Args:
-        sales_id: 销售单ID
-    """
-    client = ERPSystemClient()
     try:
-        result = client.sales_print_task(sales_id=sales_id)
-        logger.info(f"打印任务创建: sales_id={sales_id}")
+        result = _native_db().create_sales_print_task(sales_id=sales_id)
+        logger.info(f"native sales print task created: sales_id={sales_id}")
         return result
     except Exception as e:
-        logger.error(f"打印任务创建失败: {e}")
+        logger.error(f"native sales print task failed: {e}")
         return {"error": str(e)}
 
 
 @tool("sales_print", "获取销售单打印数据")
 def sales_print(sales_id: int) -> dict:
-    """获取销售单打印数据"""
-    client = ERPSystemClient()
     try:
-        return client.sales_print(sales_id)
+        return _native_db().sales_print_data(sales_id)
     except Exception as e:
-        logger.error(f"获取打印数据失败: {e}")
+        logger.error(f"native sales print data failed: {e}")
         return {"error": str(e)}
 
 
 @tool("sales_history_price", "查询客户历史成交价")
 def sales_history_price(customer_id: int, product_id: int) -> float | None:
-    """
-    查询客户对某商品的历史成交价
-
-    Returns:
-        历史成交价，未查到返回 None
-    """
-    db = get_db_client()
     try:
-        # 查数据库获取历史价格
-        sql = """
-        SELECT sd.price
-        FROM sxo_plugins_erp_sales_detail sd
-        JOIN sxo_plugins_erp_sales s ON s.id = sd.sales_id
-        WHERE s.customer_id = %s AND sd.product_id = %s
-        ORDER BY s.add_time DESC
-        LIMIT 1
-        """
-        rows = db.query(sql, (customer_id, product_id))
-        if rows and rows[0].get("price"):
-            price = float(rows[0]["price"])
-            logger.info(f"历史价格: customer_id={customer_id}, product_id={product_id}, price={price}")
-            return price
+        price = _native_db().sales_history_price(customer_id, product_id)
+        if price:
+            logger.info(f"native history price: customer_id={customer_id}, product_id={product_id}, price={price}")
+        return price
     except Exception as e:
-        logger.error(f"历史价格查询失败: {e}")
-
-    try:
-        client = ERPSystemClient()
-        sales_result = client.sales_list(customer_id=customer_id, page=1, page_size=30)
-        for sale in _list_rows(sales_result):
-            sale_customer_id = _row_customer_id(sale)
-            if sale_customer_id and sale_customer_id != int(customer_id):
-                continue
-            if sale_customer_id == int(customer_id):
-                for row in _list_rows(sale.get("products") or sale.get("detail") or sale.get("items")):
-                    if str(row.get("product_id") or row.get("id") or "") == str(product_id):
-                        price = _row_price(row)
-                        if price:
-                            logger.info(f"历史价格(API列表): customer_id={customer_id}, product_id={product_id}, price={price}")
-                            return price
-
-            sales_id = sale.get("id") or sale.get("sales_id")
-            if not sales_id:
-                continue
-            detail_result = client.sales_detail(int(sales_id))
-            detail_customer_id = _sales_detail_customer_id(detail_result) or sale_customer_id
-            if detail_customer_id != int(customer_id):
-                continue
-            for row in _sales_detail_rows(detail_result):
-                if str(row.get("product_id") or row.get("id") or "") != str(product_id):
-                    continue
-                price = _row_price(row)
-                if price:
-                    logger.info(f"历史价格(API详情): customer_id={customer_id}, product_id={product_id}, sales_id={sales_id}, price={price}")
-                    return price
-    except Exception as e:
-        logger.error(f"历史价格API兜底失败: {e}")
-    return None
+        logger.error(f"native history price failed: {e}")
+        return None
 
 
 @tool("get_product_price", "获取商品价格")
 def get_product_price(product_id: int) -> float | None:
-    """
-    获取商品零售价（price字段，不是 retail_price）
-
-    Returns:
-        价格，未查到返回 None
-    """
-    db = get_db_client()
     try:
-        info = db.get_product_info(product_id)
-        if info and info.get("price"):
-            return float(info["price"])
-        return None
+        return _native_db().get_product_price(product_id)
     except Exception as e:
-        logger.error(f"商品价格查询失败: {e}")
+        logger.error(f"native product price failed: {e}")
         return None
 
 
 @tool("sales_print_task_list", "待打印任务列表")
 def sales_print_task_list() -> dict:
-    """查询待打印任务列表"""
-    client = ERPSystemClient()
     try:
-        return client.sales_print_task_list()
+        return _native_db().sales_print_task_list()
     except Exception as e:
-        logger.error(f"待打印任务列表查询失败: {e}")
+        logger.error(f"native sales print task list failed: {e}")
         return {"error": str(e)}
 
 
 @tool("sales_print_task_done", "标记打印完成")
 def sales_print_task_done(task_id: int) -> dict:
-    """标记打印任务已完成"""
-    client = ERPSystemClient()
     try:
-        return client.sales_print_task_done(task_id)
+        return _native_db().sales_print_task_done(task_id)
     except Exception as e:
-        logger.error(f"标记打印完成失败: {e}")
+        logger.error(f"native sales print task done failed: {e}")
         return {"error": str(e)}
 
 
-@tool("purchase_add", "创建采购单")
-def purchase_add(
-    company_id: int,
-    products: list[dict],
-    note: str = "",
-) -> dict:
-    """
-    创建采购单
-
-    Args:
-        company_id: 供应商ID
-        products: [{"product_id": X, "unit_id": 1, "buy_number": Y, "price": Z}, ...]
-        note: 备注
-    """
-    client = ERPSystemClient()
+@tool("purchase_add", "创建采购入库")
+def purchase_add(company_id: int, products: list[dict], note: str = "") -> dict:
     try:
-        return client.purchase_add(company_id=company_id, products=products, note=note)
+        warehouse_id = 2
+        for item in products or []:
+            if item.get("warehouse_id"):
+                warehouse_id = int(item.get("warehouse_id"))
+                break
+        final_note = note or f"供应商#{company_id} 采购入库"
+        return _native_db().create_stock_in(
+            warehouse_id=warehouse_id,
+            products=products,
+            note=final_note,
+        )
     except Exception as e:
-        logger.error(f"采购单创建失败: {e}")
+        logger.error(f"native purchase stock-in failed: {e}")
         return {"error": str(e)}

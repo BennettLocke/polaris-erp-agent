@@ -1,0 +1,51 @@
+version: 1
+
+databases:
+  legacy_shopxo_erp:
+    role: legacy_source
+    description: Current ShopXO/ERP database, used only as migration/read source.
+    env:
+      host: DB_HOST
+      port: DB_PORT
+      name: DB_NAME
+      user: DB_USER
+      password: DB_PASSWORD
+    write_policy: read_only_for_new_sjagent_work
+    owns:
+      - old_shopxo_goods
+      - old_erp_product
+      - old_erp_company
+      - old_erp_inventory
+      - old_erp_sales
+
+  sjagent_core:
+    role: native_core
+    description: North-Star-owned business database for product, customer, order, inventory, and user data.
+    env:
+      host: SJAGENT_CORE_DB_HOST
+      port: SJAGENT_CORE_DB_PORT
+      name: SJAGENT_CORE_DB_NAME
+      user: SJAGENT_CORE_DB_USER
+      password: SJAGENT_CORE_DB_PASSWORD
+    default_name: sjagent_core
+    schema_dir: database/schema
+    deploy_script: scripts/deploy_database_schema.py
+    owns:
+      - product_catalog
+      - customer_supplier
+      - auth_user_identity
+      - workflow_order
+      - sales_order
+      - warehouse_inventory
+      - inventory_ledger
+
+commands:
+  deploy_core_schema:
+    windows: python scripts\deploy_database_schema.py --database sjagent_core
+    linux: python scripts/deploy_database_schema.py --database sjagent_core
+  import_product_catalog:
+    windows: python scripts\migrate_product_catalog.py --target-db sjagent_core
+    linux: python scripts/migrate_product_catalog.py --target-db sjagent_core
+  import_business_core:
+    windows: python scripts\migrate_business_core.py --target-db sjagent_core
+    linux: python scripts/migrate_business_core.py --target-db sjagent_core

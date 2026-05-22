@@ -260,8 +260,14 @@ class PurchaseWorkflow(BaseWorkflow):
         product_name = f"{product.get('title', '')} {product.get('name', '')}".strip()
         if unit == "件":
             return qty, "件", per_piece
-        if per_piece > 1 and is_one_piece_order(product_name):
-            return calculate_purchase_quantity(qty, per_piece, product_name), "件", per_piece
+        purchase_policy = str(product.get("purchase_policy") or "").strip()
+        if per_piece > 1 and (purchase_policy == "one_case" or (not purchase_policy and is_one_piece_order(product_name))):
+            purchase_qty = (
+                (qty + per_piece - 1) // per_piece
+                if purchase_policy == "one_case"
+                else calculate_purchase_quantity(qty, per_piece, product_name)
+            )
+            return purchase_qty, "件", per_piece
         return qty, unit or "套", per_piece
 
     def _format_item_desc(self, item: dict) -> str:

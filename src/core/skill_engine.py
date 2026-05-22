@@ -193,7 +193,7 @@ class SkillEngine:
         learned_extracted = match_learned(user_input)
         fast_extracted = self._fast_extract(user_input)
         if learned_extracted:
-            extracted = self._merge_learned_with_fast(learned_extracted, fast_extracted)
+            extracted = self._merge_learned_with_fast(user_input, learned_extracted, fast_extracted)
         elif self._should_use_fast_without_llm(user_input, fast_extracted):
             extracted = fast_extracted
         else:
@@ -205,7 +205,7 @@ class SkillEngine:
             session.save_turn(user_input, reply)
             return reply
         # 提取参数（去掉 intent 字段，剩下的都是 params）
-        params = {k: v for k, v in extracted.items() if v is not None}
+        params = {k: v for k, v in extracted.items() if v is not None and not str(k).startswith("_")}
         logger.info(f"[SkillEngine] 意图: {intent}, 参数: {params} (输入: {user_input[:50]})")
         session.set_meta("last_extraction", {"user_input": user_input, "intent": intent, "params": params})
 
@@ -395,7 +395,9 @@ class SkillEngine:
 
     def _is_workflow_order_request(self, user_input: str) -> bool:
         keywords = ["工作流订单", "工作流单", "创建工作流", "设计稿订单", "设计稿下单", "按图下单"]
-        return any(k in user_input for k in keywords)
+        if any(k in user_input for k in keywords):
+            return True
+        return bool(re.search(r"(?:图片|照片|截图).{0,8}(?:下单|开单|订单)", user_input))
 
     def _is_workflow_query_request(self, user_input: str) -> bool:
         workflow_words = ["工作流订单", "工作流单", "设计稿订单"]
@@ -462,7 +464,11 @@ class SkillEngine:
             return True
         if intent == "bag_upload":
             return True
-        if intent == "workflow" and fast_extracted.get("action") in {"query", "delete"}:
+        if intent == "workflow" and fast_extracted.get("action") in {"query", "delete", "create"}:
+            return True
+        if intent == "sales_query" and (
+            fast_extracted.get("customer") or fast_extracted.get("sales_id") or fast_extracted.get("count")
+        ):
             return True
         if intent in {"help", "chat"}:
             return True
@@ -478,7 +484,9 @@ class SkillEngine:
             return True
         return False
 
-    def _merge_learned_with_fast(self, learned: dict, fast: dict | None) -> dict:
+    def _merge_learned_with_fast(self, user_input: str, learned: dict, fast: dict | None) -> dict:
+        if fast and learned.get("_source") != "correction" and self._should_use_fast_without_llm(user_input, fast):
+            return fast
         if fast and fast.get("intent") == "series_manage":
             return fast
         if fast and fast.get("intent") == "sales_manage" and fast.get("action") == "modify":
@@ -680,9 +688,9 @@ class SkillEngine:
 
     def _extract_workflow_order_params(self, user_input: str) -> dict:
         import re
-        result = {"intent": "workflow"}
+        result = {"intent": "workflow", "action": "create"}
 
-        customer_match = re.search(r'(?:客户|客户[:：])\s*([^\s，,]+)', user_input)
+        customer_match = re.search(r'客户[:：]\s*([^\s，,]+)', user_input)
         if customer_match:
             result["customer"] = customer_match.group(1).strip()
 
@@ -979,6 +987,8 @@ class SkillEngine:
             return False
         if any(w in user_input for w in ["下单", "开单", "订货"]):
             return True
+        if re.search(r"^[\u4e00-\u9fa5A-Za-z0-9（）()【】\-]{2,20}要\d+(?:\.\d+)?\s*(?:套|张|个|件|捆|斤).+", user_input.strip()):
+            return True
         return bool(re.search(r"^[^\s，,]{2,20}\s+.+\d+(?:\.\d+)?\s*(?:套|张|个|件|捆|斤)", user_input.strip()))
 
     def _extract_order_params_fast(self, user_input: str) -> dict | None:
@@ -1010,18 +1020,39 @@ class SkillEngine:
 
         colors = ["红色", "黄色", "橙色", "蓝色", "绿色", "橄榄绿", "咖色", "深咖色", "古铜色", "黑色", "白色", "紫色", "粉色"]
         products = []
-        cleaned = re.sub(r'(?<![\u4e00-\u9fa5A-Za-z0-9])客户[:：]?\s*[^\s，,]+', '', text_without_command or text)
-        for match in re.finditer(r'([\u4e00-\u9fa5A-Za-z0-9【】]+?)\s*(\d+)\s*(套|张|个|件|捆|斤)', cleaned):
-            name = match.group(1).strip()
-            if name in {"客户", "商品", "产品", "下单", "开单"}:
-                continue
+        compact = re.sub(r"\s+", "", text_without_command or text)
+        compact_match = re.match(
+            r"^([\u4e00-\u9fa5A-Za-z0-9（）()【】\-]{2,20})要(\d+(?:\.\d+)?)(套|张|个|件|捆|斤)(.+)$",
+            compact,
+        )
+        if compact_match and not customer:
+            customer = compact_match.group(1).strip()
+            raw_name = compact_match.group(4).strip()
             color = ""
             for c in colors:
-                if c in name or c in user_input[match.end(): match.end() + 6]:
+                if c in raw_name:
                     color = c
-                    name = name.replace(c, "")
+                    raw_name = raw_name.replace(c, "")
                     break
-            products.append({"name": name.replace("商品", "").replace("产品", "").strip(), "qty": int(match.group(2)), "unit": match.group(3), "color": color})
+            products.append({
+                "name": raw_name.replace("商品", "").replace("产品", "").strip(),
+                "qty": int(float(compact_match.group(2))),
+                "unit": compact_match.group(3),
+                "color": color,
+            })
+        if not products:
+            cleaned = re.sub(r'(?<![\u4e00-\u9fa5A-Za-z0-9])客户[:：]?\s*[^\s，,]+', '', text_without_command or text)
+            for match in re.finditer(r'([\u4e00-\u9fa5A-Za-z0-9【】]+?)\s*(\d+)\s*(套|张|个|件|捆|斤)', cleaned):
+                name = match.group(1).strip()
+                if name in {"客户", "商品", "产品", "下单", "开单"}:
+                    continue
+                color = ""
+                for c in colors:
+                    if c in name or c in user_input[match.end(): match.end() + 6]:
+                        color = c
+                        name = name.replace(c, "")
+                        break
+                products.append({"name": name.replace("商品", "").replace("产品", "").strip(), "qty": int(match.group(2)), "unit": match.group(3), "color": color})
         if customer or products:
             return {"intent": "order", "customer": customer, "products": products}
         return None

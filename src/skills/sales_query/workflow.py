@@ -281,6 +281,8 @@ class SalesQueryWorkflow(BaseWorkflow):
             sid = self._get_order_id(orders[0])
             if not sid:
                 return f"找到了客户「{customer_name}」的订单记录，但没有取到销售单号。"
+            if isinstance(orders[0], dict) and orders[0].get("products"):
+                return self._format_sales_card(orders[0], customer_name=customer_name)
             return self._format_sales_detail(int(sid), customer_name=customer_name)
 
         lines = [f"客户「{customer_name}」最近 {len(orders)} 单："]
@@ -289,9 +291,44 @@ class SalesQueryWorkflow(BaseWorkflow):
             if not sid:
                 lines.append(f"{idx}. 未取到销售单号：{str(order)[:120]}")
                 continue
-            detail = self._format_sales_detail(int(sid), customer_name=customer_name)
-            lines.append(f"{idx}. {detail}")
+            lines.append(f"{idx}. {self._format_sales_card(order, customer_name=customer_name)}")
         return "\n\n".join(lines)
+
+    def _format_sales_card(self, order: dict, customer_name: str = "") -> str:
+        sid = self._get_order_id(order) or order.get("sales_no") or ""
+        lines = [f"销售单 {sid} 的内容："]
+        customer = order.get("customer_name") or order.get("company_name") or customer_name
+        if customer:
+            lines.append(f"客户：{customer}")
+        items = order.get("products") or order.get("items") or order.get("detail") or []
+        if not items:
+            summary = order.get("product_summary") or ""
+            if summary:
+                lines.append(f"商品：{summary}")
+        else:
+            lines.append("商品：")
+            for item in items:
+                if not isinstance(item, dict):
+                    lines.append(f"- {item}")
+                    continue
+                name = item.get("title") or item.get("product_name") or item.get("goods_name") or item.get("name") or "未知商品"
+                spec = item.get("spec") or item.get("color") or item.get("goods_color") or ""
+                qty = item.get("buy_number") or item.get("number") or item.get("quantity") or item.get("qty") or ""
+                unit = item.get("unit_name") or item.get("unit") or ""
+                price = item.get("price") or item.get("sale_price") or ""
+                line = f"- {name}"
+                if spec:
+                    line += f" {spec}"
+                if qty != "":
+                    line += f" x {qty}{unit}"
+                if price != "":
+                    line += f"，单价 {price}"
+                lines.append(line)
+        total = order.get("total_price") or order.get("receivable_amount") or ""
+        pay = order.get("pay_status_text") or ""
+        if total or pay:
+            lines.append(f"合计：{total or '-'}{('，付款：' + pay) if pay else ''}")
+        return "\n".join(lines)
 
     def _get_order_id(self, order: dict):
         if not isinstance(order, dict):
