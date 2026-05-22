@@ -375,6 +375,9 @@ function setView(name) {
   });
   if (name === "sale-create") {
     setDefaultSaleCreateTime();
+    if (state.saleCustomer) {
+      refreshSaleCustomerMonthlyRule(state.saleCustomer.id, state.saleCustomer.name).catch((err) => console.warn("月结客户校验失败", err));
+    }
     syncSalePaymentUi();
     renderSaleLines();
   }
@@ -4288,6 +4291,31 @@ function saleCustomerMonthly(customer = {}) {
   return Number(customer.is_monthly_customer || customer.monthly_customer || 0) === 1;
 }
 
+function applySaleCustomerPaymentRule(isMonthly) {
+  if ($("salePaymentStatus")) $("salePaymentStatus").value = isMonthly ? "monthly" : "paid";
+  if ($("salePayType")) $("salePayType").value = "wechat";
+  syncSalePaymentUi();
+}
+
+async function refreshSaleCustomerMonthlyRule(customerId, customerName = "") {
+  if (!customerId || !customerName) return false;
+  const res = await api(`/api/customer/list?${query({ keyword: customerName })}`);
+  const list = normalizeList(res);
+  const matched = list.find((customer) => Number(saleCustomerId(customer)) === Number(customerId));
+  if (!matched || !saleCustomerMonthly(matched)) return false;
+  if (!state.saleCustomer || Number(state.saleCustomer.id || 0) !== Number(customerId)) return false;
+  state.saleCustomer = {
+    ...state.saleCustomer,
+    name: saleCustomerName(matched) || state.saleCustomer.name || customerName,
+    is_monthly_customer: 1
+  };
+  if ($("saleSelectedCustomer")) $("saleSelectedCustomer").textContent = `${state.saleCustomer.name} · 月结客户`;
+  if ($("salePaymentStatus") && $("salePaymentStatus").value === "paid") {
+    applySaleCustomerPaymentRule(true);
+  }
+  return true;
+}
+
 async function searchSaleCustomers() {
   if (!$("saleCustomer")) throw new Error("开单页面未加载");
   const keyword = $("saleCustomer").value.trim();
@@ -4313,11 +4341,10 @@ function selectSaleCustomer(id, name, isMonthly = false) {
   if (!$("saleCustomer")) return;
   $("saleCustomer").value = name;
   $("saleSelectedCustomer").textContent = isMonthly ? `${name} · 月结客户` : name;
-  if ($("salePaymentStatus")) $("salePaymentStatus").value = isMonthly ? "monthly" : "paid";
-  if ($("salePayType")) $("salePayType").value = "wechat";
-  syncSalePaymentUi();
+  applySaleCustomerPaymentRule(isMonthly);
   $("saleCustomerChoices").innerHTML = "";
   renderSaleLines();
+  if (!isMonthly) refreshSaleCustomerMonthlyRule(id, name).catch((err) => console.warn("月结客户校验失败", err));
 }
 
 function openSaleCustomerCreateDialog() {
@@ -4615,6 +4642,9 @@ function clearSaleForm() {
 }
 
 function salePaymentPayload() {
+  if (state.saleCustomer && Number(state.saleCustomer.is_monthly_customer || 0) === 1) {
+    return { pay_status: "monthly", pay_type: "monthly" };
+  }
   const status = ($("salePaymentStatus") && $("salePaymentStatus").value) || "paid";
   if (status === "monthly") return { pay_status: "monthly", pay_type: "monthly" };
   if (status === "unpaid") return { pay_status: "unpaid", pay_type: "" };
@@ -4632,6 +4662,7 @@ async function quickSale() {
   if (!$('saleCustomer')) throw new Error('开单页面未加载');
   if (!state.saleCustomer) await searchSaleCustomers();
   if (!state.saleCustomer) throw new Error('请先选择客户');
+  await refreshSaleCustomerMonthlyRule(state.saleCustomer.id, state.saleCustomer.name).catch((err) => console.warn("月结客户校验失败", err));
   if (!state.saleLines.length) await addSaleLine();
   const warehouseId = Number($('saleWarehouse').value || 2);
   const createTime = saleCreateTimeText();
@@ -6626,7 +6657,7 @@ window.removeWorkflowImage = (index) => actions.removeWorkflowImage(index);
 window.uploadWorkflowImages = (files) => actions.uploadWorkflowImages(files);
 window.prepareInventoryAction = (title, color, type, productId) => actions.prepareInventoryAction(title, color, type, productId);
 window.selectMoveProduct = (id) => actions.selectMoveProduct(id);
-window.selectSaleCustomer = (id, name) => actions.selectSaleCustomer(id, name);
+window.selectSaleCustomer = (id, name, isMonthly = false) => actions.selectSaleCustomer(id, name, isMonthly);
 window.selectSaleProduct = (id) => actions.selectSaleProduct(id).catch((err) => toast(err.message, true));
 window.updateSaleLine = (index, field, value) => actions.updateSaleLine(index, field, value);
 window.removeSaleLine = (index) => actions.removeSaleLine(index);
