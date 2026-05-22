@@ -392,6 +392,8 @@ class NativeDBClient:
     _system_settings_lock = threading.Lock()
     _sales_delete_columns_ready = False
     _sales_delete_columns_lock = threading.Lock()
+    _party_columns_ready = False
+    _party_columns_lock = threading.Lock()
 
     def __new__(cls) -> "NativeDBClient":
         if cls._instance is None:
@@ -549,6 +551,24 @@ class NativeDBClient:
             except pymysql.Error as e:
                 logger.warning(f"native sales delete column check failed: {e}")
                 raise DBError(f"native sales delete column check failed: {e}") from e
+
+    def _ensure_party_columns(self) -> None:
+        if self.__class__._party_columns_ready:
+            return
+        with self.__class__._party_columns_lock:
+            if self.__class__._party_columns_ready:
+                return
+            try:
+                with self.cursor() as cursor:
+                    cursor.execute("SHOW COLUMNS FROM party LIKE 'is_monthly_customer'")
+                    if not cursor.fetchone():
+                        cursor.execute(
+                            "ALTER TABLE party ADD COLUMN is_monthly_customer TINYINT NOT NULL DEFAULT 0 AFTER settlement_type"
+                        )
+                self.__class__._party_columns_ready = True
+            except pymysql.Error as e:
+                logger.warning(f"native party column check failed: {e}")
+                raise DBError(f"native party column check failed: {e}") from e
 
     def _ensure_print_tables(self) -> None:
         if self.__class__._print_tables_ready:
@@ -1912,6 +1932,7 @@ class NativeDBClient:
     # ---- customers, users, warehouses ----
 
     def customer_list(self, keyword: str = "", limit: int = 100) -> list[dict]:
+        self._ensure_party_columns()
         self._ensure_sales_delete_columns()
         where = ["p.kind='customer'", "p.deleted_at IS NULL"]
         params: list[Any] = []
@@ -1924,7 +1945,7 @@ class NativeDBClient:
             f"""
             SELECT
                 p.id, p.name, p.contact_name, p.phone, p.phone_normalized, p.address,
-                p.wechat_name, p.status, p.created_at, p.updated_at,
+                p.wechat_name, p.status, p.is_monthly_customer, p.created_at, p.updated_at,
                 latest.sales_at AS latest_order_at,
                 latest.receivable_amount AS latest_order_amount,
                 COALESCE(yearly.year_amount, 0) AS year_amount,
@@ -2000,6 +2021,7 @@ class NativeDBClient:
                 "mobile": row.get("phone") or "",
                 "address": row.get("address") or "",
                 "status": row.get("status") or "active",
+                "is_monthly_customer": int(row.get("is_monthly_customer") or 0),
                 "latest_order_at": str(row.get("latest_order_at") or ""),
                 "latest_order_amount": _money(row.get("latest_order_amount")),
                 "year_amount": _money(row.get("year_amount")),
@@ -4146,6 +4168,7 @@ class NativeDBClient:
         return int(rows[0]["id"]) if rows else None
 
     def customer_create(self, name: str, contacts_name: str = "", contacts_tel: str = "") -> dict:
+        self._ensure_party_columns()
         name = str(name or "").strip()
         if not name:
             return {"code": 400, "msg": "客户名称不能为空"}
@@ -4158,13 +4181,29 @@ class NativeDBClient:
             cursor.execute(
                 """
                 INSERT INTO party
-                    (name, kind, contact_name, phone, phone_normalized, source, status, created_at, updated_at)
-                VALUES (%s, 'customer', %s, %s, %s, 'native_api', 'active', %s, %s)
+                    (name, kind, contact_name, phone, phone_normalized, is_monthly_customer, source, status, created_at, updated_at)
+                VALUES (%s, 'customer', %s, %s, %s, 0, 'native_api', 'active', %s, %s)
                 """,
                 (name, contacts_name, contacts_tel, phone_norm or None, now, now),
             )
             party_id = cursor.lastrowid
         return {"code": 0, "data": {"id": party_id}}
+
+    def update_customer_monthly(self, customer_id: int, is_monthly_customer: Any) -> dict:
+        self._ensure_party_columns()
+        customer_id = int(customer_id or 0)
+        value = 1 if str(is_monthly_customer).strip().lower() in {"1", "true", "yes", "on"} else 0
+        affected = self.execute(
+            """
+            UPDATE party
+            SET is_monthly_customer=%s, settlement_type=%s, updated_at=%s
+            WHERE id=%s AND kind='customer' AND deleted_at IS NULL
+            """,
+            (value, "monthly" if value else None, _now(), customer_id),
+        )
+        if not affected:
+            return {"code": 404, "msg": "客户不存在"}
+        return {"code": 0, "data": {"id": customer_id, "is_monthly_customer": value}}
 
     # ---- inventory writes ----
 
@@ -4415,37 +4454,44 @@ class NativeDBClient:
         warehouse_id: int,
         products: list[dict],
         create_time: str = "",
-        pay_status: str = "paid",
-        pay_type: str = "wechat",
+        pay_status: str | None = None,
+        pay_type: str | None = None,
         operator_user_id: Any = None,
     ) -> dict:
         self._ensure_operator_columns()
+        self._ensure_party_columns()
         self._ensure_system_settings_tables()
         operator_user_id = self._operator_user_id(operator_user_id)
         if not products:
             return {"code": 400, "msg": "销售明细不能为空"}
-        clean_pay_status = str(pay_status or "paid").strip()
-        clean_pay_type = str(pay_type or "wechat").strip()
-        allowed_status = {"paid", "unpaid", "monthly", "partial"}
-        allowed_type = {"wechat", "cash", "balance", "monthly", "account", "bank", "alipay", ""}
-        if clean_pay_status not in allowed_status:
-            clean_pay_status = "paid"
-        if clean_pay_type not in allowed_type:
-            clean_pay_type = "wechat"
-        if clean_pay_status == "monthly":
-            clean_pay_type = "monthly"
-        elif clean_pay_status == "unpaid" and clean_pay_type == "wechat":
-            clean_pay_type = ""
         now = _now()
         sales_at = create_time or now
         sales_no = self._ledger_no("SO")
         with self.transaction() as cursor:
             default_out_warehouse_id = self._default_out_warehouse_id(cursor)
             allow_negative_stock = self._allow_negative_stock(cursor)
-            cursor.execute("SELECT id, name FROM party WHERE id=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE", (customer_id,))
+            cursor.execute(
+                "SELECT id, name, is_monthly_customer FROM party WHERE id=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE",
+                (customer_id,),
+            )
             customer = cursor.fetchone()
             if not customer:
                 raise DBError("客户不存在")
+            customer_is_monthly = int(customer.get("is_monthly_customer") or 0) == 1
+            explicit_pay_status = pay_status not in (None, "")
+            explicit_pay_type = pay_type not in (None, "")
+            clean_pay_status = str(pay_status).strip() if explicit_pay_status else ("monthly" if customer_is_monthly else "paid")
+            clean_pay_type = str(pay_type).strip() if explicit_pay_type else ("monthly" if clean_pay_status == "monthly" else "wechat")
+            allowed_status = {"paid", "unpaid", "monthly", "partial"}
+            allowed_type = {"wechat", "cash", "balance", "monthly", "account", "bank", "alipay", ""}
+            if clean_pay_status not in allowed_status:
+                clean_pay_status = "monthly" if customer_is_monthly and not explicit_pay_status else "paid"
+            if clean_pay_type not in allowed_type:
+                clean_pay_type = "monthly" if clean_pay_status == "monthly" else "wechat"
+            if clean_pay_status == "monthly":
+                clean_pay_type = "monthly"
+            elif clean_pay_status == "unpaid" and clean_pay_type == "wechat":
+                clean_pay_type = ""
             cursor.execute(
                 """
                 INSERT INTO sales_order

@@ -3789,6 +3789,7 @@ function renderCustomers(list) {
   target.innerHTML = list.length ? `<div class="customer-card-grid">${list.map((customer) => {
     const customerId = Number(customer.id || customer.customer_id || 0);
     const customerName = customer.name || customer.customer_name || "客户";
+    const isMonthly = Number(customer.is_monthly_customer || 0) === 1;
     return `
     <article class="record-card customer-card" data-open-customer-sales="${customerId}" data-customer-name="${escapeAttr(customerName)}">
       <div class="record-main">
@@ -3796,6 +3797,7 @@ function renderCustomers(list) {
           <h3>${escapeHtml(customerName)}</h3>
           <p>${escapeHtml(customer.phone || customer.mobile || customer.contacts_mobile || "未绑定电话")}</p>
         </div>
+        <span class="tag ${isMonthly ? "green-outline" : ""}">${isMonthly ? "月结客户" : "现结客户"}</span>
       </div>
       <div class="record-metrics customer-metrics">
         ${metricHtml("最近下单", nativeDateText(customer.latest_order_at))}
@@ -3808,6 +3810,7 @@ function renderCustomers(list) {
         <button type="button" data-customer-balance-action="receipt" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">收款</button>
         <button type="button" data-customer-balance-action="recharge" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">充值</button>
         <button type="button" class="primary-action" data-customer-balance-action="settlement" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">结款</button>
+        <button type="button" data-customer-monthly-toggle="${customerId}" data-customer-monthly-value="${isMonthly ? 0 : 1}">${isMonthly ? "取消月结" : "设为月结"}</button>
         <button type="button" data-customer-balance-action="adjust" data-customer-id="${customerId}" data-customer-name="${escapeAttr(customerName)}">调整余额</button>
         <button type="button" data-open-balance-ledger="${customerId}" data-customer-name="${escapeAttr(customerName)}">余额明细</button>
       </div>
@@ -3852,6 +3855,20 @@ function renderUserList(list, roleNames = []) {
       </div>
     </article>`;
   }).join("")}</div>`;
+}
+
+async function updateCustomerMonthly(customerId, value) {
+  if (!customerId) return;
+  await api(`/api/customers/${customerId}`, {
+    method: "POST",
+    body: { is_monthly_customer: value ? 1 : 0 }
+  });
+  state.lastCustomers = state.lastCustomers.map((customer) => {
+    const id = Number(customer.id || customer.customer_id || 0);
+    return id === Number(customerId) ? { ...customer, is_monthly_customer: value ? 1 : 0 } : customer;
+  });
+  renderCustomers(state.lastCustomers);
+  toast(value ? "已设为月结客户" : "已取消月结客户");
 }
 
 function customerSalesFilterHtml(customerId, customerName, active = {}) {
@@ -4267,6 +4284,10 @@ function saleCustomerMobile(customer = {}) {
   return customer.mobile || customer.contacts_mobile || customer.contacts_tel || customer.tel || customer.telephone || customer.phone || "";
 }
 
+function saleCustomerMonthly(customer = {}) {
+  return Number(customer.is_monthly_customer || customer.monthly_customer || 0) === 1;
+}
+
 async function searchSaleCustomers() {
   if (!$("saleCustomer")) throw new Error("开单页面未加载");
   const keyword = $("saleCustomer").value.trim();
@@ -4277,20 +4298,24 @@ async function searchSaleCustomers() {
     const name = saleCustomerName(customer);
     const mobile = saleCustomerMobile(customer);
     const id = saleCustomerId(customer);
-    return `<button class="choice" data-sale-customer-id="${id}" data-sale-customer-name="${escapeAttr(name)}"><strong>${escapeHtml(name)}</strong><div class="muted">${mobile ? escapeHtml(mobile) + " · " : ""}ID ${escapeHtml(id || "")}</div></button>`;
+    const monthly = saleCustomerMonthly(customer);
+    return `<button class="choice" data-sale-customer-id="${id}" data-sale-customer-name="${escapeAttr(name)}" data-sale-customer-monthly="${monthly ? 1 : 0}"><strong>${escapeHtml(name)}</strong><div class="muted">${mobile ? escapeHtml(mobile) + " · " : ""}ID ${escapeHtml(id || "")}${monthly ? " · 月结客户" : ""}</div></button>`;
   }).join("") : '<div class="empty">没有客户结果，可以直接创建新客户。</div>';
   if (list.length === 1) {
     const customer = list[0];
-    selectSaleCustomer(saleCustomerId(customer), saleCustomerName(customer));
+    selectSaleCustomer(saleCustomerId(customer), saleCustomerName(customer), saleCustomerMonthly(customer));
   }
   return list;
 }
 
-function selectSaleCustomer(id, name) {
-  state.saleCustomer = { id, name };
+function selectSaleCustomer(id, name, isMonthly = false) {
+  state.saleCustomer = { id, name, is_monthly_customer: isMonthly ? 1 : 0 };
   if (!$("saleCustomer")) return;
   $("saleCustomer").value = name;
-  $("saleSelectedCustomer").textContent = name;
+  $("saleSelectedCustomer").textContent = isMonthly ? `${name} · 月结客户` : name;
+  if ($("salePaymentStatus")) $("salePaymentStatus").value = isMonthly ? "monthly" : "paid";
+  if ($("salePayType")) $("salePayType").value = "wechat";
+  syncSalePaymentUi();
   $("saleCustomerChoices").innerHTML = "";
   renderSaleLines();
 }
@@ -4359,7 +4384,7 @@ async function createSaleCustomerFromDialog() {
     const customerName = saleCustomerName(customer) || name;
     if (!id) throw new Error("客户已创建，但没有取到客户ID，请搜索客户后再选择");
     closeSaleCustomerCreateDialog();
-    selectSaleCustomer(id, customerName);
+    selectSaleCustomer(id, customerName, saleCustomerMonthly(customer));
     if ($("saleCustomerChoices")) {
       $("saleCustomerChoices").innerHTML = `<div class="empty">${customer.existed ? "客户已存在，已选中。" : "客户创建成功，已选中。"}</div>`;
     }
@@ -6166,7 +6191,11 @@ function bindEvents() {
     const saleCustomerButton = event.target.closest("[data-sale-customer-id]");
     if (saleCustomerButton) {
       event.preventDefault();
-      selectSaleCustomer(Number(saleCustomerButton.dataset.saleCustomerId), saleCustomerButton.dataset.saleCustomerName || "客户");
+      selectSaleCustomer(
+        Number(saleCustomerButton.dataset.saleCustomerId),
+        saleCustomerButton.dataset.saleCustomerName || "客户",
+        Number(saleCustomerButton.dataset.saleCustomerMonthly || 0) === 1
+      );
       return;
     }
     const saleProductButton = event.target.closest("[data-sale-product-id]");
@@ -6205,6 +6234,16 @@ function bindEvents() {
       openCustomerBalanceLedger(
         Number(customerBalanceLedgerButton.dataset.openBalanceLedger),
         customerBalanceLedgerButton.dataset.customerName || "客户"
+      ).catch((err) => toast(err.message, true));
+      return;
+    }
+    const customerMonthlyButton = event.target.closest("[data-customer-monthly-toggle]");
+    if (customerMonthlyButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      updateCustomerMonthly(
+        Number(customerMonthlyButton.dataset.customerMonthlyToggle),
+        Number(customerMonthlyButton.dataset.customerMonthlyValue || 0) === 1
       ).catch((err) => toast(err.message, true));
       return;
     }

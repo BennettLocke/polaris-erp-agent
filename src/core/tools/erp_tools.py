@@ -115,8 +115,8 @@ def sales_add(
     warehouse_id: int,
     products: list[dict],
     create_time: str = "",
-    pay_status: str = "paid",
-    pay_type: str = "wechat",
+    pay_status: str | None = None,
+    pay_type: str | None = None,
 ) -> dict:
     try:
         result = _native_db().create_sales_order(

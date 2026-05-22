@@ -473,6 +473,7 @@ API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/inventory/purchase$"), "调库存"),
     ({"POST"}, re.compile(r"^/api/inventory/stocktaking$"), "盘点"),
     ({"POST"}, re.compile(r"^/api/inventory/transfer$"), "调拨"),
+    ({"POST", "PATCH"}, re.compile(r"^/api/customers/\d+$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customers/\d+/balance$"), "调余额"),
     ({"POST"}, re.compile(r"^/api/product/upload$"), "图片上传"),
     ({"POST"}, re.compile(r"^/api/workflow/images/upload$"), "图片上传"),
@@ -3944,6 +3945,23 @@ def native_customers_api():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+@app.route("/api/customers/<int:customer_id>", methods=["POST", "PATCH"])
+def native_customer_update_api(customer_id: int):
+    """Native customer business flags."""
+    body = request.get_json(silent=True)
+    if body is None:
+        body = request.form.to_dict(flat=True)
+    body = body or {}
+    try:
+        if "is_monthly_customer" in body:
+            result = _native_db().update_customer_monthly(customer_id, body.get("is_monthly_customer"))
+            return jsonify(_safe_json(result)), (400 if result.get("code") not in (None, 0) else 200)
+        return jsonify({"code": 400, "msg": "没有可更新的客户字段"}), 400
+    except Exception as e:
+        logger.error(f"自有库客户更新异常: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
 @app.route("/api/customers/<int:customer_id>/sales", methods=["GET"])
 def native_customer_sales_api(customer_id: int):
     """Native customer bound sales orders."""
@@ -4206,8 +4224,8 @@ def sales_add():
     warehouse_id = body.get("warehouse_id", 2)
     products = body.get("products", [])
     create_time = body.get("create_time") or ""
-    pay_status = body.get("pay_status") or "paid"
-    pay_type = body.get("pay_type") or "wechat"
+    pay_status = body.get("pay_status")
+    pay_type = body.get("pay_type")
 
     if not customer_id or not products:
         return jsonify({"code": 400, "msg": "customer_id and products are required"}), 400
