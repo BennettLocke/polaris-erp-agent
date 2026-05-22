@@ -2095,6 +2095,13 @@ def screen_assets(filename: str):
     return send_from_directory(SCREEN_ASSETS_DIR, filename)
 
 
+@app.route("/api/miniapp-design/assets/<path:filename>", methods=["GET"])
+def miniapp_design_assets(filename: str):
+    """Serve ShopXO-style miniapp designer visual assets."""
+    assets_dir = Path(__file__).resolve().parent / "miniapp_design_assets"
+    return send_from_directory(assets_dir, filename)
+
+
 @app.route("/api/screen/state", methods=["GET", "POST"])
 def screen_state_api():
     """Shared state for the Orange Pi screen and voice loop."""
@@ -3758,21 +3765,12 @@ def product_shelves_api(product_id: int):
 @app.route("/api/customer/list", methods=["GET"])
 def customer_list():
     """
-    客户列表接口
+    Customer list from sjagent_core.
     GET /api/customer/list?keyword=xxx
     """
     keyword = request.args.get("keyword", "")
-
     try:
         return jsonify({"code": 0, "data": _db_customer_list(keyword), "source": "db"})
-    except Exception as e:
-        logger.warning(f"客户数据库查询失败，回退 API: {e}")
-
-    try:
-        from src.core.tools.caller import get_tool_caller
-        caller = get_tool_caller()
-        results = caller.call("customer_query", keyword=keyword)
-        return jsonify({"code": 0, "data": results, "source": "api"})
     except Exception as e:
         logger.error(f"客户列表查询异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -3780,9 +3778,8 @@ def customer_list():
 
 @app.route("/api/customer/create", methods=["POST"])
 def customer_create_api():
-    """Create an ERP customer for the WebUI sales form."""
+    """Create a native customer for the WebUI sales form."""
     from src.core.customer_name import normalize_customer_name
-    from src.core.tools.caller import get_tool_caller
 
     body = request.get_json(silent=True)
     if body is None:
@@ -3818,7 +3815,7 @@ def customer_create_api():
             "customer_id": cid,
             "name": row_name,
             "customer_name": row_name,
-            "company_name": row.get("company_name") or "",
+            "company_name": row.get("company_name") or row_name,
             "contacts_name": row.get("contacts_name") or contacts_name,
             "mobile": row.get("mobile") or row.get("contacts_mobile") or row.get("contacts_tel") or contacts_tel,
             "address": row.get("address") or "",
@@ -3840,48 +3837,30 @@ def customer_create_api():
                 "msg": "客户已存在，已选中",
                 "data": normalize_row(existing, existed=True),
             })
-    except Exception as e:
-        logger.warning(f"创建客户前数据库查重失败，继续走 API: {e}")
 
-    caller = get_tool_caller()
-    try:
-        result = caller.call(
-            "customer_create",
+        result = _native_db().customer_create(
             name=name,
             contacts_name=contacts_name,
             contacts_tel=contacts_tel,
         )
-        if isinstance(result, dict) and result.get("error"):
-            return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
         if isinstance(result, dict) and result.get("code") not in (None, 0):
-            return jsonify({"code": 500, "msg": result.get("msg", "创建客户失败"), "data": result}), 500
+            return jsonify(result), 400
 
-        created = None
-        try:
-            created = exact_customer(_db_customer_list(name, limit=20))
-        except Exception as e:
-            logger.warning(f"创建客户后数据库回查失败，回退 API: {e}")
-        if not created:
-            rows = caller.call("customer_query", keyword=name) or []
-            created = exact_customer(rows) or (rows[0] if len(rows) == 1 else None)
-
-        if created:
-            return jsonify({"code": 0, "msg": "客户创建成功", "data": normalize_row(created)})
+        created_row = exact_customer(_db_customer_list(name, limit=20))
+        if created_row:
+            return jsonify({"code": 0, "msg": "客户创建成功", "data": normalize_row(created_row)})
 
         data = result.get("data") if isinstance(result, dict) else {}
-        fallback_id = ""
-        if isinstance(data, dict):
-            fallback_id = data.get("id") or data.get("customer_id") or data.get("company_id") or ""
-        elif isinstance(data, (str, int)):
-            fallback_id = data
+        customer_id = data.get("id") if isinstance(data, dict) else ""
         return jsonify({
             "code": 0,
             "msg": "客户创建成功",
             "data": {
-                "id": fallback_id,
-                "customer_id": fallback_id,
+                "id": customer_id,
+                "customer_id": customer_id,
                 "name": name,
                 "customer_name": name,
+                "company_name": name,
                 "contacts_name": contacts_name,
                 "mobile": contacts_tel,
                 "existed": False,
@@ -3894,16 +3873,9 @@ def customer_create_api():
 
 @app.route("/api/warehouse/list", methods=["GET"])
 def warehouse_list():
-    """
-    仓库列表接口
-    GET /api/warehouse/list
-    """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
-
+    """Warehouse list from sjagent_core."""
     try:
-        results = caller.call("warehouse_list")
-        return jsonify({"code": 0, "data": results})
+        return jsonify({"code": 0, "data": _native_db().warehouse_list()})
     except Exception as e:
         logger.error(f"仓库列表查询异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500

@@ -890,6 +890,7 @@ class BusinessCoreMigrator:
         for row in sales_rows:
             sales_id = int(row["id"])
             customer_id = int(row.get("customer_id") or 0) or 2
+            customer_name = customer_names.get(customer_id, f"客户{customer_id}")
             total_price = as_decimal(row.get("total_price"))
             pay_price = as_decimal(row.get("pay_price"))
             note = "\n".join(
@@ -903,15 +904,26 @@ class BusinessCoreMigrator:
             ) or None
             sales_at = as_dt(row.get("add_time"))
             updated_at = as_dt(row.get("upd_time") or row.get("add_time"))
+            status = self.sales_status(row)
+            pay_type = self.pay_type(row.get("pay_type")) or "wechat"
+            pay_status = self.pay_status(row.get("pay_status"), pay_price, total_price)
+            if status != "canceled":
+                if self.is_qiwei_may_monthly(customer_name, sales_at):
+                    pay_type = "monthly"
+                    pay_status = "monthly"
+                else:
+                    if pay_type == "monthly":
+                        pay_type = "wechat"
+                    pay_status = "paid"
             sales_params.append(
                 (
                     sales_id,
                     clean_text(row.get("sales_no"), 80) or f"XS-MIG-{sales_id}",
                     customer_id,
-                    customer_names.get(customer_id, f"客户{customer_id}"),
-                    self.sales_status(row),
-                    self.pay_type(row.get("pay_type")),
-                    self.pay_status(row.get("pay_status"), pay_price, total_price),
+                    customer_name,
+                    status,
+                    pay_type,
+                    pay_status,
                     as_decimal(row.get("buy_number_count")),
                     total_price,
                     Decimal("0"),
@@ -1056,6 +1068,11 @@ class BusinessCoreMigrator:
         if code == 1:
             return "paid"
         return "unpaid"
+
+    def is_qiwei_may_monthly(self, customer_name: str, sales_at: datetime | None) -> bool:
+        if not sales_at:
+            return False
+        return customer_name in {"齐唯茶业", "齐唯茶叶"} and sales_at.year == 2026 and sales_at.month == 5
 
     def import_workflow_orders(self, source_cursor, target_cursor):
         rows = []
