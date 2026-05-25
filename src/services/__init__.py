@@ -1,1 +1,1 @@
-"""Background services for sjagent."""
+"""Background and business services for sjagent."""

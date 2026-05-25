@@ -4,22 +4,32 @@ HTTP API 渠道（预留 WebUI 和外部调用）
 """
 import json
 import hmac
-import hashlib
 import os
 import re
-import secrets
-import threading
 import uuid
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 from flask import Flask, request, jsonify, Response, send_from_directory, session, redirect
 from werkzeug.utils import secure_filename
-from werkzeug.security import generate_password_hash, check_password_hash
 from src.core.agent import Agent
 from src.engine.exceptions import DBError
 from src.core.features import feature_enabled
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
+from src.services.business.customers import build_customer_statement_pdf
+from src.services.business import (
+    get_auth_service,
+    get_customer_balance_service,
+    get_customer_service,
+    get_dashboard_service,
+    get_inventory_service,
+    get_miniapp_service,
+    get_product_service,
+    get_sales_service,
+    get_settings_service,
+    get_user_service,
+    get_workflow_service,
+)
 from src.utils import get_logger
 
 logger = get_logger("sjagent.http_api")
@@ -32,45 +42,10 @@ app.config.update(
 )
 _agent: Agent | None = None
 UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "data" / "uploads"
+ADMIN_DIST_DIR = Path(__file__).resolve().parent / "admin_dist"
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
 ALLOWED_BAG_ARCHIVE_EXTENSIONS = {"zip"}
-ROLE_CODE_TO_LABEL = {
-    "admin": "管理员",
-    "staff": "员工",
-    "customer": "客户",
-    "guest": "访客",
-}
-ROLE_LABEL_TO_CODE = {
-    "管理员": "admin",
-    "老板": "admin",
-    "员工": "staff",
-    "客户": "customer",
-    "访客": "guest",
-}
-PERMISSION_CATALOG = {"开单", "删单", "打印", "查看库存", "调库存", "盘点", "调拨", "调余额", "图片上传", "图片绑定", "设置", "查看"}
-FIXED_ROLE_PERMISSIONS = {
-    "admin": set(PERMISSION_CATALOG),
-    "staff": {"开单", "打印", "查看库存", "图片上传", "图片绑定", "查看"},
-    "customer": {"查看"},
-    "guest": set(),
-}
-
-
-def _role_code(value) -> str:
-    role = str(value or "").strip()
-    if not role:
-        return "guest"
-    role = ROLE_LABEL_TO_CODE.get(role, role)
-    legacy_staff_roles = {"warehouse", "designer"}
-    if role in legacy_staff_roles:
-        return "staff"
-    if role == "readonly":
-        return "guest"
-    return role if role in ROLE_CODE_TO_LABEL else "guest"
-
-
-def _role_label(value) -> str:
-    return ROLE_CODE_TO_LABEL.get(_role_code(value), "访客")
+MINIAPP_EXCLUDED_CATEGORY_NAMES = ("纯色泡袋", "品种茶泡袋", "2泡礼盒")
 
 
 def _api_exception_response(e: Exception):
@@ -82,305 +57,121 @@ def _api_exception_response(e: Exception):
     return jsonify({"code": 500, "msg": str(e)}), 500
 
 
-def _web_auth_db():
-    from src.engine.native_db import get_native_db_client
-    return get_native_db_client()
-
-
-_NATIVE_AUTH_READY = False
-_NATIVE_AUTH_LOCK = threading.Lock()
-NATIVE_AUTH_CACHE: dict[str, tuple[float, dict]] = {}
-NATIVE_AUTH_CACHE_TTL = 60
+def _json_service_result(result: dict, default_status: int = 200):
+    payload = dict(result or {})
+    status = int(payload.pop("_http_status", default_status) or default_status)
+    return jsonify(payload), status
 
 
 def _native_phone_digits(value) -> str:
-    return re.sub(r"\D+", "", str(value or ""))
+    from src.services.business.auth import phone_digits
+    return phone_digits(value)
 
 
 def _token_hash(token: str) -> str:
-    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+    from src.services.business.auth import token_hash
+    return token_hash(token)
 
 
 def _ensure_native_auth_tables():
-    global _NATIVE_AUTH_READY
-    if _NATIVE_AUTH_READY:
-        return
-    with _NATIVE_AUTH_LOCK:
-        if _NATIVE_AUTH_READY:
-            return
-        db = _web_auth_db()
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS auth_session (
-                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                user_id BIGINT UNSIGNED NOT NULL,
-                token_hash CHAR(64) NOT NULL,
-                client_type VARCHAR(30) NULL,
-                ip VARCHAR(80) NULL,
-                user_agent VARCHAR(500) NULL,
-                expires_at DATETIME NOT NULL,
-                revoked_at DATETIME NULL,
-                created_at DATETIME NOT NULL,
-                PRIMARY KEY (id),
-                UNIQUE KEY uk_auth_session_token_hash (token_hash),
-                KEY idx_auth_session_user (user_id),
-                KEY idx_auth_session_expires (expires_at),
-                KEY idx_auth_session_revoked (revoked_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """
-        )
-        _NATIVE_AUTH_READY = True
+    get_auth_service().ensure_session_table()
 
 
 def _native_user_public(row: dict | None, token: str = "") -> dict:
-    if not isinstance(row, dict):
-        row = {}
-    role = _role_code(row.get("role"))
-    is_admin = int(row.get("is_admin") or 0) == 1 or role == "admin"
-    user_id = row.get("id") or row.get("user_id") or ""
-    display_name = (
-        row.get("display_name")
-        or row.get("nickname")
-        or row.get("username")
-        or row.get("phone")
-        or (f"用户{user_id}" if user_id else "北极星用户")
-    )
-    return {
-        "id": user_id,
-        "user_id": user_id,
-        "token": token,
-        "display_name": display_name,
-        "nickname": row.get("nickname") or display_name,
-        "username": row.get("username") or "",
-        "mobile": row.get("phone") or "",
-        "phone": row.get("phone") or "",
-        "email": row.get("email") or "",
-        "avatar": row.get("avatar") or "",
-        "role": role,
-        "role_text": _role_label(role),
-        "linked_party_id": row.get("linked_party_id"),
-        "linked_party_name": row.get("linked_party_name") or "",
-        "approval_status": row.get("approval_status") or "",
-        "is_active": int(row.get("is_active") or 0),
-        "is_admin": is_admin,
-        "miniapp_allowed": is_admin or role == "staff",
-        "source": "native",
-        "raw": row,
-    }
+    return get_auth_service().user_public(row, token=token)
 
 
 def _native_user_by_id(user_id: int) -> dict | None:
-    rows = _web_auth_db().query(
-        """
-        SELECT u.*, p.name AS linked_party_name
-        FROM auth_user u
-        LEFT JOIN party p ON p.id = u.linked_party_id
-        WHERE u.id=%s
-        LIMIT 1
-        """,
-        (int(user_id),),
-    )
-    return rows[0] if rows else None
+    return get_auth_service().user_by_id(user_id)
 
 
 def _native_user_by_account(account: str) -> dict | None:
-    account = str(account or "").strip()
-    if not account:
-        return None
-    phone = _native_phone_digits(account)
-    rows = _web_auth_db().query(
-        """
-        SELECT u.*, p.name AS linked_party_name
-        FROM auth_user u
-        LEFT JOIN party p ON p.id = u.linked_party_id
-        WHERE u.username=%s
-           OR u.phone=%s
-           OR EXISTS (
-                SELECT 1
-                FROM auth_identity ai
-                WHERE ai.user_id=u.id
-                  AND ai.is_enabled=1
-                  AND ai.external_user_id IN (%s, %s)
-           )
-        ORDER BY u.is_admin DESC, u.id ASC
-        LIMIT 1
-        """,
-        (account, phone or account, account, phone or account),
-    )
-    return rows[0] if rows else None
+    return get_auth_service().user_by_account(account)
 
 
 def _native_user_by_identity(provider: str, external_id: str) -> dict | None:
-    rows = _web_auth_db().query(
-        """
-        SELECT u.*, p.name AS linked_party_name
-        FROM auth_identity ai
-        JOIN auth_user u ON u.id = ai.user_id
-        LEFT JOIN party p ON p.id = u.linked_party_id
-        WHERE ai.provider=%s
-          AND ai.external_user_id=%s
-          AND ai.is_enabled=1
-        LIMIT 1
-        """,
-        (provider, external_id),
-    )
-    return rows[0] if rows else None
+    return get_auth_service().user_by_identity(provider, external_id)
 
 
 def _find_party_id_by_phone(phone: str) -> int | None:
-    digits = _native_phone_digits(phone)
-    if not digits:
-        return None
-    rows = _web_auth_db().query(
-        """
-        SELECT id
-        FROM party
-        WHERE phone_normalized=%s OR phone=%s
-        ORDER BY id ASC
-        LIMIT 1
-        """,
-        (digits, phone),
-    )
-    return int(rows[0]["id"]) if rows else None
+    return get_auth_service().find_party_id_by_phone(phone)
 
 
 def _issue_native_session(user_id: int, client_type: str = "miniapp") -> str:
-    _ensure_native_auth_tables()
-    token = "sj_" + secrets.token_urlsafe(32)
-    now = datetime.now()
-    expires_at = now + timedelta(days=30)
-    db = _web_auth_db()
-    db.execute(
-        """
-        INSERT INTO auth_session
-            (user_id, token_hash, client_type, ip, user_agent, expires_at, created_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
-        """,
-        (
-            int(user_id),
-            _token_hash(token),
-            client_type[:30],
-            (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:80],
-            (request.headers.get("User-Agent") or "")[:500],
-            expires_at.strftime("%Y-%m-%d %H:%M:%S"),
-            now.strftime("%Y-%m-%d %H:%M:%S"),
-        ),
+    return get_auth_service().issue_session(
+        user_id,
+        client_type=client_type,
+        ip=request.headers.get("X-Forwarded-For") or request.remote_addr or "",
+        user_agent=request.headers.get("User-Agent") or "",
     )
-    db.execute("DELETE FROM auth_session WHERE expires_at < NOW() OR revoked_at IS NOT NULL")
-    return token
 
 
 def _verify_native_token(token: str, force: bool = False) -> dict | None:
-    if not token:
-        return None
-    now = time.time()
-    cached = NATIVE_AUTH_CACHE.get(token)
-    if cached and not force and cached[0] > now:
-        return cached[1]
-    _ensure_native_auth_tables()
-    rows = _web_auth_db().query(
-        """
-        SELECT u.*, p.name AS linked_party_name
-        FROM auth_session s
-        JOIN auth_user u ON u.id = s.user_id
-        LEFT JOIN party p ON p.id = u.linked_party_id
-        WHERE s.token_hash=%s
-          AND s.revoked_at IS NULL
-          AND s.expires_at > NOW()
-        LIMIT 1
-        """,
-        (_token_hash(token),),
-    )
-    if not rows:
-        NATIVE_AUTH_CACHE.pop(token, None)
-        return None
-    row = rows[0]
-    if int(row.get("is_active") or 0) != 1 or str(row.get("approval_status") or "") != "approved":
-        NATIVE_AUTH_CACHE.pop(token, None)
-        return None
-    user = _native_user_public(row, token=token)
-    NATIVE_AUTH_CACHE[token] = (now + NATIVE_AUTH_CACHE_TTL, user)
-    return user
+    return get_auth_service().verify_token(token, force=force)
 
 
 def _native_user_can_access_miniapp(user: dict | None) -> bool:
-    return bool(isinstance(user, dict) and user.get("miniapp_allowed") is True)
+    return get_auth_service().user_can_access_miniapp(user)
+
+
+def _optional_native_user_from_request() -> dict | None:
+    token = _auth_token_from_request()
+    if not token:
+        return None
+    try:
+        return _verify_native_token(token)
+    except Exception as e:
+        logger.warning(f"自有用户 token 可选校验异常: {e}")
+        return None
+
+
+def _mini_request_user() -> dict | None:
+    native_user = getattr(request, "native_user", None)
+    if isinstance(native_user, dict) and native_user.get("id"):
+        return native_user
+    return _optional_native_user_from_request()
+
+
+def _mini_order_user_can_edit(user: dict | None) -> bool:
+    if not isinstance(user, dict):
+        return False
+    try:
+        if int(user.get("is_admin") or 0) == 1:
+            return True
+    except Exception:
+        if user.get("is_admin") is True:
+            return True
+    role = str(user.get("role") or user.get("role_code") or "").strip().lower()
+    return role in {"admin", "staff", "employee", "warehouse", "designer"}
+
+
+def _mini_orderflow_should_query(keyword: str, user: dict | None) -> bool:
+    return bool(str(keyword or "").strip()) or _mini_order_user_can_edit(user)
+
+
+def _mini_orderflow_empty_payload(page: int = 1, page_size: int = 20) -> dict:
+    return {
+        "page": int(page or 1),
+        "page_size": int(page_size or 20),
+        "workflows": [],
+        "workflow_total": 0,
+        "sales": [],
+        "sales_total": 0,
+        "total": 0,
+        "source": "sjagent_core",
+    }
+
+
+def _mini_order_edit_denied_response():
+    return jsonify({"code": 403, "msg": "只有员工或管理员可以编辑订单"}), 403
 
 
 def _wechat_session_from_code(authcode: str, appid: str) -> dict:
-    secret = os.environ.get("WECHAT_MINIAPP_SECRET") or os.environ.get("WX_MINIAPP_SECRET") or ""
-    if not appid or not secret:
-        return {"code": 400, "msg": "未配置微信小程序 appid/secret，不能用 code 换 openid"}
-    import requests
-
-    resp = requests.get(
-        "https://api.weixin.qq.com/sns/jscode2session",
-        params={
-            "appid": appid,
-            "secret": secret,
-            "js_code": authcode,
-            "grant_type": "authorization_code",
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if not isinstance(data, dict):
-        return {"code": 500, "msg": "微信登录返回格式异常"}
-    if data.get("errcode"):
-        return {"code": 401, "msg": data.get("errmsg") or "微信登录失败", "raw": data}
-    return {"code": 0, "data": data}
+    return get_auth_service().wechat_session_from_code(authcode, appid)
 
 
 def _upsert_wechat_user(openid: str, unionid: str = "", profile: dict | None = None) -> dict:
-    openid = str(openid or "").strip()
-    unionid = str(unionid or "").strip()
-    profile = profile if isinstance(profile, dict) else {}
-    if not openid:
-        raise ValueError("缺少微信 openid")
-    existing = _native_user_by_identity("wechat", openid)
-    if existing:
-        return existing
-
-    display_name = (
-        profile.get("nickName")
-        or profile.get("nickname")
-        or profile.get("display_name")
-        or "微信用户"
-    )
-    username = f"wechat:{hashlib.sha1(openid.encode('utf-8')).hexdigest()[:24]}"
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with _web_auth_db().transaction() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO auth_user
-                (username, password_hash, display_name, phone, role, linked_party_id,
-                 approval_status, is_active, is_admin, created_at, updated_at)
-            VALUES (%s,NULL,%s,NULL,'customer',NULL,'pending',1,0,%s,%s)
-            ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), updated_at=VALUES(updated_at)
-            """,
-            (username, str(display_name)[:80], now, now),
-        )
-        cursor.execute("SELECT id FROM auth_user WHERE username=%s LIMIT 1", (username,))
-        row = cursor.fetchone()
-        user_id = int(row["id"])
-        cursor.execute(
-            """
-            INSERT INTO auth_identity
-                (user_id, provider, external_user_id, openid, unionid, raw_profile, is_enabled, created_at, updated_at)
-            VALUES (%s,'wechat',%s,%s,%s,%s,1,%s,%s)
-            ON DUPLICATE KEY UPDATE
-                user_id=VALUES(user_id),
-                openid=VALUES(openid),
-                unionid=VALUES(unionid),
-                raw_profile=VALUES(raw_profile),
-                is_enabled=1,
-                updated_at=VALUES(updated_at)
-            """,
-            (user_id, openid, openid, unionid or None, json.dumps(profile, ensure_ascii=False), now, now),
-        )
-    native = _native_user_by_id(user_id)
-    return native or {"id": user_id, "username": username, "display_name": display_name, "role": "customer", "approval_status": "pending", "is_active": 1, "is_admin": 0}
+    return get_auth_service().upsert_wechat_user(openid, unionid=unionid, profile=profile)
 
 
 def _web_auth_user_by_username(username: str) -> dict | None:
@@ -397,46 +188,26 @@ def _current_web_user() -> dict | None:
         session.pop("web_user_id", None)
         session.pop("native_user_id", None)
         return None
-    user = _web_auth_user_by_id(int(user_id))
-    if not user or int(user.get("is_active") or 0) != 1 or str(user.get("approval_status") or "") != "approved":
+    user = get_auth_service().current_web_user(user_id)
+    if not user:
         session.pop("auth_user_id", None)
         session.pop("web_user_id", None)
         session.pop("native_user_id", None)
         return None
-    user["native_user_id"] = int(user.get("id") or 0) or None
     session["native_user_id"] = user["native_user_id"]
     return user
 
 
 def _current_web_user_is_admin() -> bool:
-    user = _current_web_user()
-    return bool(user and int(user.get("is_admin") or 0) == 1)
+    return get_auth_service().is_admin(_current_web_user())
 
 
 def _web_auth_user_payload(user: dict | None) -> dict:
-    if not isinstance(user, dict):
-        user = {}
-    user_id = int(user.get("id") or user.get("user_id") or 0)
-    return {
-        "id": user_id,
-        "native_user_id": user_id,
-        "username": user.get("username") or "",
-        "display_name": user.get("display_name") or user.get("username") or "",
-        "role": _role_code(user.get("role")),
-        "role_text": _role_label(user.get("role")),
-        "approval_status": user.get("approval_status") or "",
-        "is_admin": int(user.get("is_admin") or 0),
-        "is_active": int(user.get("is_active") or 0),
-        "last_login_at": str(user.get("last_login_at") or ""),
-    }
+    return get_auth_service().web_user_payload(user)
 
 
 def _web_user_can_access_webui(user: dict | None) -> bool:
-    if not isinstance(user, dict):
-        return False
-    if int(user.get("is_admin") or 0) == 1:
-        return True
-    return _role_code(user.get("role")) in {"admin", "staff"}
+    return get_auth_service().web_user_can_access_webui(user)
 
 
 def _request_user_for_permission() -> dict | None:
@@ -448,12 +219,7 @@ def _request_user_for_permission() -> dict | None:
 
 def _has_permission(permission: str, user: dict | None = None) -> bool:
     user = user if isinstance(user, dict) else _request_user_for_permission()
-    if not isinstance(user, dict):
-        return False
-    role = _role_code(user.get("role"))
-    if int(user.get("is_admin") or 0) == 1:
-        role = "admin"
-    return permission in FIXED_ROLE_PERMISSIONS.get(role, set())
+    return get_auth_service().has_permission(permission, user)
 
 
 def _permission_denied(permission: str):
@@ -498,6 +264,22 @@ def _auth_token_from_request() -> str:
     return request.headers.get("X-SJ-Token", "") or request.headers.get("X-SJAgent-Token", "") or request.args.get("token", "")
 
 
+def _miniapp_path_is_public(path: str) -> bool:
+    public_mini_paths = {
+        "/api/miniapp/config",
+        "/api/mini/home",
+        "/api/mini/goods/category",
+        "/api/mini/goods/detail",
+        "/api/mini/search/index",
+        "/api/mini/search/datalist",
+        "/api/mini/orderflow/list",
+        "/api/mini/workflow-order/search",
+        "/api/mini/disabled",
+        "/api/mini/cart/empty",
+    }
+    return path in public_mini_paths
+
+
 @app.before_request
 def _miniapp_auth_guard():
     if request.method == "OPTIONS":
@@ -507,15 +289,7 @@ def _miniapp_auth_guard():
         return None
     if path.startswith("/api/auth/"):
         return None
-    public_mini_paths = {
-        "/api/mini/home",
-        "/api/mini/goods/category",
-        "/api/mini/search/index",
-        "/api/mini/search/datalist",
-        "/api/mini/disabled",
-        "/api/mini/cart/empty",
-    }
-    if path in public_mini_paths:
+    if _miniapp_path_is_public(path):
         return None
     if request.headers.get("X-SJ-Client") != "miniapp":
         return None
@@ -553,6 +327,7 @@ def _webui_auth_guard():
         or path.startswith("/api/auth/")
         or path.startswith("/api/screen/")
         or path.startswith("/api/miniapp-design/assets/")
+        or path == "/api/miniapp/config"
         or path.startswith("/api/mini/")
         or path.startswith("/api/print-agent/")
     ):
@@ -871,17 +646,7 @@ def _print_agent_required_response():
 
 
 def _print_job_row(task_id: int) -> dict | None:
-    rows = _native_db().query(
-        """
-        SELECT j.*, s.sales_no, s.customer_name_snapshot
-        FROM print_job j
-        LEFT JOIN sales_order s ON s.id=j.document_id
-        WHERE j.id=%s AND j.document_type='sales_order'
-        LIMIT 1
-        """,
-        (int(task_id),),
-    )
-    return rows[0] if rows else None
+    return get_sales_service().print_task_row(task_id)
 
 
 def _like_keyword(keyword: str) -> str:
@@ -926,11 +691,29 @@ def _product_status_text(status) -> str:
     }.get(int(status or 0), "正常")
 
 
-def _db_sales_cards(keyword: str, page: int, page_size: int, status: int | None = None) -> tuple[list[dict], int]:
-    return _native_db().sales_cards(keyword=keyword, page=page, page_size=page_size, status=status)
+def _db_sales_cards(
+    keyword: str,
+    page: int,
+    page_size: int,
+    status: int | None = None,
+    status_filter: str = "active",
+    pay_status: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> tuple[list[dict], int]:
+    return get_sales_service().cards(
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+        status=status,
+        status_filter=status_filter,
+        pay_status=pay_status,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
 def _db_workflow_orders(keyword: str, page: int, page_size: int, status_filter: str = "active") -> tuple[list[dict], int]:
-    return _native_db().workflow_orders(keyword=keyword, page=page, page_size=page_size, status_filter=status_filter)
+    return get_workflow_service().list_orders(keyword=keyword, page=page, page_size=page_size, status_filter=status_filter)
 
 def _db_product_list(
     keyword: str,
@@ -940,8 +723,11 @@ def _db_product_list(
     category_id: int | None = None,
     group: bool = False,
     category_ids: list[int] | None = None,
+    product_type: str = "",
+    listed_only: bool = False,
+    sort: str = "",
 ) -> tuple[list[dict], int]:
-    return _native_db().product_list(
+    return get_product_service().list(
         keyword=keyword,
         page=page,
         page_size=page_size,
@@ -949,13 +735,20 @@ def _db_product_list(
         category_id=category_id,
         group=group,
         category_ids=category_ids,
+        product_type=product_type,
+        listed_only=listed_only,
+        sort=sort,
     )
 
-def _db_product_categories() -> list[dict]:
-    return _native_db().product_categories()
+def _db_product_categories(
+    *,
+    listed_only: bool = False,
+    exclude_names: list[str] | tuple[str, ...] | None = None,
+) -> list[dict]:
+    return get_product_service().categories(listed_only=listed_only, exclude_names=exclude_names)
 
 def _db_customer_list(keyword: str, limit: int = 50) -> list[dict]:
-    return _native_db().customer_list(keyword, limit=limit)
+    return get_customer_service().list(keyword, limit=limit)
 
 def _sales_detail_data(result: dict) -> dict:
     """Extract the most useful sales detail object from SalesDetail."""
@@ -1918,58 +1711,22 @@ def web_auth_register():
     username = (body.get("username") or body.get("account") or "").strip()
     password = body.get("password") or ""
     display_name = (body.get("display_name") or body.get("displayName") or username).strip()
-    if not re.fullmatch(r"[A-Za-z0-9_@.\-]{3,80}", username or ""):
-        return jsonify({"code": 400, "msg": "账号需为 3-80 位，可用字母、数字、下划线、邮箱符号"}), 400
-    if len(password) < 6:
-        return jsonify({"code": 400, "msg": "密码至少 6 位"}), 400
     try:
-        if _web_auth_user_by_username(username):
-            return jsonify({"code": 409, "msg": "账号已存在，请直接登录"}), 409
-        admin_rows = _web_auth_db().query(
-            """
-            SELECT COUNT(*) AS total
-            FROM auth_user
-            WHERE is_admin=1 OR role IN ('admin','staff')
-            """
+        result = get_auth_service().register_web_user(
+            username=username,
+            password=password,
+            display_name=display_name,
         )
-        is_first_user = not admin_rows or int(admin_rows[0].get("total") or 0) == 0
-        approval_status = "approved" if is_first_user else "pending"
-        is_active = 1 if is_first_user else 0
-        is_admin = 1 if is_first_user else 0
-        role = "admin" if is_first_user else "staff"
-        phone = _native_phone_digits(username)
-        linked_party_id = _find_party_id_by_phone(phone) if phone else None
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        affected = _web_auth_db().execute(
-            """
-            INSERT INTO auth_user
-                (username, password_hash, display_name, phone, role, linked_party_id,
-                 approval_status, is_active, is_admin, last_login_at, created_at, updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                username,
-                generate_password_hash(password),
-                display_name[:80],
-                phone or None,
-                role,
-                linked_party_id,
-                approval_status,
-                is_active,
-                is_admin,
-                now if is_first_user else None,
-                now,
-                now,
-            ),
-        )
-        if affected != 1:
-            return jsonify({"code": 500, "msg": "注册失败，请稍后重试"}), 500
-        user = _web_auth_user_by_username(username)
-        if is_first_user:
-            session["auth_user_id"] = int(user["id"])
-            session["native_user_id"] = int(user["id"])
+        data = result.get("data") if isinstance(result, dict) else {}
+        session_user_id = data.get("session_user_id") if isinstance(data, dict) else None
+        if session_user_id:
+            session["auth_user_id"] = int(session_user_id)
+            session["native_user_id"] = int(session_user_id)
             session.permanent = True
-        return jsonify({"code": 0, "data": {"user": _web_auth_user_payload(user), "pending": not is_first_user}})
+        if isinstance(data, dict):
+            data.pop("session_user_id", None)
+            data.pop("auto_login", None)
+        return _json_service_result(result)
     except Exception as e:
         logger.error(f"WebUI 注册异常: {e}")
         return jsonify({"code": 500, "msg": f"注册异常: {e}"}), 500
@@ -1980,25 +1737,16 @@ def web_auth_login():
     body = request.get_json(silent=True) or request.form.to_dict() or {}
     username = (body.get("username") or body.get("account") or "").strip()
     password = body.get("password") or ""
-    if not username or not password:
-        return jsonify({"code": 400, "msg": "请输入账号和密码"}), 400
     try:
-        user = _web_auth_user_by_username(username)
-        if not user or not check_password_hash(user.get("password_hash") or "", password):
-            return jsonify({"code": 401, "msg": "账号或密码不正确"}), 401
-        if str(user.get("approval_status") or "") != "approved" or int(user.get("is_active") or 0) != 1:
-            return jsonify({"code": 403, "msg": "账号还在审批中，请联系管理员通过后再登录"}), 403
-        if not _web_user_can_access_webui(user):
-            return jsonify({"code": 403, "msg": "当前账号没有后台访问权限"}), 403
-        _web_auth_db().execute(
-            "UPDATE auth_user SET last_login_at=NOW(), updated_at=NOW() WHERE id=%s",
-            (int(user["id"]),),
-        )
-        user = _web_auth_user_by_id(int(user["id"])) or user
-        session["auth_user_id"] = int(user["id"])
-        session["native_user_id"] = int(user["id"])
-        session.permanent = True
-        return jsonify({"code": 0, "data": {"user": _web_auth_user_payload(user)}})
+        result = get_auth_service().login_web_user(username=username, password=password)
+        data = result.get("data") if isinstance(result, dict) else {}
+        session_user_id = data.get("session_user_id") if isinstance(data, dict) else None
+        if session_user_id:
+            session["auth_user_id"] = int(session_user_id)
+            session["native_user_id"] = int(session_user_id)
+            session.permanent = True
+            data.pop("session_user_id", None)
+        return _json_service_result(result)
     except Exception as e:
         logger.error(f"WebUI 登录异常: {e}")
         return jsonify({"code": 500, "msg": f"登录异常: {e}"}), 500
@@ -2026,22 +1774,8 @@ def web_auth_me():
 def web_auth_users():
     if not _current_web_user_is_admin():
         return jsonify({"code": 403, "msg": "只有管理员可以审批账号"}), 403
-    status = (request.args.get("status") or "pending").strip()
-    allowed = {"pending", "approved", "rejected", "all"}
-    if status not in allowed:
-        status = "pending"
-    sql = """
-        SELECT id, username, display_name, role, approval_status, is_admin, is_active, created_at, last_login_at
-        FROM auth_user
-        WHERE (is_admin=1 OR role IN ('admin','staff'))
-    """
-    params: list = []
-    if status != "all":
-        sql += " AND approval_status=%s"
-        params.append(status)
-    sql += " ORDER BY id DESC LIMIT 100"
-    rows = _web_auth_db().query(sql, params)
-    return jsonify({"code": 0, "data": {"items": rows}})
+    result = get_auth_service().web_users(status=request.args.get("status") or "pending")
+    return jsonify(result)
 
 
 @app.route("/api/web-auth/users/<int:user_id>/approve", methods=["POST"])
@@ -2049,15 +1783,7 @@ def web_auth_user_approve(user_id: int):
     admin = _current_web_user()
     if not admin or int(admin.get("is_admin") or 0) != 1:
         return jsonify({"code": 403, "msg": "只有管理员可以审批账号"}), 403
-    affected = _web_auth_db().execute(
-        """
-        UPDATE auth_user
-        SET approval_status='approved', is_active=1, updated_at=NOW()
-        WHERE id=%s
-        """,
-        (int(user_id),),
-    )
-    return jsonify({"code": 0, "data": {"affected": affected}})
+    return jsonify(get_auth_service().approve_user(user_id))
 
 
 @app.route("/api/web-auth/users/<int:user_id>/reject", methods=["POST"])
@@ -2065,17 +1791,8 @@ def web_auth_user_reject(user_id: int):
     admin = _current_web_user()
     if not admin or int(admin.get("is_admin") or 0) != 1:
         return jsonify({"code": 403, "msg": "只有管理员可以审批账号"}), 403
-    if int(admin["id"]) == int(user_id):
-        return jsonify({"code": 400, "msg": "不能拒绝自己的账号"}), 400
-    affected = _web_auth_db().execute(
-        """
-        UPDATE auth_user
-        SET approval_status='rejected', is_active=0, updated_at=NOW()
-        WHERE id=%s
-        """,
-        (int(user_id),),
-    )
-    return jsonify({"code": 0, "data": {"affected": affected}})
+    result = get_auth_service().reject_user(user_id, admin_user_id=int(admin["id"]))
+    return _json_service_result(result)
 
 
 @app.route("/web", methods=["GET"])
@@ -2086,6 +1803,21 @@ def webui():
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    return response
+
+
+@app.route("/admin", methods=["GET"])
+@app.route("/admin/", methods=["GET"])
+@app.route("/admin/<path:subpath>", methods=["GET"])
+def admin_app(subpath: str = ""):
+    """React admin shell. The legacy /web entry remains unchanged."""
+    if subpath.startswith("assets/"):
+        return send_from_directory(ADMIN_DIST_DIR / "assets", subpath.removeprefix("assets/"))
+    index_file = ADMIN_DIST_DIR / "index.html"
+    if not index_file.exists():
+        return Response("React 后台还没有构建，请先在 admin 目录执行 npm.cmd run build。", status=503, mimetype="text/plain")
+    response = send_from_directory(ADMIN_DIST_DIR, "index.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
 
@@ -2137,25 +1869,16 @@ def screen_state_api():
 
 
 def _screen_dashboard_payload() -> dict:
-    db = _native_db()
     now = time.time()
-    summary = db.dashboard_summary()
+    summary = get_dashboard_service().summary()
     sales_cards, _sales_total = _db_sales_cards("", 1, 4, None)
     workflow_cards, _workflow_total = _db_workflow_orders("", 1, 6, "active")
-    inventory_rows = db.search_inventory(keyword="", only_in_stock=True, limit=900)
+    inventory_rows = get_inventory_service().search(keyword="", only_in_stock=True, limit=900)
     inventory_cards = _inventory_cards(inventory_rows if isinstance(inventory_rows, list) else [], 12)
     low_inventory = [card for card in inventory_cards if int(card.get("total_stock") or 0) <= 30][:4]
     if not low_inventory:
         low_inventory = inventory_cards[-4:]
-
-    delivery_rows = db.query(
-        """
-        SELECT COUNT(*) AS count
-        FROM workflow_order
-        WHERE deleted_at IS NULL AND COALESCE(is_delivered, 0) <> 1
-        """
-    )
-    delivery = delivery_rows[0] if delivery_rows else {}
+    pending_delivery_count = get_dashboard_service().pending_delivery_count()
 
     recent = []
     for card in workflow_cards[:3]:
@@ -2201,7 +1924,7 @@ def _screen_dashboard_payload() -> dict:
         "inventory": inventory_items,
         "inventory_total": len(inventory_cards),
         "orders": order_items,
-        "pending_delivery_count": int(delivery.get("count") or 0),
+        "pending_delivery_count": pending_delivery_count,
         "updated_at": int(now),
     }
 
@@ -2532,31 +2255,18 @@ def recent_orders():
     Recent sales and workflow orders for the WebUI side panel.
     GET /api/orders/recent?limit=6
     """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
     limit = request.args.get("limit", 6, type=int)
     limit = max(1, min(limit, 20))
 
-    sales = []
-    workflows = []
     try:
-        sales_result = caller.call("sales_list", page=1, page_size=limit)
-        sales = _enrich_sales_rows(caller, _extract_list_rows(sales_result)[:limit])
+        data = get_dashboard_service().recent_orders(limit=limit)
     except Exception as e:
-        logger.warning(f"最近销售单查询失败: {e}")
-
-    try:
-        workflow_result = caller.call("workflow_order_list", page=1, page_size=limit)
-        workflows = _extract_list_rows(workflow_result)[:limit]
-    except Exception as e:
-        logger.warning(f"最近工作流订单查询失败: {e}")
+        logger.warning(f"最近业务记录查询失败: {e}")
+        data = {"sales": [], "workflows": []}
 
     return jsonify({
         "code": 0,
-        "data": {
-            "sales": sales,
-            "workflows": workflows,
-        }
+        "data": data,
     })
 
 
@@ -2564,7 +2274,7 @@ def recent_orders():
 def dashboard_summary():
     """Live dashboard numbers for the WebUI workbench."""
     try:
-        return jsonify({"code": 0, "data": _native_db().dashboard_summary()})
+        return jsonify({"code": 0, "data": get_dashboard_service().summary()})
     except Exception as e:
         logger.warning(f"?????????: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -2581,12 +2291,29 @@ def sales_cards():
     page_size = request.args.get("page_size", 10, type=int)
     keyword = _normalize_inventory_keyword((request.args.get("keyword", "") or "").strip())
     status_arg = request.args.get("status", "")
+    pay_status = (request.args.get("pay_status", "") or "").strip()
+    date_from = (request.args.get("date_from", "") or "").strip()
+    date_to = (request.args.get("date_to", "") or "").strip()
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
-    status = int(status_arg) if status_arg not in ("", None) else None
+    status_filter = "active"
+    status = None
+    if status_arg in ("active", "deleted"):
+        status_filter = status_arg
+    elif status_arg not in ("", None):
+        status = int(status_arg)
 
     try:
-        cards, total = _db_sales_cards(keyword, page, page_size, status)
+        cards, total = _db_sales_cards(
+            keyword,
+            page,
+            page_size,
+            status,
+            status_filter=status_filter,
+            pay_status=pay_status,
+            date_from=date_from,
+            date_to=date_to,
+        )
         return jsonify({
             "code": 0,
             "data": {
@@ -2642,7 +2369,7 @@ def sales_cards():
 def sales_print_settings_api():
     """Sales-order print settings stored in sjagent_core."""
     try:
-        return jsonify(_native_db().sales_print_settings())
+        return jsonify(get_settings_service().sales_print_settings())
     except Exception as e:
         logger.error(f"sales print settings failed: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -2652,7 +2379,7 @@ def sales_print_settings_api():
 def sku_number_settings_api():
     """Product SKU number settings stored in sjagent_core."""
     try:
-        return jsonify(_native_db().sku_number_settings())
+        return jsonify(get_settings_service().sku_number_settings())
     except Exception as e:
         logger.error(f"sku number settings failed: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -2665,7 +2392,7 @@ def sku_number_settings_save_api():
         payload = request.get_json(silent=True) or {}
         user = _current_web_user() or {}
         operator_user_id = user.get("native_user_id") or user.get("id")
-        result = _native_db().save_sku_number_settings(payload, operator_user_id=operator_user_id)
+        result = get_settings_service().save_sku_number_settings(payload, operator_user_id=operator_user_id)
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400
         return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
@@ -2680,11 +2407,11 @@ def system_setting_api(setting_key: str):
     clean_key = str(setting_key or "").strip()
     try:
         if request.method == "GET":
-            return jsonify(_native_db().system_setting(clean_key))
+            return jsonify(get_settings_service().get(clean_key))
         payload = request.get_json(silent=True) or {}
         user = _current_web_user() or {}
         operator_user_id = user.get("native_user_id") or user.get("id")
-        result = _native_db().save_system_setting(clean_key, payload, operator_user_id=operator_user_id)
+        result = get_settings_service().save(clean_key, payload, operator_user_id=operator_user_id)
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400
         return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
@@ -2698,7 +2425,7 @@ def sales_print_settings_save_api():
     """Update the default sales-order print template."""
     try:
         payload = request.get_json(silent=True) or {}
-        result = _native_db().save_sales_print_settings(payload)
+        result = get_settings_service().save_sales_print_settings(payload)
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400
         return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
@@ -2714,9 +2441,12 @@ def sales_print_task_api(sales_id: int):
         return jsonify({"code": 400, "msg": "sales_id is required"}), 400
     try:
         payload = request.get_json(silent=True) or {}
-        result = _native_db().create_sales_print_task(
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_sales_service().create_print_task(
             sales_id=sales_id,
             template_id=payload.get("template_id"),
+            operator_user_id=operator_user_id,
         )
         if isinstance(result, dict):
             if result.get("error"):
@@ -2740,7 +2470,7 @@ def print_agent_sales_task_list_api():
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
         page_size = max(1, min(int(request.args.get("page_size", 50) or 50), 200))
-        result = _native_db().sales_print_task_list(page=page, page_size=page_size)
+        result = get_sales_service().print_task_list(page=page, page_size=page_size)
         data = result.get("data") if isinstance(result, dict) else {}
         rows = data.get("list") if isinstance(data, dict) else []
         for row in rows or []:
@@ -2790,7 +2520,7 @@ def print_agent_sales_task_html_api(task_id: int):
         return Response("打印任务不存在", status=404, mimetype="text/plain")
     try:
         auto_print = request.args.get("auto", "0") in ("1", "true", "True")
-        html = _native_db().sales_print_html(int(row.get("document_id")), auto_print=auto_print)
+        html = get_sales_service().sales_print_html(int(row.get("document_id")), auto_print=auto_print)
         return Response(html, mimetype="text/html")
     except Exception as e:
         logger.error(f"print agent sales task html failed: task_id={task_id}, error={e}")
@@ -2808,7 +2538,7 @@ def print_agent_sales_task_done_api(task_id: int | None = None):
     if not resolved_id:
         return jsonify({"code": 400, "msg": "task_id is required"}), 400
     try:
-        result = _native_db().sales_print_task_done(int(resolved_id))
+        result = get_sales_service().print_task_done(int(resolved_id))
         status_code = 404 if isinstance(result, dict) and result.get("code") == 404 else 200
         return jsonify(result), status_code
     except Exception as e:
@@ -2827,15 +2557,12 @@ def print_agent_sales_task_fail_api(task_id: int):
     if not row:
         return jsonify({"code": 404, "msg": "打印任务不存在"}), 404
     try:
-        _native_db().execute(
-            "UPDATE print_job SET status='failed', updated_at=NOW() WHERE id=%s",
-            (int(task_id),),
+        result = get_sales_service().print_task_failed(
+            int(task_id),
+            sales_id=int(row.get("document_id") or 0),
+            reason=reason,
         )
-        _native_db().execute(
-            "UPDATE sales_order SET print_status='failed', note=CONCAT(COALESCE(note, ''), %s), updated_at=NOW() WHERE id=%s",
-            (f"\n打印失败：{reason}", int(row.get("document_id") or 0)),
-        )
-        return jsonify({"code": 0, "data": {"id": int(task_id), "status": "failed"}})
+        return jsonify(result)
     except Exception as e:
         logger.error(f"print agent sales task fail failed: task_id={task_id}, error={e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -2848,7 +2575,7 @@ def sales_print_html_api(sales_id: int):
         return Response("sales_id is required", status=400, mimetype="text/plain")
     try:
         auto_print = request.args.get("auto", "1") not in ("0", "false", "False")
-        html = _native_db().sales_print_html(sales_id, auto_print=auto_print)
+        html = get_sales_service().sales_print_html(sales_id, auto_print=auto_print)
         return Response(html, mimetype="text/html")
     except Exception as e:
         logger.error(f"sales print html failed: sales_id={sales_id}, error={e}")
@@ -2861,7 +2588,7 @@ def sales_detail_api(sales_id: int):
     if sales_id <= 0:
         return jsonify({"code": 400, "msg": "sales_id is required"}), 400
     try:
-        result = _native_db().sales_detail(sales_id)
+        result = get_sales_service().detail(sales_id)
         status_code = 404 if isinstance(result, dict) and result.get("code") == 404 else 200
         return jsonify(result), status_code
     except Exception as e:
@@ -2875,7 +2602,9 @@ def sales_delete_api(sales_id: int):
     if sales_id <= 0:
         return jsonify({"code": 400, "msg": "sales_id is required"}), 400
     try:
-        result = _native_db().delete_sales_order(sales_id)
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_sales_service().delete_order(sales_id, operator_user_id=operator_user_id)
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400 if int(result.get("code") or 0) == 400 else 500
         return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
@@ -2898,7 +2627,7 @@ def inventory_cards():
         product_rows = []
         if not only_in_stock:
             try:
-                product_rows, _ = _native_db().product_list(
+                product_rows, _ = get_product_service().list(
                     keyword=keyword,
                     page=1,
                     page_size=max(limit * 30, 1200),
@@ -2906,7 +2635,7 @@ def inventory_cards():
                 )
             except Exception as product_error:
                 logger.warning(f"native product rows for zero-stock inventory failed: {product_error}")
-        rows = _native_db().search_inventory(
+        rows = get_inventory_service().search(
             keyword=keyword,
             only_in_stock=only_in_stock,
             limit=max(limit * 30, 1200),
@@ -2981,8 +2710,6 @@ def product_color_options():
 @app.route("/api/inventory/transfer", methods=["POST"])
 def inventory_transfer_api():
     """Transfer inventory between warehouses for the UniApp inventory page."""
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
     body = request.get_json() or {}
     product_id = body.get("product_id")
     quantity = body.get("quantity")
@@ -3000,8 +2727,9 @@ def inventory_transfer_api():
     if out_warehouse_id == enter_warehouse_id:
         return jsonify({"code": 400, "msg": "调出仓库和调入仓库不能相同"}), 400
     try:
-        result = caller.call(
-            "inventory_transfer",
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_inventory_service().create_transfer(
             out_warehouse_id=out_warehouse_id,
             enter_warehouse_id=enter_warehouse_id,
             products=[{
@@ -3010,6 +2738,7 @@ def inventory_transfer_api():
                 "transfer_number": quantity,
             }],
             note=(body.get("note") or f"小程序调货{f'（{color}）' if color else ''}").strip(),
+            operator_user_id=operator_user_id,
         )
         if isinstance(result, dict) and result.get("error"):
             return jsonify({"code": 500, "msg": result.get("error")}), 500
@@ -3022,8 +2751,6 @@ def inventory_transfer_api():
 @app.route("/api/inventory/purchase", methods=["POST"])
 def inventory_purchase_api():
     """Create an inventory inbound record for the UniApp inventory page."""
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
     body = request.get_json() or {}
     product_id = body.get("product_id")
     quantity = body.get("quantity")
@@ -3038,8 +2765,9 @@ def inventory_purchase_api():
     if quantity <= 0:
         return jsonify({"code": 400, "msg": "quantity must be greater than 0"}), 400
     try:
-        result = caller.call(
-            "other_enter_add",
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_inventory_service().create_stock_in(
             warehouse_id=warehouse_id,
             products=[{
                 "product_id": int(product_id),
@@ -3047,6 +2775,7 @@ def inventory_purchase_api():
                 "buy_number": quantity,
             }],
             note=(body.get("note") or f"小程序进货{f'（{color}）' if color else ''}").strip(),
+            operator_user_id=operator_user_id,
         )
         if isinstance(result, dict) and result.get("error"):
             return jsonify({"code": 500, "msg": result.get("error")}), 500
@@ -3059,8 +2788,6 @@ def inventory_purchase_api():
 @app.route("/api/inventory/stocktaking", methods=["POST"])
 def inventory_stocktaking_api():
     """Set target inventory for one product in one warehouse."""
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
     body = request.get_json() or {}
     product_id = body.get("product_id")
     quantity = body.get("quantity")
@@ -3075,8 +2802,9 @@ def inventory_stocktaking_api():
     if quantity < 0:
         return jsonify({"code": 400, "msg": "quantity must be greater than or equal to 0"}), 400
     try:
-        result = caller.call(
-            "inventory_sync",
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_inventory_service().create_stocktake(
             warehouse_id=warehouse_id,
             products=[{
                 "product_id": int(product_id),
@@ -3084,6 +2812,7 @@ def inventory_stocktaking_api():
                 "number": quantity,
             }],
             note=(body.get("note") or f"WebUI盘点{f'（{color}）' if color else ''}").strip(),
+            operator_user_id=operator_user_id,
         )
         if isinstance(result, dict) and result.get("error"):
             return jsonify({"code": 500, "msg": result.get("error")}), 500
@@ -3157,8 +2886,7 @@ def workflow_orders():
             order_images = []
         order_images = [str(url).strip() for url in order_images if str(url or "").strip()]
 
-        result = caller.call(
-            "workflow_order_save",
+        result = get_workflow_service().save_order(
             order_id=body.get("id"),
             customer_name=customer_name,
             customer_phone=(body.get("customer_phone") or "").strip(),
@@ -3172,19 +2900,6 @@ def workflow_orders():
         )
         if isinstance(result, dict) and result.get("code", 0) != 0:
             return jsonify({"code": result.get("code", 500), "msg": result.get("msg", "保存失败")}), 400
-        if order_images_provided:
-            saved_id = body.get("id")
-            if not saved_id and isinstance(result, dict):
-                data = result.get("data") if isinstance(result.get("data"), dict) else {}
-                saved_id = data.get("id") or data.get("order_id")
-            if saved_id:
-                try:
-                    _native_db().execute(
-                        "UPDATE workflow_order SET order_image_urls = %s, updated_at = NOW() WHERE id = %s",
-                        (json.dumps(order_images, ensure_ascii=False), int(saved_id)),
-                    )
-                except Exception as db_error:
-                    logger.warning(f"宸ヤ綔娴佽鍗曞浘鐗囨暟鎹簱鍚屾澶辫触: {db_error}")
         return jsonify({"code": 0, "data": result.get("data", result) if isinstance(result, dict) else result})
     except Exception as e:
         logger.error(f"工作流订单保存失败: {e}")
@@ -3194,15 +2909,13 @@ def workflow_orders():
 @app.route("/api/workflow/orders/<int:order_id>/status", methods=["POST"])
 def workflow_order_status(order_id: int):
     """Update workflow order status fields."""
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
     body = request.get_json() or {}
     field = body.get("field")
     value = body.get("value")
     if field not in ("is_made", "is_delivered", "order_type"):
         return jsonify({"code": 400, "msg": "field is invalid"}), 400
     try:
-        result = caller.call("workflow_order_status_update", order_id=order_id, field=field, value=int(value or 0))
+        result = get_workflow_service().update_status(order_id=order_id, field=field, value=int(value or 0))
         if isinstance(result, dict) and result.get("code", 0) != 0:
             return jsonify({"code": result.get("code", 500), "msg": result.get("msg", "操作失败")}), 400
         return jsonify({"code": 0, "data": result.get("data", result) if isinstance(result, dict) else result})
@@ -3214,10 +2927,8 @@ def workflow_order_status(order_id: int):
 @app.route("/api/workflow/orders/<int:order_id>", methods=["DELETE"])
 def workflow_order_delete_api(order_id: int):
     """Delete one workflow order."""
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
     try:
-        result = caller.call("workflow_order_delete", ids=str(order_id))
+        result = get_workflow_service().delete_orders(str(order_id))
         if isinstance(result, dict) and result.get("code", 0) != 0:
             return jsonify({"code": result.get("code", 500), "msg": result.get("msg", "删除失败")}), 400
         return jsonify({"code": 0, "data": result.get("data", result) if isinstance(result, dict) else result})
@@ -3234,25 +2945,22 @@ def inventory_query():
     GET /api/inventory/query?keyword=喜悦
     GET /api/inventory/query?warehouse_id=2
     """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
-
     product_id = request.args.get("product_id")
     keyword = _normalize_inventory_keyword(request.args.get("keyword") or "")
     warehouse_id = request.args.get("warehouse_id")
 
     try:
         if product_id:
-            results = caller.call("inventory_query_by_id", product_id=int(product_id))
+            results = get_inventory_service().product_inventory(int(product_id))
         elif keyword:
             # 先搜索商品，再查库存
-            products = caller.call("product_search", keyword=keyword)
+            products = get_product_service().search(keyword)
             results = []
             for p in products[:5]:
-                inv = caller.call("inventory_query_by_id", product_id=p["id"])
+                inv = get_inventory_service().product_inventory(int(p["id"]))
                 results.extend(inv)
         elif warehouse_id:
-            results = caller.call("inventory_query_by_warehouse", warehouse_id=int(warehouse_id))
+            results = get_inventory_service().warehouse_inventory(int(warehouse_id))
         else:
             return jsonify({"code": 400, "msg": "product_id/keyword/warehouse_id 至少传一个"}), 400
 
@@ -3273,7 +2981,7 @@ def product_search():
         return jsonify({"code": 400, "msg": "keyword is required"}), 400
 
     try:
-        results = _native_db().product_search(keyword, limit=100)
+        results = get_product_service().search(keyword, limit=100)
         return jsonify({"code": 0, "data": results[:100], "source": "db"})
     except Exception as e:
         logger.error(f"商品自有库搜索异常: {e}")
@@ -3293,10 +3001,20 @@ def product_list():
         for item in (request.args.get("category_ids") or "").split(",")
         if item.strip().isdigit()
     ]
+    product_type = str(request.args.get("product_type") or "").strip()
     group = request.args.get("group", default=1, type=int) == 1
 
     try:
-        items, total = _db_product_list(keyword, max(1, page), page_size, status, category_id, group, category_ids=category_ids)
+        items, total = _db_product_list(
+            keyword,
+            max(1, page),
+            page_size,
+            status,
+            category_id,
+            group,
+            category_ids=category_ids,
+            product_type=product_type,
+        )
         return jsonify({
             "code": 0,
             "data": {
@@ -3317,7 +3035,7 @@ def product_categories():
     """商品分类。"""
     try:
         categories = _db_product_categories()
-        _, total = _native_db().product_list(page=1, page_size=1, group=True)
+        _, total = get_product_service().list(page=1, page_size=1, group=True)
         return jsonify({
             "code": 0,
             "data": {
@@ -3332,10 +3050,7 @@ def product_categories():
 
 
 def _mini_home_design_payload() -> dict:
-    result = _native_db().system_setting("miniapp_design")
-    data = result.get("data") if isinstance(result, dict) else {}
-    value = data.get("value") if isinstance(data, dict) else {}
-    return value if isinstance(value, dict) else {}
+    return get_miniapp_service().design_payload()
 
 
 def _mini_home_first_items(modules: list[dict], module_type: str) -> list[dict]:
@@ -3350,25 +3065,18 @@ def _mini_home_first_items(modules: list[dict], module_type: str) -> list[dict]:
 
 
 def _mini_home_products_for_shelf(module: dict) -> list[dict]:
-    try:
-        limit = min(max(int(module.get("limit") or 8), 1), 30)
-    except Exception:
-        limit = 8
-    category_id = module.get("category_id")
-    try:
-        clean_category_id = int(category_id) if str(category_id or "").strip() else None
-    except Exception:
-        clean_category_id = None
-    keyword = str(module.get("keywords") or "").strip()
-    items, _total = _db_product_list(
-        keyword,
-        1,
-        limit,
-        status=0,
-        category_id=clean_category_id,
-        group=True,
-    )
+    items = get_miniapp_service().product_shelf_items(module)
     return [_mini_product_payload(item, list_item=True) for item in items]
+
+
+@app.route("/api/miniapp/config", methods=["GET", "POST"])
+def miniapp_config_api():
+    """Database-backed mini-program visual/link configuration."""
+    try:
+        return jsonify({"code": 0, "data": get_miniapp_service().config_payload()})
+    except Exception as e:
+        logger.error(f"小程序配置数据异常: {e}")
+        return _api_exception_response(e)
 
 
 @app.route("/api/mini/home", methods=["GET", "POST"])
@@ -3390,7 +3098,7 @@ def mini_home_api():
                     first_products = prepared["products"]
             prepared_modules.append(prepared)
         if not first_products:
-            items, _total = _db_product_list("", 1, 8, status=0, group=True)
+            items, _total = _db_product_list("", 1, 8, status=0, group=True, listed_only=True)
             first_products = [_mini_product_payload(item, list_item=True) for item in items]
         design["home"] = {**home, "modules": prepared_modules}
         tabbar = design.get("tabbar") if isinstance(design.get("tabbar"), dict) else {}
@@ -3431,40 +3139,7 @@ def mini_user_center_api():
         except Exception as e:
             logger.warning(f"mini user center token verify failed: {e}")
 
-    workflow_total = 0
-    sales_total = 0
-    try:
-        _rows, workflow_total = _db_workflow_orders("", 1, 1, "active")
-    except Exception as e:
-        logger.warning(f"mini user center workflow count failed: {e}")
-    try:
-        _rows, sales_total = _db_sales_cards("", 1, 1, None)
-    except Exception as e:
-        logger.warning(f"mini user center sales count failed: {e}")
-
-    order_total = int(workflow_total or 0) + int(sales_total or 0)
-    return jsonify({
-        "code": 0,
-        "data": {
-            "user": user,
-            "message_total": 0,
-            "cart_total": {"buy_number": 0},
-            "user_order_count": order_total,
-            "user_goods_favor_count": 0,
-            "user_goods_browse_count": 0,
-            "integral": 0,
-            "user_order_status": [
-                {"status": 0, "name": "全部订单", "count": order_total},
-                {"status": 1, "name": "订单流", "count": int(workflow_total or 0)},
-                {"status": 2, "name": "销售单", "count": int(sales_total or 0)},
-            ],
-            "navigation": [
-                {"name": "订单", "event_value": "/pages/order/order", "event_type": 1, "desc": "查看订单流和销售单"},
-                {"name": "商品分类", "event_value": "/pages/goods-category/goods-category", "event_type": 1, "desc": "查看产品资料"},
-            ],
-            "source": "sjagent_core",
-        },
-    })
+    return jsonify({"code": 0, "data": get_miniapp_service().user_center_payload(user=user)})
 
 
 @app.route("/api/mini/cart/empty", methods=["GET", "POST"])
@@ -3502,7 +3177,10 @@ def mini_disabled_api():
 def mini_goods_category_api():
     """ShopXO uni-app compatible category data backed by sjagent_core."""
     try:
-        categories = _db_product_categories()
+        categories = _db_product_categories(
+            listed_only=True,
+            exclude_names=MINIAPP_EXCLUDED_CATEGORY_NAMES,
+        )
         return jsonify({
             "code": 0,
             "data": {
@@ -3520,7 +3198,10 @@ def mini_goods_category_api():
 def mini_search_index_api():
     """ShopXO uni-app compatible search metadata backed by sjagent_core."""
     try:
-        categories = _mini_category_tree(_db_product_categories())
+        categories = _mini_category_tree(_db_product_categories(
+            listed_only=True,
+            exclude_names=MINIAPP_EXCLUDED_CATEGORY_NAMES,
+        ))
         return jsonify({
             "code": 0,
             "data": {
@@ -3551,9 +3232,19 @@ def mini_search_datalist_api():
     )
     page, page_size = _mini_page_payload(payload)
     category_id = _mini_category_id(payload)
+    sort = str(_mini_value(payload, "sort", "order_by", default="")).strip()
 
     try:
-        items, total = _db_product_list(keyword, page, page_size, status=0, category_id=category_id, group=True)
+        items, total = _db_product_list(
+            keyword,
+            page,
+            page_size,
+            status=0,
+            category_id=category_id,
+            group=True,
+            listed_only=True,
+            sort=sort,
+        )
         return jsonify({"code": 0, "data": _mini_product_page_data(items, total, page, page_size)})
     except Exception as e:
         logger.error(f"小程序商品列表查询异常: {e}")
@@ -3569,9 +3260,9 @@ def mini_goods_detail_api():
         return jsonify({"code": 400, "msg": "id is required"}), 400
 
     try:
-        product = _native_db().product_info(product_id)
+        product = get_product_service().info(product_id, listed_only=True)
         if not product:
-            return jsonify({"code": 404, "msg": "商品不存在"}), 404
+            return jsonify({"code": 404, "msg": "商品已下架或不存在"}), 404
         goods = _mini_product_payload(product, list_item=False)
         return jsonify({
             "code": 0,
@@ -3610,6 +3301,10 @@ def mini_orderflow_list_api():
     payload = _mini_request_payload()
     keyword = str(_mini_value(payload, "keyword", "wd", "q", default="")).strip()
     page, page_size = _mini_page_payload(payload)
+    user = _mini_request_user()
+
+    if not _mini_orderflow_should_query(keyword, user):
+        return jsonify({"code": 0, "data": _mini_orderflow_empty_payload(page, page_size)})
 
     workflows = []
     workflow_total = 0
@@ -3692,7 +3387,7 @@ def _mini_inventory_qty_text(value: float) -> int | str:
 
 
 def _mini_workflow_inventory_payload(keyword: str = "") -> dict:
-    rows = _native_db().search_inventory(keyword=keyword, only_in_stock=False, limit=3000)
+    rows = get_inventory_service().search(keyword=keyword, only_in_stock=False, limit=3000)
     grouped: dict[str, dict] = {}
     for row in (rows if isinstance(rows, list) else []):
         code = str(row.get("sku_no") or row.get("code") or row.get("product_code") or "").strip()
@@ -3747,6 +3442,8 @@ def mini_workflow_customer_list_api():
 
 @app.route("/api/mini/workflow-order/employee-list", methods=["GET", "POST"])
 def mini_workflow_employee_list_api():
+    if not _mini_order_user_can_edit(_mini_request_user()):
+        return _mini_order_edit_denied_response()
     payload = _mini_request_payload()
     page, page_size = _mini_page_payload(payload)
     cards, _total = _mini_workflow_order_list("", page, max(page_size, 100), "active")
@@ -3757,6 +3454,9 @@ def mini_workflow_employee_list_api():
 def mini_workflow_search_api():
     payload = _mini_request_payload()
     keyword = str(_mini_value(payload, "keyword", "q", "wd", default="")).strip()
+    user = _mini_request_user()
+    if not _mini_orderflow_should_query(keyword, user):
+        return jsonify({"code": 0, "data": []})
     cards, _total = _mini_workflow_order_list(keyword, 1, 100, "active")
     return jsonify({"code": 0, "data": cards})
 
@@ -3774,12 +3474,14 @@ def mini_workflow_inventory_search_api():
 
 @app.route("/api/mini/workflow-order/save", methods=["POST"])
 def mini_workflow_save_api():
+    if not _mini_order_user_can_edit(_mini_request_user()):
+        return _mini_order_edit_denied_response()
     payload = _mini_request_payload()
     customer_name = str(_mini_value(payload, "customer_name", default="")).strip()
     if not customer_name:
         return jsonify({"code": 400, "msg": "请输入客户名字"}), 400
     try:
-        result = _native_db().save_workflow_order(
+        result = get_workflow_service().save_order(
             order_id=_mini_int(_mini_value(payload, "id", "order_id", default=0), 0) or None,
             customer_name=customer_name,
             customer_phone=str(_mini_value(payload, "customer_phone", "phone", default="")).strip(),
@@ -3801,6 +3503,8 @@ def mini_workflow_save_api():
 
 @app.route("/api/mini/workflow-order/status-update", methods=["POST"])
 def mini_workflow_status_update_api():
+    if not _mini_order_user_can_edit(_mini_request_user()):
+        return _mini_order_edit_denied_response()
     payload = _mini_request_payload()
     order_id = _mini_int(_mini_value(payload, "id", "order_id", default=0), 0)
     field = str(_mini_value(payload, "field", default="")).strip()
@@ -3810,7 +3514,7 @@ def mini_workflow_status_update_api():
     if field not in {"is_made", "is_delivered", "order_type"}:
         return jsonify({"code": 400, "msg": "字段不允许更新"}), 400
     try:
-        result = _native_db().update_workflow_status(order_id, field, value)
+        result = get_workflow_service().update_status(order_id=order_id, field=field, value=value)
         if isinstance(result, dict) and result.get("code", 0) != 0:
             return jsonify({"code": result.get("code", 500), "msg": result.get("msg", "操作失败")}), 400
         return jsonify({"code": 0, "data": result.get("data", result) if isinstance(result, dict) else result})
@@ -3824,7 +3528,7 @@ def product_options():
     """商品编辑基础数据。"""
     try:
         product_id = request.args.get("id", type=int)
-        return jsonify({"code": 0, "data": _safe_json(_native_db().product_options(product_id))})
+        return jsonify({"code": 0, "data": _safe_json(get_product_service().options(product_id))})
     except Exception as e:
         logger.error(f"商品基础数据异常: {e}")
         return _api_exception_response(e)
@@ -3834,7 +3538,7 @@ def product_options():
 def product_detail_api(product_id: int):
     """商品详情。"""
     try:
-        product = _native_db().product_info(product_id)
+        product = get_product_service().info(product_id)
         if not product:
             return jsonify({"code": 404, "msg": "商品不存在"}), 404
         return jsonify({"code": 0, "data": _safe_json(product)})
@@ -3850,7 +3554,7 @@ def product_save_api():
         body = request.get_json(silent=True)
         if body is None:
             body = request.form.to_dict(flat=True)
-        result = _native_db().save_product(body or {})
+        result = get_product_service().save(body or {})
         return jsonify(result)
     except Exception as e:
         logger.error(f"商品保存异常: {e}")
@@ -3867,7 +3571,7 @@ def product_delete_api():
         ids = (body or {}).get("ids")
         if not ids:
             return jsonify({"code": 400, "msg": "缺少商品ID"}), 400
-        result = _native_db().delete_product(ids)
+        result = get_product_service().delete(ids)
         return jsonify(result)
     except Exception as e:
         logger.error(f"商品删除异常: {e}")
@@ -3904,7 +3608,7 @@ def product_upload_api():
         url = result.get("url") or result.get("full_url") or result.get("images") or result.get("path") or ""
         if url:
             try:
-                _native_db().record_product_upload(str(url), storage="oss")
+                get_product_service().record_upload(str(url), storage="oss")
             except Exception as asset_error:
                 logger.warning(f"商品图片待绑定资产记录失败: {asset_error}")
         _delete_local_upload(save_path, "商品图片")
@@ -3919,22 +3623,34 @@ def product_media_api():
     """商品图片资产。"""
     try:
         product_id = request.args.get("product_id", type=int)
+        page = max(1, request.args.get("page", 1, type=int) or 1)
+        page_size_arg = request.args.get("page_size", type=int)
+        has_page_size = page_size_arg is not None
+        page_size = max(1, min(page_size_arg or 80, 200))
         limit = max(1, min(request.args.get("limit", 500, type=int), 6000))
+        fetch_limit = 6000 if has_page_size else limit
         media_type = (request.args.get("media_type") or "").strip()
         if product_id:
-            product = _native_db().product_info(product_id)
+            product = get_product_service().info(product_id)
             if not product:
                 return jsonify({"code": 404, "msg": "商品不存在"}), 404
-            rows = _native_db().product_media_assets(
+            rows = get_product_service().media_assets(
                 spu_id=int(product.get("spu_id") or 0),
                 sku_ids=[int(product.get("id") or product_id)],
                 media_type=media_type,
                 include_pending=True,
-                limit=limit,
+                limit=fetch_limit,
             )
         else:
-            rows = _native_db().product_media_assets(media_type=media_type, include_pending=True, limit=limit)
-        return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": len(rows), "source": "native"}})
+            rows = get_product_service().media_assets(media_type=media_type, include_pending=True, limit=fetch_limit)
+        total = len(rows)
+        if has_page_size:
+            start = (page - 1) * page_size
+            rows = rows[start:start + page_size]
+        data = {"list": _safe_json(rows), "total": total, "source": "native"}
+        if has_page_size:
+            data.update({"page": page, "page_size": page_size})
+        return jsonify({"code": 0, "data": data})
     except Exception as e:
         logger.error(f"商品图片资产查询异常: {e}")
         return _api_exception_response(e)
@@ -3944,7 +3660,7 @@ def product_media_api():
 def product_media_delete_api(media_id: int):
     """Disable a product image asset."""
     try:
-        return jsonify(_native_db().delete_product_media(media_id))
+        return jsonify(get_product_service().delete_media(media_id))
     except Exception as e:
         logger.error(f"商品图片资产删除异常: {e}")
         return _api_exception_response(e)
@@ -3956,7 +3672,7 @@ def product_shelves_api(product_id: int):
     try:
         body = request.get_json(silent=True) or request.form.to_dict(flat=True) or {}
         state = int(body.get("state", 0))
-        result = _native_db().update_product_shelves(product_id, state)
+        result = get_product_service().update_shelves(product_id, state)
         return jsonify(result)
     except Exception as e:
         logger.error(f"商品上下架异常: {e}")
@@ -4039,7 +3755,7 @@ def customer_create_api():
                 "data": normalize_row(existing, existed=True),
             })
 
-        result = _native_db().customer_create(
+        result = get_customer_service().create(
             name=name,
             contacts_name=contacts_name,
             contacts_tel=contacts_tel,
@@ -4076,7 +3792,7 @@ def customer_create_api():
 def warehouse_list():
     """Warehouse list from sjagent_core."""
     try:
-        return jsonify({"code": 0, "data": _native_db().warehouse_list()})
+        return jsonify({"code": 0, "data": get_inventory_service().warehouse_list()})
     except Exception as e:
         logger.error(f"仓库列表查询异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -4088,9 +3804,6 @@ def customer_price():
     客户历史成交价查询
     GET /api/customer/price?customer_id=1&product_id=123
     """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
-
     customer_id = request.args.get("customer_id", type=int)
     product_id = request.args.get("product_id", type=int)
 
@@ -4098,7 +3811,7 @@ def customer_price():
         return jsonify({"code": 400, "msg": "customer_id and product_id are required"}), 400
 
     try:
-        price = caller.call("sales_history_price", customer_id=customer_id, product_id=product_id)
+        price = get_sales_service().history_price(customer_id, product_id)
         return jsonify({"code": 0, "data": {"price": price}})
     except Exception as e:
         logger.error(f"客户价格查询异常: {e}")
@@ -4111,15 +3824,12 @@ def product_retail_price():
     商品零售价查询
     GET /api/product/retail-price?product_id=123
     """
-    from src.core.tools.caller import get_tool_caller
-    caller = get_tool_caller()
-
     product_id = request.args.get("product_id", type=int)
     if not product_id:
         return jsonify({"code": 400, "msg": "product_id is required"}), 400
 
     try:
-        price = caller.call("get_product_price", product_id=product_id)
+        price = get_product_service().price(product_id)
         return jsonify({"code": 0, "data": {"price": price}})
     except Exception as e:
         logger.error(f"零售价查询异常: {e}")
@@ -4136,10 +3846,31 @@ def _page_args(default_size: int = 50, max_size: int = 200) -> tuple[int, int]:
 def native_customers_api():
     """Native customer management list."""
     keyword = (request.args.get("keyword") or "").strip()
-    limit = max(1, min(request.args.get("limit", 200, type=int), 500))
+    filter_value = (request.args.get("filter") or "all").strip()
     try:
-        rows = _native_db().customer_list(keyword, limit=limit)
-        return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": len(rows), "source": "native"}})
+        if "page" not in request.args and "page_size" not in request.args:
+            limit = max(1, min(request.args.get("limit", 200, type=int), 500))
+            rows = get_customer_service().list(keyword, limit=limit)
+            return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": len(rows), "source": "native"}})
+        page, page_size = _page_args(default_size=12, max_size=100)
+        rows, total, summary = get_customer_service().list_page(
+            keyword,
+            page=page,
+            page_size=page_size,
+            filter_value=filter_value,
+        )
+        return jsonify({
+            "code": 0,
+            "data": {
+                "list": _safe_json(rows),
+                "total": total,
+                "summary": _safe_json(summary),
+                "page": page,
+                "page_size": page_size,
+                "filter": filter_value,
+                "source": "native",
+            },
+        })
     except Exception as e:
         logger.error(f"自有库客户管理列表异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -4153,9 +3884,37 @@ def native_customer_update_api(customer_id: int):
         body = request.form.to_dict(flat=True)
     body = body or {}
     try:
+        response_data: dict = {}
+        phone = body.get("phone") or body.get("contacts_tel") or body.get("mobile")
+        if phone is not None:
+            user = _current_web_user() or {}
+            operator_user_id = user.get("native_user_id") or user.get("id")
+            link_result = get_customer_service().sync_phone(
+                customer_id,
+                str(phone),
+                operator_user_id=operator_user_id,
+            )
+            if link_result.get("code") not in (None, 0):
+                return jsonify(_safe_json(link_result)), int(link_result.get("_http_status") or 400)
+            response_data["identity_link"] = link_result.get("data") or {}
+        profile_keys = {"name", "customer_name", "company_name", "contacts_name", "contact_name", "address"}
+        if any(key in body for key in profile_keys):
+            result = get_customer_service().update_profile(
+                customer_id,
+                name=body.get("name") if "name" in body else body.get("customer_name") or body.get("company_name"),
+                contacts_name=body.get("contacts_name") if "contacts_name" in body else body.get("contact_name"),
+                address=body.get("address") if "address" in body else None,
+            )
+            if result.get("code") not in (None, 0):
+                return jsonify(_safe_json(result)), int(result.get("_http_status") or 400)
+            response_data.update(result.get("data") or {})
         if "is_monthly_customer" in body:
-            result = _native_db().update_customer_monthly(customer_id, body.get("is_monthly_customer"))
-            return jsonify(_safe_json(result)), (400 if result.get("code") not in (None, 0) else 200)
+            result = get_customer_service().update_monthly(customer_id, body.get("is_monthly_customer"))
+            if result.get("code") not in (None, 0):
+                return jsonify(_safe_json(result)), 400
+            response_data.update(result.get("data") or {})
+        if response_data:
+            return jsonify({"code": 0, "data": _safe_json(response_data)})
         return jsonify({"code": 400, "msg": "没有可更新的客户字段"}), 400
     except Exception as e:
         logger.error(f"自有库客户更新异常: {e}")
@@ -4169,7 +3928,7 @@ def native_customer_sales_api(customer_id: int):
     period = (request.args.get("period") or "").strip()
     month = (request.args.get("month") or "").strip()
     try:
-        rows, total, summary = _native_db().customer_sales(
+        rows, total, summary = get_customer_service().sales(
             customer_id,
             page=page,
             page_size=page_size,
@@ -4192,12 +3951,56 @@ def native_customer_sales_api(customer_id: int):
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+@app.route("/api/customers/<int:customer_id>/statement", methods=["GET"])
+def native_customer_statement_api(customer_id: int):
+    """Native customer statement preview."""
+    try:
+        statement = get_customer_service().statement(
+            customer_id,
+            month=(request.args.get("month") or "").strip(),
+            date_from=(request.args.get("date_from") or "").strip(),
+            date_to=(request.args.get("date_to") or "").strip(),
+        )
+        return jsonify({"code": 0, "data": _safe_json(statement)})
+    except DBError as e:
+        logger.warning(f"customer statement rejected: customer_id={customer_id}, error={e}")
+        return _api_exception_response(e)
+    except Exception as e:
+        logger.error(f"customer statement failed: customer_id={customer_id}, error={e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/customers/<int:customer_id>/statement.pdf", methods=["GET"])
+def native_customer_statement_pdf_api(customer_id: int):
+    """Native customer statement PDF download."""
+    try:
+        statement = get_customer_service().statement(
+            customer_id,
+            month=(request.args.get("month") or "").strip(),
+            date_from=(request.args.get("date_from") or "").strip(),
+            date_to=(request.args.get("date_to") or "").strip(),
+        )
+        pdf_bytes = build_customer_statement_pdf(statement)
+        customer_name = str((statement.get("customer") or {}).get("name") or "客户").strip() or "客户"
+        period_label = str(statement.get("period_label") or "").replace(" 至 ", "-")
+        filename = f"{customer_name}-{period_label}-对账单.pdf"
+        response = Response(pdf_bytes, mimetype="application/pdf")
+        response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+        return response
+    except DBError as e:
+        logger.warning(f"customer statement pdf rejected: customer_id={customer_id}, error={e}")
+        return _api_exception_response(e)
+    except Exception as e:
+        logger.error(f"customer statement pdf failed: customer_id={customer_id}, error={e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/customers/<int:customer_id>/balance-ledger", methods=["GET"])
 def native_customer_balance_ledger_api(customer_id: int):
     """Native customer balance ledger."""
     page, page_size = _page_args()
     try:
-        rows, total, summary = _native_db().customer_balance_ledger(
+        rows, total, summary = get_customer_balance_service().ledger(
             customer_id,
             page=page,
             page_size=page_size,
@@ -4230,30 +4033,17 @@ def native_customer_balance_api(customer_id: int):
     pay_type = (body.get("pay_type") or "").strip()
     note = (body.get("note") or "").strip()
     try:
-        if action == "settlement":
-            result = _native_db().customer_month_settlement(
-                customer_id,
-                month=body.get("month") or "",
-                amount=amount,
-                pay_type=pay_type or "wechat",
-                note=note,
-            )
-        elif action in ("receipt", "recharge"):
-            result = _native_db().customer_balance_entry(
-                customer_id,
-                entry_type=action,
-                amount=amount,
-                pay_type=pay_type or action,
-                note=note,
-            )
-        elif action == "adjust":
-            result = _native_db().customer_balance_adjust(
-                customer_id,
-                amount=amount,
-                note=note,
-            )
-        else:
-            return jsonify({"code": 400, "msg": "action is required"}), 400
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_customer_balance_service().apply_action(
+            customer_id,
+            action=action,
+            amount=amount,
+            pay_type=pay_type,
+            note=note,
+            month=body.get("month") or "",
+            operator_user_id=operator_user_id,
+        )
         return jsonify(_safe_json(result))
     except DBError as e:
         logger.warning(f"customer balance action rejected: customer_id={customer_id}, action={action}, error={e}")
@@ -4269,7 +4059,7 @@ def native_users_api():
     keyword = (request.args.get("keyword") or "").strip()
     page, page_size = _page_args()
     try:
-        rows, total = _native_db().users(keyword=keyword, page=page, page_size=page_size)
+        rows, total = get_user_service().list(keyword=keyword, page=page, page_size=page_size)
         return jsonify({
             "code": 0,
             "data": {
@@ -4295,7 +4085,18 @@ def native_user_update_api(user_id: int):
     try:
         role = body.get("role") if "role" in body else None
         is_active = body.get("is_active") if "is_active" in body else None
-        result = _native_db().update_user(user_id, role=role, is_active=is_active)
+        phone = body.get("phone") if "phone" in body else None
+        display_name = body.get("display_name") if "display_name" in body else None
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_user_service().update(
+            user_id,
+            role=role,
+            is_active=is_active,
+            phone=phone,
+            display_name=display_name,
+            operator_user_id=operator_user_id,
+        )
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400
         return jsonify(result)
@@ -4307,7 +4108,7 @@ def native_user_update_api(user_id: int):
 @app.route("/api/warehouses", methods=["GET"])
 def native_warehouses_api():
     try:
-        rows = _native_db().warehouse_list()
+        rows = get_inventory_service().warehouse_list()
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": len(rows), "source": "native"}})
     except Exception as e:
         logger.error(f"自有库仓库列表异常: {e}")
@@ -4320,7 +4121,7 @@ def native_inventory_balances_api():
     warehouse_id = request.args.get("warehouse_id", type=int)
     page, page_size = _page_args()
     try:
-        rows, total = _native_db().inventory_balances(keyword=keyword, warehouse_id=warehouse_id, page=page, page_size=page_size)
+        rows, total = get_inventory_service().balances(keyword=keyword, warehouse_id=warehouse_id, page=page, page_size=page_size)
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
     except Exception as e:
         logger.error(f"自有库库存明细异常: {e}")
@@ -4332,7 +4133,7 @@ def native_inventory_ledger_api():
     keyword = (request.args.get("keyword") or "").strip()
     page, page_size = _page_args()
     try:
-        rows, total = _native_db().inventory_ledger(keyword=keyword, page=page, page_size=page_size)
+        rows, total = get_inventory_service().ledger(keyword=keyword, page=page, page_size=page_size)
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
     except Exception as e:
         logger.error(f"自有库库存日志异常: {e}")
@@ -4344,7 +4145,7 @@ def native_stock_documents_api():
     keyword = (request.args.get("keyword") or "").strip()
     page, page_size = _page_args()
     try:
-        rows, total = _native_db().stock_documents(keyword=keyword, page=page, page_size=page_size)
+        rows, total = get_inventory_service().stock_documents(keyword=keyword, page=page, page_size=page_size)
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
     except Exception as e:
         logger.error(f"自有库出入库明细异常: {e}")
@@ -4356,7 +4157,7 @@ def native_stocktakes_api():
     keyword = (request.args.get("keyword") or "").strip()
     page, page_size = _page_args()
     try:
-        rows, total = _native_db().stocktakes(keyword=keyword, page=page, page_size=page_size)
+        rows, total = get_inventory_service().stocktakes(keyword=keyword, page=page, page_size=page_size)
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
     except Exception as e:
         logger.error(f"自有库盘点明细异常: {e}")
@@ -4368,7 +4169,7 @@ def native_transfers_api():
     keyword = (request.args.get("keyword") or "").strip()
     page, page_size = _page_args()
     try:
-        rows, total = _native_db().transfers(keyword=keyword, page=page, page_size=page_size)
+        rows, total = get_inventory_service().transfers(keyword=keyword, page=page, page_size=page_size)
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
     except Exception as e:
         logger.error(f"自有库调拨明细异常: {e}")
@@ -4377,33 +4178,7 @@ def native_transfers_api():
 
 def _normalize_sales_add_products(products: list[dict]) -> list[dict]:
     """Fill the native product base unit before SalesAdd."""
-    normalized = []
-    detail_cache: dict[int, dict] = {}
-    for item in products:
-        if not isinstance(item, dict):
-            continue
-        product_id = item.get("product_id") or item.get("id")
-        if not product_id:
-            normalized.append(item)
-            continue
-        try:
-            pid = int(product_id)
-        except (TypeError, ValueError):
-            normalized.append(item)
-            continue
-        detail = detail_cache.get(pid)
-        if detail is None:
-            try:
-                detail = _native_db().product_info(pid) or {}
-            except Exception as e:
-                logger.warning(f"开单商品单位查询失败: product_id={pid}, error={e}")
-                detail = {}
-            detail_cache[pid] = detail if isinstance(detail, dict) else {}
-        next_item = dict(item)
-        if not next_item.get("unit_id"):
-            next_item["unit_id"] = int(detail_cache[pid].get("unit_id") or 1)
-        normalized.append(next_item)
-    return normalized
+    return get_sales_service().normalize_products(products)
 
 
 @app.route("/api/sales/add", methods=["POST"])
@@ -4431,14 +4206,16 @@ def sales_add():
         return jsonify({"code": 400, "msg": "customer_id and products are required"}), 400
 
     try:
-        products = _normalize_sales_add_products(products)
-        result = _native_db().create_sales_order(
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_sales_service().create_order(
             customer_id=customer_id,
             warehouse_id=warehouse_id,
             products=products,
             create_time=create_time,
             pay_status=pay_status,
             pay_type=pay_type,
+            operator_user_id=operator_user_id,
         )
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400
@@ -4465,26 +4242,16 @@ def auth_login():
     body = request.get_json(silent=True) or request.form.to_dict() or {}
     accounts = (body.get("accounts") or body.get("username") or body.get("mobile") or body.get("email") or "").strip()
     password = body.get("pwd") or body.get("password") or ""
-    if not accounts:
-        return jsonify({"code": 400, "msg": "请输入北极星账号或手机号"}), 400
-    if not password:
-        return jsonify({"code": 400, "msg": "请输入北极星密码"}), 400
     try:
-        user_row = _native_user_by_account(accounts)
-        password_hash = (user_row or {}).get("password_hash") or ""
-        if not user_row or not password_hash or not check_password_hash(password_hash, password):
-            return jsonify({"code": 401, "msg": "账号或密码不正确"}), 401
-        if int(user_row.get("is_active") or 0) != 1 or str(user_row.get("approval_status") or "") != "approved":
-            return jsonify({"code": 403, "msg": "账号未启用或还未审批通过"}), 403
         client_type = (body.get("client_type") or request.headers.get("X-SJ-Client") or "miniapp").strip()
-        token = _issue_native_session(int(user_row["id"]), client_type=client_type)
-        _web_auth_db().execute(
-            "UPDATE auth_user SET last_login_at=NOW(), updated_at=NOW() WHERE id=%s",
-            (int(user_row["id"]),),
+        result = get_auth_service().native_login(
+            account=accounts,
+            password=password,
+            client_type=client_type,
+            ip=request.headers.get("X-Forwarded-For") or request.remote_addr or "",
+            user_agent=request.headers.get("User-Agent") or "",
         )
-        user = _native_user_public(user_row, token=token)
-        NATIVE_AUTH_CACHE[token] = (time.time() + NATIVE_AUTH_CACHE_TTL, user)
-        return jsonify({"code": 0, "data": {"token": token, "user": user}})
+        return _json_service_result(result)
     except Exception as e:
         logger.error(f"北极星登录异常: {e}")
         return jsonify({"code": 500, "msg": f"北极星登录异常: {e}"}), 500
@@ -4499,26 +4266,17 @@ def auth_wechat_quick_login():
     unionid = (body.get("unionid") or body.get("union_id") or "").strip()
     profile = body.get("userInfo") if isinstance(body.get("userInfo"), dict) else body
     try:
-        if not openid:
-            if not authcode:
-                return jsonify({"code": 400, "msg": "缺少微信登录 code 或 openid"}), 400
-            miniapp_appid = body.get("appid") or os.environ.get("WECHAT_MINIAPP_APPID") or os.environ.get("WX_MINIAPP_APPID") or ""
-            wx_result = _wechat_session_from_code(authcode, miniapp_appid)
-            if int(wx_result.get("code", -1)) != 0:
-                return jsonify(wx_result), 400
-            wx_data = wx_result.get("data") or {}
-            openid = str(wx_data.get("openid") or "")
-            unionid = str(wx_data.get("unionid") or unionid or "")
-        user_row = _upsert_wechat_user(openid, unionid=unionid, profile=profile)
-        user = _native_user_public(user_row)
-        if int(user.get("is_active") or 0) != 1 or str(user.get("approval_status") or "") != "approved":
-            return jsonify({"code": 403, "msg": "微信账号已绑定，等待后台启用或审批", "data": {"user": user}}), 403
-        if not _native_user_can_access_miniapp(user):
-            return jsonify({"code": 403, "msg": "当前微信账号未开通业务操作权限", "data": {"user": user}}), 403
-        token = _issue_native_session(int(user["id"]), client_type="miniapp")
-        user = _native_user_public(user_row, token=token)
-        NATIVE_AUTH_CACHE[token] = (time.time() + NATIVE_AUTH_CACHE_TTL, user)
-        return jsonify({"code": 0, "data": {"token": token, "user": user}})
+        miniapp_appid = body.get("appid") or os.environ.get("WECHAT_MINIAPP_APPID") or os.environ.get("WX_MINIAPP_APPID") or ""
+        result = get_auth_service().wechat_quick_login(
+            openid=openid,
+            unionid=unionid,
+            profile=profile,
+            authcode=authcode,
+            appid=miniapp_appid,
+            ip=request.headers.get("X-Forwarded-For") or request.remote_addr or "",
+            user_agent=request.headers.get("User-Agent") or "",
+        )
+        return _json_service_result(result)
     except Exception as e:
         logger.error(f"微信快捷登录异常: {e}")
         return jsonify({"code": 500, "msg": f"微信快捷登录异常: {e}"}), 500
@@ -4545,7 +4303,7 @@ def auth_me():
     if not token:
         return jsonify({"code": 401, "msg": "缺少登录 token"}), 401
     try:
-        user = _verify_native_token(token, force=request.args.get("force") in ("1", "true", "True"))
+        user = get_auth_service().verify_token(token, force=request.args.get("force") in ("1", "true", "True"))
         if not user:
             return jsonify({"code": 401, "msg": "登录已失效，请重新登录"}), 401
         return jsonify({"code": 0, "data": {"token": token, "user": user}})

@@ -8,6 +8,7 @@ rewrite.
 from __future__ import annotations
 
 import json
+import hashlib
 import html as html_lib
 import os
 import re
@@ -140,6 +141,26 @@ def _first_image(value: Any) -> str:
         return parsed
     text = str(value).strip()
     return text.split(",")[0].strip() if text else ""
+
+
+def _merge_category_names(category_ids: Iterable[Any], category_lookup: dict[int, str], primary_name: str = "") -> list[str]:
+    names: list[str] = []
+
+    def add(name: Any) -> None:
+        text = str(name or "").strip()
+        if text and text not in names:
+            names.append(text)
+
+    for value in category_ids or []:
+        try:
+            category_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        add(category_lookup.get(category_id))
+
+    if not names:
+        add(primary_name)
+    return names
 
 
 def _html_image_urls(value: Any) -> list[str]:
@@ -394,6 +415,9 @@ class NativeDBClient:
     _sales_delete_columns_lock = threading.Lock()
     _party_columns_ready = False
     _party_columns_lock = threading.Lock()
+    _default_operator_ready = False
+    _default_operator_user_id: int | None = None
+    _default_operator_lock = threading.Lock()
 
     def __new__(cls) -> "NativeDBClient":
         if cls._instance is None:
@@ -479,8 +503,53 @@ class NativeDBClient:
             logger.error(f"native execute failed: {e}")
             raise DBError(f"native execute failed: {e}") from e
 
+    def _default_operator(self) -> int | None:
+        configured = _coerce_user_id(_env("SJAGENT_DEFAULT_OPERATOR_USER_ID", _env("SJAGENT_AGENT_OPERATOR_USER_ID", "")))
+        if configured:
+            return configured
+        configured_name = _env("SJAGENT_DEFAULT_OPERATOR_USERNAME", _env("SJAGENT_DEFAULT_OPERATOR_NAME", "")).strip()
+        with self.__class__._default_operator_lock:
+            if self.__class__._default_operator_ready and not configured_name:
+                return self.__class__._default_operator_user_id
+            try:
+                if configured_name:
+                    rows = self.query(
+                        """
+                        SELECT id
+                        FROM auth_user
+                        WHERE approval_status='approved'
+                          AND is_active=1
+                          AND (username=%s OR display_name=%s)
+                        ORDER BY is_admin DESC, id ASC
+                        LIMIT 1
+                        """,
+                        (configured_name, configured_name),
+                    )
+                else:
+                    rows = self.query(
+                        """
+                        SELECT id
+                        FROM auth_user
+                        WHERE approval_status='approved'
+                          AND is_active=1
+                          AND (is_admin=1 OR role IN ('admin','staff'))
+                        ORDER BY is_admin DESC, id ASC
+                        LIMIT 1
+                        """
+                    )
+                user_id = _coerce_user_id(rows[0].get("id")) if rows else None
+                if not configured_name:
+                    self.__class__._default_operator_user_id = user_id
+                    self.__class__._default_operator_ready = True
+                return user_id
+            except Exception as e:
+                logger.warning(f"default operator lookup failed: {e}")
+                if not configured_name:
+                    self.__class__._default_operator_ready = True
+                return None
+
     def _operator_user_id(self, explicit: Any = None) -> int | None:
-        return _coerce_user_id(explicit) or current_native_operator_user_id()
+        return _coerce_user_id(explicit) or current_native_operator_user_id() or self._default_operator()
 
     def _table_exists(self, cursor, table_name: str) -> bool:
         if not re.fullmatch(r"[0-9A-Za-z_]+", str(table_name or "")):
@@ -824,7 +893,9 @@ class NativeDBClient:
         status: Any = None,
         category_id: int | None = None,
         category_ids: Iterable[Any] | None = None,
+        product_type: str = "",
         active_only: bool = False,
+        listed_only: bool = False,
     ) -> tuple[str, list[Any]]:
         where = ["s.deleted_at IS NULL", "sp.deleted_at IS NULL"]
         params: list[Any] = []
@@ -838,6 +909,19 @@ class NativeDBClient:
                 status_value = str(status)
             where.append("s.status = %s")
             params.append(status_value)
+        elif listed_only:
+            where.append("s.status = 'active'")
+        if listed_only:
+            where.append("s.is_listed = 1")
+        product_type_values = [
+            item.strip()
+            for item in str(product_type or "").split(",")
+            if item.strip()
+        ]
+        if product_type_values:
+            placeholders = ",".join(["%s"] * len(product_type_values))
+            where.append(f"sp.product_type IN ({placeholders})")
+            params.extend(product_type_values)
         category_values: list[int] = []
         if category_id:
             category_values.append(int(category_id))
@@ -862,15 +946,21 @@ class NativeDBClient:
                     "("
                     "s.sku_no LIKE %s OR sp.title LIKE %s OR sp.series LIKE %s "
                     "OR s.color LIKE %s OR s.search_text LIKE %s "
-                    "OR EXISTS ("
-                    "  SELECT 1 FROM product_alias pa "
+                    "OR s.id IN ("
+                    "  SELECT pa.target_id FROM product_alias pa "
                     "  WHERE pa.is_enabled = 1 "
-                    "    AND ((pa.target_type='sku' AND pa.target_id=s.id) OR (pa.target_type='spu' AND pa.target_id=sp.id)) "
+                    "    AND pa.target_type='sku' "
+                    "    AND (pa.alias LIKE %s OR pa.normalized_alias LIKE %s)"
+                    ") "
+                    "OR sp.id IN ("
+                    "  SELECT pa.target_id FROM product_alias pa "
+                    "  WHERE pa.is_enabled = 1 "
+                    "    AND pa.target_type='spu' "
                     "    AND (pa.alias LIKE %s OR pa.normalized_alias LIKE %s)"
                     ")"
                     ")"
                 )
-                params.extend([like, like, like, like, like, like, like])
+                params.extend([like, like, like, like, like, like, like, like, like])
             where.append("(" + " OR ".join(term_parts) + ")")
         return " AND ".join(where), params
 
@@ -910,6 +1000,19 @@ class NativeDBClient:
             ) inv ON inv.sku_id = s.id
         """
 
+    def _product_category_name_lookup(self) -> dict[int, str]:
+        cached = getattr(self, "_product_category_name_lookup_cache", None)
+        if cached is not None:
+            return cached
+        rows = self.query("SELECT id, name FROM product_category WHERE is_enabled = 1")
+        lookup = {
+            int(row.get("id")): str(row.get("name") or f"分类#{row.get('id')}")
+            for row in rows
+            if row.get("id") not in (None, "")
+        }
+        self._product_category_name_lookup_cache = lookup
+        return lookup
+
     def _piece_text(self, row: dict) -> str:
         qty = row.get("case_pack_qty")
         if qty in (None, ""):
@@ -940,6 +1043,12 @@ class NativeDBClient:
         primary_category_id = row.get("primary_category_id") or row.get("default_category_id")
         if primary_category_id and int(primary_category_id) not in category_ids:
             category_ids = [int(primary_category_id)] + [int(item) for item in category_ids if str(item).isdigit()]
+        category_names = _merge_category_names(
+            category_ids,
+            self._product_category_name_lookup(),
+            row.get("primary_category_name") or "",
+        )
+        category_text = " / ".join(category_names)
         price = row.get("retail_price") or row.get("min_price") or row.get("max_price") or 0
         spec_image = row.get("main_image_url") or _first_image(row.get("detail_image_urls"))
         spu_image = row.get("spu_main_image_url") or ""
@@ -999,7 +1108,8 @@ class NativeDBClient:
             "detail_image_urls": detail_images,
             "content": row.get("content_html") or "",
             "product_category_ids": category_ids,
-            "product_category_text": row.get("primary_category_name") or "",
+            "product_category_names": category_names,
+            "product_category_text": category_text,
             "base": [{
                 "id": row.get("id"),
                 "unit_id": int(row.get("unit_id") or 1),
@@ -1027,29 +1137,64 @@ class NativeDBClient:
         )
         return [self._row_to_product(row) for row in rows]
 
-    def product_info(self, product_id: int) -> dict | None:
+    def product_info(self, product_id: int, *, listed_only: bool = False) -> dict | None:
         sku_id = self.resolve_sku_id(product_id)
         if not sku_id:
             return None
+        listed_clause = " AND s.status = 'active' AND s.is_listed = 1" if listed_only else ""
         rows = self.query(
-            f"{self._product_select_sql()} WHERE s.id = %s LIMIT 1",
+            f"{self._product_select_sql()} WHERE s.id = %s{listed_clause} LIMIT 1",
             (sku_id,),
         )
-        return self._row_to_product(rows[0]) if rows else None
+        if not rows:
+            return None
+        product = self._row_to_product(rows[0])
+        if listed_only:
+            product = self._hydrate_product_group_summary(product, listed_only=True)
+        return product
+
+    def _hydrate_product_group_summary(self, product: dict, *, listed_only: bool = False) -> dict:
+        spu_id = product.get("spu_id")
+        if not spu_id:
+            return product
+        listed_clause = " AND s.status = 'active' AND s.is_listed = 1" if listed_only else ""
+        rows = self.query(
+            f"""
+            {self._product_select_sql()}
+            WHERE s.spu_id = %s AND s.deleted_at IS NULL AND sp.deleted_at IS NULL{listed_clause}
+            ORDER BY s.color ASC, s.id ASC
+            """,
+            (spu_id,),
+        )
+        variants = [self._row_to_product(row) for row in rows]
+        if not variants:
+            return product
+        color_names, color_text, color_count = self._product_color_summary(variants)
+        product["product_group_data"] = variants
+        product["spec_count"] = len(variants)
+        product["color_count"] = color_count
+        product["color_names"] = color_names
+        product["color_text"] = color_text
+        product["available_colors"] = color_names
+        return product
 
     def _product_color_summary(self, variants: list[dict]) -> tuple[list[str], str, int]:
         colors: list[str] = []
         for item in variants:
-            for color in item.get("available_colors") or []:
-                clean = str(color or "").strip()
-                if clean and clean not in colors:
-                    colors.append(clean)
             clean = str(item.get("color") or item.get("spec") or "").strip()
             if clean and clean not in colors:
                 colors.append(clean)
         if not colors and variants:
             colors.append("默认颜色")
         return colors, " / ".join(colors), len(colors)
+
+    def _product_sort_mode(self, sort: Any = "") -> str:
+        value = str(sort or "").strip().lower().replace("-", "_")
+        if value in {"latest", "new", "newest", "updated"}:
+            return "latest"
+        if value in {"price", "price_asc", "price_low", "price_low_to_high"}:
+            return "price_asc"
+        return "default"
 
     def product_list(
         self,
@@ -1060,12 +1205,27 @@ class NativeDBClient:
         category_id: int | None = None,
         group: bool = False,
         category_ids: Iterable[Any] | None = None,
+        product_type: str = "",
+        listed_only: bool = False,
+        sort: Any = "",
     ) -> tuple[list[dict], int]:
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or 20), 200))
         offset = (page - 1) * page_size
-        where_sql, params = self._sku_where(keyword, status=status, category_id=category_id, category_ids=category_ids)
+        sort_mode = self._product_sort_mode(sort)
+        price_sql = "COALESCE(NULLIF(s.retail_price, 0), NULLIF(s.min_price, 0), NULLIF(s.max_price, 0))"
+        where_sql, params = self._sku_where(
+            keyword,
+            status=status,
+            category_id=category_id,
+            category_ids=category_ids,
+            product_type=product_type,
+            listed_only=listed_only,
+        )
         if not group:
+            order_sql = "s.updated_at DESC, s.id DESC"
+            if sort_mode == "price_asc":
+                order_sql = f"({price_sql} IS NULL) ASC, {price_sql} ASC, s.updated_at DESC, s.id DESC"
             total_rows = self.query(
                 f"{self._product_select_sql()} WHERE {where_sql}",
                 params,
@@ -1075,7 +1235,7 @@ class NativeDBClient:
                 f"""
                 {self._product_select_sql()}
                 WHERE {where_sql}
-                ORDER BY s.updated_at DESC, s.id DESC
+                ORDER BY {order_sql}
                 LIMIT %s OFFSET %s
                 """,
                 params + [page_size, offset],
@@ -1092,14 +1252,20 @@ class NativeDBClient:
             params,
         )
         total = int(total_rows[0].get("total") or 0) if total_rows else 0
+        group_order_sql = "latest_time DESC, latest_id DESC"
+        if sort_mode == "price_asc":
+            group_order_sql = "min_price IS NULL ASC, min_price ASC, latest_time DESC, latest_id DESC"
         group_rows = self.query(
             f"""
-            SELECT sp.id AS spu_id, MAX(s.updated_at) AS latest_time, MAX(s.id) AS latest_id
+            SELECT sp.id AS spu_id,
+                   MAX(s.updated_at) AS latest_time,
+                   MAX(s.id) AS latest_id,
+                   MIN({price_sql}) AS min_price
             FROM product_sku s
             JOIN product_spu sp ON sp.id = s.spu_id
             WHERE {where_sql}
             GROUP BY sp.id
-            ORDER BY latest_time DESC, latest_id DESC
+            ORDER BY {group_order_sql}
             LIMIT %s OFFSET %s
             """,
             params + [page_size, offset],
@@ -1111,7 +1277,8 @@ class NativeDBClient:
         rows = self.query(
             f"""
             {self._product_select_sql()}
-            WHERE s.spu_id IN ({placeholders}) AND s.deleted_at IS NULL
+            WHERE s.spu_id IN ({placeholders}) AND s.deleted_at IS NULL AND sp.deleted_at IS NULL
+              {"AND s.status = 'active' AND s.is_listed = 1" if listed_only else ""}
             ORDER BY sp.title ASC, s.color ASC, s.id ASC
             """,
             spu_ids,
@@ -1156,18 +1323,40 @@ class NativeDBClient:
             items.append(primary)
         return items, total
 
-    def product_categories(self) -> list[dict]:
+    def product_categories(
+        self,
+        *,
+        listed_only: bool = False,
+        exclude_names: Iterable[str] | None = None,
+    ) -> list[dict]:
+        join_filters = ["s.deleted_at IS NULL"]
+        if listed_only:
+            join_filters.extend(["s.status = 'active'", "s.is_listed = 1"])
+        where = ["c.is_enabled = 1"]
+        params: list[Any] = []
+        excluded = [str(item).strip() for item in (exclude_names or []) if str(item or "").strip()]
+        if excluded:
+            placeholders = ",".join(["%s"] * len(excluded))
+            where.append(f"c.name NOT IN ({placeholders})")
+            params.extend(excluded)
+        having_sql = "HAVING total > 0" if listed_only else ""
         rows = self.query(
-            """
+            f"""
             SELECT c.id, c.parent_id, c.name, c.product_type, c.inventory_policy, c.sort_order, c.is_enabled,
-                   COUNT(DISTINCT s.spu_id) AS total
+                   c.icon, c.icon_active, c.realistic_images, c.big_images,
+                   COUNT(DISTINCT CASE WHEN sp.id IS NOT NULL THEN s.spu_id END) AS total
             FROM product_category c
             LEFT JOIN product_sku s
-              ON s.primary_category_id = c.id AND s.deleted_at IS NULL
-            WHERE c.is_enabled = 1
+              ON (s.primary_category_id = c.id OR JSON_CONTAINS(s.category_ids, CAST(c.id AS CHAR)))
+             AND {" AND ".join(join_filters)}
+            LEFT JOIN product_spu sp
+              ON sp.id = s.spu_id AND sp.deleted_at IS NULL
+            WHERE {" AND ".join(where)}
             GROUP BY c.id
+            {having_sql}
             ORDER BY COALESCE(c.sort_order, 0) DESC, c.id ASC
-            """
+            """,
+            params,
         )
         return [
             {
@@ -1176,10 +1365,32 @@ class NativeDBClient:
                 "name": row.get("name") or f"分类#{row.get('id')}",
                 "product_type": row.get("product_type") or "",
                 "inventory_policy": row.get("inventory_policy") or "",
+                "icon": row.get("icon") or "",
+                "icon_active": row.get("icon_active") or "",
+                "realistic_images": row.get("realistic_images") or "",
+                "big_images": row.get("big_images") or "",
                 "total": int(row.get("total") or 0),
             }
             for row in rows
         ]
+
+    def miniapp_assets(self, scene: str | None = None) -> list[dict]:
+        where = ["enabled=1"]
+        params: list[Any] = []
+        if scene:
+            where.append("scene=%s")
+            params.append(str(scene))
+        return self.query(
+            f"""
+            SELECT id, scene, name, asset_url, active_asset_url,
+                   link_type, link_value, badge_text, subtitle,
+                   sort_order, enabled, extra_json
+            FROM miniapp_asset
+            WHERE {" AND ".join(where)}
+            ORDER BY sort_order DESC, id ASC
+            """,
+            params,
+        )
 
     def product_options(self, product_id: int | None = None) -> dict:
         categories = self.product_categories()
@@ -1906,7 +2117,7 @@ class NativeDBClient:
                 sku_total += int(cursor.rowcount or 0)
         return {"spu": spu_total, "sku": sku_total}
 
-    def delete_product(self, ids: str | list[int]) -> dict:
+    def _delete_product_sku_legacy(self, ids: str | list[int]) -> dict:
         if isinstance(ids, str):
             raw_ids = [item.strip() for item in ids.split(",") if item.strip()]
         else:
@@ -1922,16 +2133,122 @@ class NativeDBClient:
         )
         return {"code": 0, "data": {"ids": sku_ids}}
 
-    def update_product_shelves(self, product_id: int, state: int) -> dict:
+    def _update_product_shelves_sku_legacy(self, product_id: int, state: int) -> dict:
         sku_id = self.resolve_sku_id(product_id)
         if not sku_id:
             return {"code": 404, "msg": "商品不存在"}
         self.execute("UPDATE product_sku SET is_listed=%s, updated_at=%s WHERE id=%s", (1 if state else 0, _now(), sku_id))
         return {"code": 0, "data": {"id": sku_id, "is_listed": 1 if state else 0}}
 
+    def _product_spu_ids_from_inputs(self, ids: str | list[int] | list[str], cursor) -> tuple[list[int], list[int]]:
+        if isinstance(ids, str):
+            raw_ids = [item.strip() for item in ids.split(",") if item.strip()]
+        else:
+            raw_ids = [str(item) for item in ids]
+        spu_ids: list[int] = []
+        sku_ids: list[int] = []
+        for item in raw_ids:
+            if not item.isdigit():
+                continue
+            product_id = int(item)
+            cursor.execute(
+                "SELECT id, spu_id FROM product_sku WHERE id=%s AND deleted_at IS NULL LIMIT 1",
+                (product_id,),
+            )
+            sku = cursor.fetchone()
+            if not sku:
+                sku_id = self.resolve_sku_id(product_id, cursor=cursor)
+                if sku_id:
+                    cursor.execute(
+                        "SELECT id, spu_id FROM product_sku WHERE id=%s AND deleted_at IS NULL LIMIT 1",
+                        (sku_id,),
+                    )
+                    sku = cursor.fetchone()
+            if sku:
+                sku_id = int(sku["id"])
+                spu_id = int(sku.get("spu_id") or 0)
+                if sku_id not in sku_ids:
+                    sku_ids.append(sku_id)
+                if spu_id and spu_id not in spu_ids:
+                    spu_ids.append(spu_id)
+                continue
+            cursor.execute("SELECT id FROM product_spu WHERE id=%s AND deleted_at IS NULL LIMIT 1", (product_id,))
+            spu = cursor.fetchone()
+            if spu and int(spu["id"]) not in spu_ids:
+                spu_ids.append(int(spu["id"]))
+        return spu_ids, sku_ids
+
+    def delete_product(self, ids: str | list[int]) -> dict:
+        now = _now()
+        with self.transaction() as cursor:
+            spu_ids, seed_sku_ids = self._product_spu_ids_from_inputs(ids, cursor)
+            if not spu_ids:
+                return {"code": 400, "msg": "没有可删除的商品"}
+            placeholders = ",".join(["%s"] * len(spu_ids))
+            cursor.execute(
+                f"SELECT id FROM product_sku WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL",
+                spu_ids,
+            )
+            all_sku_ids = [int(row["id"]) for row in cursor.fetchall()]
+            cursor.execute(
+                f"""
+                UPDATE product_sku
+                SET status='deleted', deleted_at=%s, updated_at=%s
+                WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL
+                """,
+                [now, now] + spu_ids,
+            )
+            sku_affected = int(cursor.rowcount or 0)
+            cursor.execute(
+                f"""
+                UPDATE product_spu
+                SET deleted_at=%s, updated_at=%s
+                WHERE id IN ({placeholders}) AND deleted_at IS NULL
+                """,
+                [now, now] + spu_ids,
+            )
+            spu_affected = int(cursor.rowcount or 0)
+        if not all_sku_ids:
+            all_sku_ids = seed_sku_ids
+        return {
+            "code": 0,
+            "data": {
+                "ids": all_sku_ids,
+                "sku_ids": all_sku_ids,
+                "spu_ids": spu_ids,
+                "affected": sku_affected,
+                "spu_affected": spu_affected,
+            },
+        }
+
+    def update_product_shelves(self, product_id: int, state: int) -> dict:
+        now = _now()
+        with self.transaction() as cursor:
+            spu_ids, seed_sku_ids = self._product_spu_ids_from_inputs([product_id], cursor)
+            if not spu_ids:
+                return {"code": 404, "msg": "商品不存在"}
+            spu_id = spu_ids[0]
+            cursor.execute("SELECT id FROM product_sku WHERE spu_id=%s AND deleted_at IS NULL", (spu_id,))
+            sku_ids = [int(row["id"]) for row in cursor.fetchall()] or seed_sku_ids
+            cursor.execute(
+                "UPDATE product_sku SET is_listed=%s, updated_at=%s WHERE spu_id=%s AND deleted_at IS NULL",
+                (1 if state else 0, now, spu_id),
+            )
+            affected = int(cursor.rowcount or 0)
+        return {
+            "code": 0,
+            "data": {
+                "id": sku_ids[0] if sku_ids else product_id,
+                "spu_id": spu_id,
+                "sku_ids": sku_ids,
+                "is_listed": 1 if state else 0,
+                "affected": affected,
+            },
+        }
+
     # ---- customers, users, warehouses ----
 
-    def customer_list(self, keyword: str = "", limit: int = 100) -> list[dict]:
+    def _customer_list_where(self, keyword: str = "", filter_value: str = "all") -> tuple[list[str], list[Any]]:
         self._ensure_party_columns()
         self._ensure_sales_delete_columns()
         where = ["p.kind='customer'", "p.deleted_at IS NULL"]
@@ -1941,6 +2258,99 @@ class NativeDBClient:
             digits = f"%{_phone_digits(keyword)}%" if _phone_digits(keyword) else like
             where.append("(name LIKE %s OR contact_name LIKE %s OR phone LIKE %s OR phone_normalized LIKE %s)")
             params.extend([like, like, like, digits])
+        clean_filter = str(filter_value or "all").strip()
+        balance_sql = "(COALESCE(wallet.wallet_amount, 0) - COALESCE(debt.debt_amount, 0))"
+        if clean_filter == "monthly":
+            where.append("COALESCE(p.is_monthly_customer, 0)=1")
+        elif clean_filter == "normal":
+            where.append("COALESCE(p.is_monthly_customer, 0)=0")
+        elif clean_filter == "debt":
+            where.append(f"{balance_sql} < 0")
+        elif clean_filter == "credit":
+            where.append(f"{balance_sql} > 0")
+        elif clean_filter == "no_phone":
+            where.append("(p.phone IS NULL OR p.phone='' OR p.phone_normalized IS NULL OR p.phone_normalized='')")
+        elif clean_filter == "normal_debt":
+            where.append("COALESCE(p.is_monthly_customer, 0)=0")
+            where.append(f"{balance_sql} < 0")
+        return where, params
+
+    def _customer_balance_join_sql(self) -> str:
+        return """
+            LEFT JOIN (
+                SELECT customer_id, SUM(balance_delta) AS wallet_amount
+                FROM customer_balance_ledger
+                GROUP BY customer_id
+            ) wallet ON wallet.customer_id = p.id
+            LEFT JOIN (
+                SELECT customer_id, SUM(receivable_amount) AS debt_amount
+                FROM sales_order
+                WHERE status NOT IN ('canceled', 'deleted')
+                  AND pay_status IN ('unpaid', 'monthly', 'partial')
+                GROUP BY customer_id
+            ) debt ON debt.customer_id = p.id
+        """
+
+    def _customer_row_payload(self, row: dict) -> dict:
+        return {
+            "id": row.get("id"),
+            "customer_id": row.get("id"),
+            "name": row.get("name") or f"客户#{row.get('id')}",
+            "customer_name": row.get("name") or f"客户#{row.get('id')}",
+            "company_name": row.get("name") or "",
+            "contacts_name": row.get("contact_name") or "",
+            "contacts_mobile": row.get("phone") or "",
+            "contacts_tel": row.get("phone") or "",
+            "phone": row.get("phone") or "",
+            "mobile": row.get("phone") or "",
+            "address": row.get("address") or "",
+            "status": row.get("status") or "active",
+            "is_monthly_customer": int(row.get("is_monthly_customer") or 0),
+            "latest_order_at": str(row.get("latest_order_at") or ""),
+            "latest_order_amount": _money(row.get("latest_order_amount")),
+            "year_amount": _money(row.get("year_amount")),
+            "year_order_count": int(row.get("year_order_count") or 0),
+            "month1_amount": _money(row.get("month1_amount")),
+            "month3_amount": _money(row.get("month3_amount")),
+            "wallet_amount": _money(row.get("wallet_amount")),
+            "debt_amount": _money(row.get("debt_amount")),
+            "balance_amount": _money(row.get("balance_amount")),
+            "sales_count": int(row.get("sales_count") or 0),
+            "source": "native",
+        }
+
+    def customer_list_page(
+        self,
+        keyword: str = "",
+        page: int = 1,
+        page_size: int = 20,
+        filter_value: str = "all",
+    ) -> tuple[list[dict], int, dict]:
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or 20), 300))
+        where, params = self._customer_list_where(keyword, filter_value)
+        where_sql = " AND ".join(where)
+        balance_sql = "(COALESCE(wallet.wallet_amount, 0) - COALESCE(debt.debt_amount, 0))"
+        balance_joins = self._customer_balance_join_sql()
+
+        total_rows = self.query(
+            f"""
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN COALESCE(p.is_monthly_customer, 0)=1 THEN 1 ELSE 0 END), 0) AS monthly,
+                COALESCE(SUM(CASE WHEN {balance_sql} < 0 THEN 1 ELSE 0 END), 0) AS debt,
+                COALESCE(SUM(CASE WHEN COALESCE(p.is_monthly_customer, 0)=0 AND {balance_sql} < 0 THEN 1 ELSE 0 END), 0) AS normal_debt,
+                COALESCE(SUM(CASE WHEN COALESCE(p.is_monthly_customer, 0)=1 AND {balance_sql} < 0 THEN 1 ELSE 0 END), 0) AS monthly_debt,
+                COALESCE(SUM(CASE WHEN p.phone IS NULL OR p.phone='' OR p.phone_normalized IS NULL OR p.phone_normalized='' THEN 1 ELSE 0 END), 0) AS no_phone,
+                COALESCE(SUM(CASE WHEN {balance_sql} > 0 THEN 1 ELSE 0 END), 0) AS credit,
+                COALESCE(SUM(GREATEST({balance_sql}, 0)), 0) AS credit_amount,
+                COALESCE(SUM(GREATEST(-{balance_sql}, 0)), 0) AS debt_amount
+            FROM party p
+            {balance_joins}
+            WHERE {where_sql}
+            """,
+            params,
+        )
         rows = self.query(
             f"""
             SELECT
@@ -1983,59 +2393,41 @@ class NativeDBClient:
                 WHERE status NOT IN ('canceled', 'deleted') AND sales_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
                 GROUP BY customer_id
             ) month3 ON month3.customer_id = p.id
-            LEFT JOIN (
-                SELECT customer_id, SUM(balance_delta) AS wallet_amount
-                FROM customer_balance_ledger
-                GROUP BY customer_id
-            ) wallet ON wallet.customer_id = p.id
-            LEFT JOIN (
-                SELECT customer_id, SUM(receivable_amount) AS debt_amount
-                FROM sales_order
-                WHERE status NOT IN ('canceled', 'deleted')
-                  AND pay_status IN ('unpaid', 'monthly', 'partial')
-                GROUP BY customer_id
-            ) debt ON debt.customer_id = p.id
+            {balance_joins}
             LEFT JOIN (
                 SELECT customer_id, COUNT(*) AS sales_count
                 FROM sales_order
                 WHERE status NOT IN ('canceled', 'deleted')
                 GROUP BY customer_id
             ) total ON total.customer_id = p.id
-            WHERE {' AND '.join(where)}
+            WHERE {where_sql}
             ORDER BY latest.sales_at DESC, p.updated_at DESC, p.id DESC
-            LIMIT %s
+            LIMIT %s OFFSET %s
             """,
-            params + [max(1, min(limit, 300))],
+            params + [page_size, (page - 1) * page_size],
         )
-        return [
-            {
-                "id": row.get("id"),
-                "customer_id": row.get("id"),
-                "name": row.get("name") or f"客户#{row.get('id')}",
-                "customer_name": row.get("name") or f"客户#{row.get('id')}",
-                "company_name": row.get("name") or "",
-                "contacts_name": row.get("contact_name") or "",
-                "contacts_mobile": row.get("phone") or "",
-                "contacts_tel": row.get("phone") or "",
-                "phone": row.get("phone") or "",
-                "mobile": row.get("phone") or "",
-                "address": row.get("address") or "",
-                "status": row.get("status") or "active",
-                "is_monthly_customer": int(row.get("is_monthly_customer") or 0),
-                "latest_order_at": str(row.get("latest_order_at") or ""),
-                "latest_order_amount": _money(row.get("latest_order_amount")),
-                "year_amount": _money(row.get("year_amount")),
-                "year_order_count": int(row.get("year_order_count") or 0),
-                "month1_amount": _money(row.get("month1_amount")),
-                "month3_amount": _money(row.get("month3_amount")),
-                "wallet_amount": _money(row.get("wallet_amount")),
-                "debt_amount": _money(row.get("debt_amount")),
-                "balance_amount": _money(row.get("balance_amount")),
-                "sales_count": int(row.get("sales_count") or 0),
-                "source": "native",
-            }
-            for row in rows
-        ]
+        total_row = total_rows[0] if total_rows else {}
+        summary = {
+            "total": int(total_row.get("total") or 0),
+            "monthly": int(total_row.get("monthly") or 0),
+            "debt": int(total_row.get("debt") or 0),
+            "normal_debt": int(total_row.get("normal_debt") or 0),
+            "monthly_debt": int(total_row.get("monthly_debt") or 0),
+            "no_phone": int(total_row.get("no_phone") or 0),
+            "credit": int(total_row.get("credit") or 0),
+            "credit_amount": _money(total_row.get("credit_amount")),
+            "debt_amount": _money(total_row.get("debt_amount")),
+        }
+        return [self._customer_row_payload(row) for row in rows], int(total_row.get("total") or 0), summary
+
+    def customer_list(self, keyword: str = "", limit: int = 100) -> list[dict]:
+        rows, _, _ = self.customer_list_page(
+            keyword,
+            page=1,
+            page_size=max(1, min(int(limit or 100), 300)),
+            filter_value="all",
+        )
+        return rows
 
     def _sales_period_where(self, period: str = "", month: str = "") -> tuple[list[str], list[Any], dict]:
         where: list[str] = []
@@ -2060,6 +2452,225 @@ class NativeDBClient:
             params.append(start.strftime("%Y-%m-%d 00:00:00"))
             summary = {"period": f"{months}m", "label": f"最近{months}个月"}
         return where, params, summary
+
+    def _statement_range(
+        self,
+        *,
+        month: str = "",
+        date_from: str = "",
+        date_to: str = "",
+    ) -> tuple[datetime, datetime, str, str]:
+        clean_month = str(month or "").strip()
+        if clean_month:
+            start, end = self._month_range(clean_month)
+            return start, end, start.strftime("%Y-%m-%d"), (end - timedelta(days=1)).strftime("%Y-%m-%d")
+        clean_from = str(date_from or "").strip()
+        clean_to = str(date_to or "").strip()
+        if not clean_from or not clean_to:
+            now = datetime.now()
+            clean_month = now.strftime("%Y-%m")
+            start, end = self._month_range(clean_month)
+            return start, end, start.strftime("%Y-%m-%d"), (end - timedelta(days=1)).strftime("%Y-%m-%d")
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", clean_from) or not re.match(r"^\d{4}-\d{2}-\d{2}$", clean_to):
+            raise DBError("日期格式不正确")
+        start = datetime.strptime(clean_from, "%Y-%m-%d")
+        end_day = datetime.strptime(clean_to, "%Y-%m-%d")
+        if start > end_day:
+            raise DBError("开始日期不能晚于结束日期")
+        if (end_day - start).days > 366:
+            raise DBError("对账单时间范围不能超过366天")
+        end = end_day + timedelta(days=1)
+        return start, end, clean_from, clean_to
+
+    def customer_statement(
+        self,
+        customer_id: int,
+        *,
+        month: str = "",
+        date_from: str = "",
+        date_to: str = "",
+    ) -> dict:
+        start, end, start_text, end_text = self._statement_range(
+            month=month,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        start_sql = start.strftime("%Y-%m-%d 00:00:00")
+        end_sql = end.strftime("%Y-%m-%d 00:00:00")
+        customer_rows = self.query(
+            """
+            SELECT id, name, contact_name, phone, address, is_monthly_customer
+            FROM party
+            WHERE id=%s AND kind='customer' AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            (int(customer_id),),
+        )
+        if not customer_rows:
+            raise DBError("客户不存在")
+        customer = customer_rows[0]
+        opening_rows = self.query(
+            """
+            SELECT
+              COALESCE((SELECT SUM(balance_delta) FROM customer_balance_ledger WHERE customer_id=%s AND created_at < %s), 0) AS wallet_amount,
+              COALESCE((
+                SELECT SUM(receivable_amount)
+                FROM sales_order
+                WHERE customer_id=%s
+                  AND status NOT IN ('canceled', 'deleted')
+                  AND pay_status IN ('unpaid', 'monthly', 'partial')
+                  AND sales_at < %s
+              ), 0) AS debt_amount
+            """,
+            (int(customer_id), start_sql, int(customer_id), start_sql),
+        )
+        sales_rows = self.query(
+            """
+            SELECT s.id, s.sales_no, s.status, s.pay_type, s.pay_status, s.total_quantity,
+                   s.goods_amount, s.receivable_amount, s.sales_at, s.note,
+                   wu.display_name AS created_by_name, wu.username AS created_by_username
+            FROM sales_order s
+            LEFT JOIN auth_user wu ON wu.id=s.created_by_user_id
+            WHERE s.customer_id=%s
+              AND s.status NOT IN ('canceled', 'deleted')
+              AND s.sales_at >= %s AND s.sales_at < %s
+            ORDER BY s.sales_at ASC, s.id ASC
+            """,
+            (int(customer_id), start_sql, end_sql),
+        )
+        sales_ids = [int(row.get("id") or 0) for row in sales_rows if row.get("id")]
+        items_by_sales: dict[int, list[dict]] = {sid: [] for sid in sales_ids}
+        if sales_ids:
+            placeholders = ",".join(["%s"] * len(sales_ids))
+            item_rows = self.query(
+                f"""
+                SELECT i.sales_order_id, i.line_no, i.sku_no_snapshot, i.title_snapshot,
+                       i.color_snapshot, i.quantity, i.unit_price, i.amount,
+                       w.name AS warehouse_name
+                FROM sales_order_item i
+                LEFT JOIN warehouse w ON w.id=i.warehouse_id
+                WHERE i.sales_order_id IN ({placeholders})
+                ORDER BY i.sales_order_id ASC, i.line_no ASC
+                """,
+                sales_ids,
+            )
+            for item in item_rows:
+                sid = int(item.get("sales_order_id") or 0)
+                items_by_sales.setdefault(sid, []).append({
+                    "line_no": int(item.get("line_no") or 0),
+                    "sku_no": item.get("sku_no_snapshot") or "",
+                    "title": item.get("title_snapshot") or "商品",
+                    "color": item.get("color_snapshot") or "默认颜色",
+                    "quantity": _qty_text(item.get("quantity")),
+                    "unit_price": _money(item.get("unit_price")),
+                    "amount": _money(item.get("amount")),
+                    "warehouse_name": item.get("warehouse_name") or "",
+                })
+        ledger_rows = self.query(
+            """
+            SELECT l.id, l.ledger_no, l.entry_type, l.pay_type, l.amount, l.applied_amount,
+                   l.balance_delta, l.related_month, l.note, l.created_at,
+                   wu.display_name AS created_by_name, wu.username AS created_by_username
+            FROM customer_balance_ledger l
+            LEFT JOIN auth_user wu ON wu.id=l.created_by_user_id
+            WHERE l.customer_id=%s AND l.created_at >= %s AND l.created_at < %s
+            ORDER BY l.created_at ASC, l.id ASC
+            """,
+            (int(customer_id), start_sql, end_sql),
+        )
+        sales_amount = sum(_num(row.get("receivable_amount")) for row in sales_rows)
+        sales_quantity = sum(_num(row.get("total_quantity")) for row in sales_rows)
+        unpaid_amount = sum(
+            _num(row.get("receivable_amount"))
+            for row in sales_rows
+            if str(row.get("pay_status") or "") in {"unpaid", "monthly", "partial"}
+        )
+        receipt_amount = sum(
+            _num(row.get("amount"))
+            for row in ledger_rows
+            if str(row.get("entry_type") or "") in {"receipt", "recharge"}
+        )
+        settlement_amount = sum(
+            _num(row.get("amount"))
+            for row in ledger_rows
+            if str(row.get("entry_type") or "") == "settlement"
+        )
+        adjust_amount = sum(
+            _num(row.get("balance_delta"))
+            for row in ledger_rows
+            if str(row.get("entry_type") or "") == "adjustment"
+        )
+        ledger_delta = sum(_num(row.get("balance_delta")) for row in ledger_rows)
+        opening_row = opening_rows[0] if opening_rows else {}
+        opening_balance = _num(opening_row.get("wallet_amount")) - _num(opening_row.get("debt_amount"))
+        ending_balance = opening_balance + ledger_delta - unpaid_amount
+        sales_result = []
+        for row in sales_rows:
+            sid = int(row.get("id") or 0)
+            sales_result.append({
+                "id": sid,
+                "sales_no": row.get("sales_no") or str(sid),
+                "sales_at": str(row.get("sales_at") or ""),
+                "status": row.get("status") or "",
+                "status_text": self._sales_status_text(row.get("status") or ""),
+                "pay_status": row.get("pay_status") or "",
+                "pay_status_text": _pay_status_text(row.get("pay_status")),
+                "pay_type": row.get("pay_type") or "",
+                "pay_type_text": _pay_type_text(row.get("pay_type")),
+                "total_quantity": _qty_text(row.get("total_quantity")),
+                "goods_amount": _money(row.get("goods_amount")),
+                "receivable_amount": _money(row.get("receivable_amount")),
+                "created_by_name": row.get("created_by_name") or row.get("created_by_username") or "",
+                "note": row.get("note") or "",
+                "items": items_by_sales.get(sid, []),
+            })
+        ledger_result = [
+            {
+                "id": int(row.get("id") or 0),
+                "ledger_no": row.get("ledger_no") or "",
+                "entry_type": row.get("entry_type") or "",
+                "entry_type_text": _balance_entry_type_text(row.get("entry_type")),
+                "pay_type": row.get("pay_type") or "",
+                "pay_type_text": _pay_type_text(row.get("pay_type")),
+                "amount": _money(row.get("amount")),
+                "applied_amount": _money(row.get("applied_amount")),
+                "balance_delta": _money(row.get("balance_delta")),
+                "related_month": row.get("related_month") or "",
+                "note": row.get("note") or "",
+                "created_by_name": row.get("created_by_name") or row.get("created_by_username") or "",
+                "created_at": str(row.get("created_at") or ""),
+            }
+            for row in ledger_rows
+        ]
+        period_label = str(month or "").strip() or f"{start_text} 至 {end_text}"
+        return {
+            "customer": {
+                "id": int(customer.get("id") or customer_id),
+                "name": customer.get("name") or "",
+                "contact_name": customer.get("contact_name") or "",
+                "phone": customer.get("phone") or "",
+                "address": customer.get("address") or "",
+                "is_monthly_customer": int(customer.get("is_monthly_customer") or 0),
+            },
+            "period_label": period_label,
+            "month": str(month or "").strip(),
+            "date_from": start_text,
+            "date_to": end_text,
+            "generated_at": _now(),
+            "opening_balance": _money(opening_balance),
+            "sales_amount": _money(sales_amount),
+            "receipt_amount": _money(receipt_amount),
+            "settlement_amount": _money(settlement_amount),
+            "adjust_amount": _money(adjust_amount),
+            "ledger_delta": _money(ledger_delta),
+            "unpaid_amount": _money(unpaid_amount),
+            "ending_balance": _money(ending_balance),
+            "sales_quantity": _qty_text(sales_quantity),
+            "sales_count": len(sales_result),
+            "ledger_count": len(ledger_result),
+            "sales": sales_result,
+            "ledger": ledger_result,
+        }
 
     def customer_sales(
         self,
@@ -2547,7 +3158,13 @@ class NativeDBClient:
             }.get(str(row.get("role") or ""), str(row.get("role") or ""))
         return rows, total
 
-    def update_user(self, user_id: int, role: str | None = None, is_active: int | None = None) -> dict:
+    def update_user(
+        self,
+        user_id: int,
+        role: str | None = None,
+        is_active: int | None = None,
+        display_name: str | None = None,
+    ) -> dict:
         updates = []
         params: list[Any] = []
         if role is not None:
@@ -2571,6 +3188,12 @@ class NativeDBClient:
             params.append(1 if int(is_active or 0) else 0)
             if int(is_active or 0):
                 updates.append("approval_status='approved'")
+        if display_name is not None:
+            clean_name = str(display_name or "").strip()
+            if not clean_name:
+                return {"code": 400, "msg": "显示名称不能为空"}
+            updates.append("display_name=%s")
+            params.append(clean_name[:80])
         if not updates:
             return {"code": 400, "msg": "没有要更新的字段"}
         updates.append("updated_at=%s")
@@ -2578,6 +3201,356 @@ class NativeDBClient:
         params.append(int(user_id))
         affected = self.execute(f"UPDATE auth_user SET {', '.join(updates)} WHERE id=%s", params)
         return {"code": 0, "data": {"affected": affected, "id": int(user_id)}}
+
+    def _identity_user_by_id(self, cursor, user_id: int) -> dict | None:
+        cursor.execute(
+            """
+            SELECT u.*, p.name AS linked_party_name
+            FROM auth_user u
+            LEFT JOIN party p ON p.id=u.linked_party_id
+            WHERE u.id=%s
+            LIMIT 1
+            """,
+            (int(user_id),),
+        )
+        return cursor.fetchone()
+
+    def _identity_users_by_phone(self, cursor, phone: str) -> list[dict]:
+        digits = _phone_digits(phone)
+        if not digits:
+            return []
+        cursor.execute(
+            """
+            SELECT u.*, p.name AS linked_party_name
+            FROM auth_user u
+            LEFT JOIN party p ON p.id=u.linked_party_id
+            WHERE u.phone=%s
+            ORDER BY u.is_admin DESC, u.id ASC
+            LIMIT 5
+            """,
+            (digits,),
+        )
+        return list(cursor.fetchall())
+
+    def _identity_customers_by_phone(self, cursor, phone: str) -> list[dict]:
+        digits = _phone_digits(phone)
+        if not digits:
+            return []
+        cursor.execute(
+            """
+            SELECT id, name, phone, phone_normalized
+            FROM party
+            WHERE kind='customer'
+              AND deleted_at IS NULL
+              AND (phone_normalized=%s OR phone=%s)
+            ORDER BY id ASC
+            LIMIT 5
+            """,
+            (digits, digits),
+        )
+        return list(cursor.fetchall())
+
+    def _identity_user_is_internal(self, user: dict | None) -> bool:
+        if not user:
+            return False
+        role = str(user.get("role") or "").strip()
+        return int(user.get("is_admin") or 0) == 1 or role in {"admin", "staff", "warehouse", "designer"}
+
+    def _identity_display_name(self, profile: dict | None, fallback: str = "微信用户") -> str:
+        profile = profile if isinstance(profile, dict) else {}
+        return str(
+            profile.get("nickName")
+            or profile.get("nickname")
+            or profile.get("display_name")
+            or profile.get("name")
+            or fallback
+        ).strip()[:80] or fallback
+
+    def _identity_upsert(self, cursor, *, user_id: int, provider: str, external_id: str, openid: str = "", unionid: str = "", profile: dict | None = None) -> None:
+        now = _now()
+        cursor.execute(
+            """
+            INSERT INTO auth_identity
+                (user_id, provider, external_user_id, openid, unionid, raw_profile, is_enabled, created_at, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s)
+            ON DUPLICATE KEY UPDATE
+                user_id=VALUES(user_id),
+                openid=VALUES(openid),
+                unionid=VALUES(unionid),
+                raw_profile=VALUES(raw_profile),
+                is_enabled=1,
+                updated_at=VALUES(updated_at)
+            """,
+            (
+                int(user_id),
+                str(provider or "").strip(),
+                str(external_id or "").strip(),
+                openid or None,
+                unionid or None,
+                json.dumps(profile or {}, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+
+    def _identity_link_customer_if_allowed(self, cursor, *, user: dict, phone: str) -> tuple[int | None, str, bool]:
+        customers = self._identity_customers_by_phone(cursor, phone)
+        if len(customers) > 1:
+            return None, "customer_phone_conflict", True
+        if len(customers) != 1:
+            return None, "no_customer_match", False
+        customer_id = int(customers[0].get("id") or 0)
+        if self._identity_user_is_internal(user):
+            return customer_id, "internal_user_not_changed", False
+        cursor.execute(
+            """
+            UPDATE auth_user
+            SET linked_party_id=%s,
+                role=CASE WHEN role IN ('guest','customer','') THEN 'customer' ELSE role END,
+                approval_status=CASE WHEN approval_status='pending' THEN 'approved' ELSE approval_status END,
+                is_active=1,
+                updated_at=%s
+            WHERE id=%s
+            """,
+            (customer_id, _now(), int(user["id"])),
+        )
+        return customer_id, "linked_customer", False
+
+    def identity_sync_user_phone(self, user_id: int, *, phone: str, operator_user_id: Any = None) -> dict:
+        digits = _phone_digits(phone)
+        if not digits:
+            return {"code": 400, "msg": "手机号不能为空"}
+        with self.transaction() as cursor:
+            user = self._identity_user_by_id(cursor, int(user_id))
+            if not user:
+                return {"code": 404, "msg": "用户不存在"}
+            cursor.execute(
+                "UPDATE auth_user SET phone=%s, updated_at=%s WHERE id=%s",
+                (digits, _now(), int(user_id)),
+            )
+            self._identity_upsert(cursor, user_id=int(user_id), provider="phone", external_id=digits)
+            user["phone"] = digits
+            customer_id, status, needs_review = self._identity_link_customer_if_allowed(cursor, user=user, phone=digits)
+        return {
+            "code": 0,
+            "data": {
+                "user_id": int(user_id),
+                "phone": digits,
+                "customer_id": customer_id,
+                "bind_status": status,
+                "needs_review": needs_review,
+            },
+        }
+
+    def identity_sync_customer_phone(self, customer_id: int, *, phone: str, operator_user_id: Any = None) -> dict:
+        self._ensure_party_columns()
+        digits = _phone_digits(phone)
+        if not digits:
+            return {"code": 400, "msg": "手机号不能为空"}
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT id, name
+                FROM party
+                WHERE id=%s AND kind='customer' AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (int(customer_id),),
+            )
+            customer = cursor.fetchone()
+            if not customer:
+                return {"code": 404, "msg": "客户不存在"}
+            cursor.execute(
+                """
+                UPDATE party
+                SET phone=%s, phone_normalized=%s, updated_at=%s
+                WHERE id=%s
+                """,
+                (digits, digits, _now(), int(customer_id)),
+            )
+            users = self._identity_users_by_phone(cursor, digits)
+            if len(users) > 1:
+                return {
+                    "code": 409,
+                    "msg": "手机号匹配多个用户，请人工处理",
+                    "data": {"customer_id": int(customer_id), "phone": digits, "needs_review": True},
+                    "_http_status": 409,
+                }
+            linked_user_id = None
+            bind_status = "no_user_match"
+            if len(users) == 1:
+                user = users[0]
+                linked_user_id = int(user.get("id") or 0)
+                self._identity_upsert(cursor, user_id=linked_user_id, provider="phone", external_id=digits)
+                if self._identity_user_is_internal(user):
+                    bind_status = "internal_user_not_changed"
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE auth_user
+                        SET linked_party_id=%s,
+                            role=CASE WHEN role IN ('guest','customer','') THEN 'customer' ELSE role END,
+                            approval_status=CASE WHEN approval_status='pending' THEN 'approved' ELSE approval_status END,
+                            is_active=1,
+                            updated_at=%s
+                        WHERE id=%s
+                        """,
+                        (int(customer_id), _now(), linked_user_id),
+                    )
+                    bind_status = "linked_user"
+        return {
+            "code": 0,
+            "data": {
+                "customer_id": int(customer_id),
+                "user_id": linked_user_id,
+                "phone": digits,
+                "bind_status": bind_status,
+                "needs_review": False,
+            },
+        }
+
+    def identity_link_wechat(self, *, openid: str, unionid: str = "", phone: str = "", profile: dict | None = None) -> dict:
+        openid = str(openid or "").strip()
+        unionid = str(unionid or "").strip()
+        digits = _phone_digits(phone)
+        profile = profile if isinstance(profile, dict) else {}
+        if not openid:
+            return {"code": 400, "msg": "缺少微信 openid"}
+        now = _now()
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT u.*, p.name AS linked_party_name
+                FROM auth_identity ai
+                JOIN auth_user u ON u.id=ai.user_id
+                LEFT JOIN party p ON p.id=u.linked_party_id
+                WHERE ai.provider='wechat'
+                  AND ai.external_user_id=%s
+                  AND ai.is_enabled=1
+                LIMIT 1
+                """,
+                (openid,),
+            )
+            existing_user = cursor.fetchone()
+            if existing_user:
+                user_id = int(existing_user["id"])
+                if digits and not existing_user.get("phone"):
+                    cursor.execute("UPDATE auth_user SET phone=%s, updated_at=%s WHERE id=%s", (digits, now, user_id))
+                    existing_user["phone"] = digits
+                if digits:
+                    self._identity_upsert(cursor, user_id=user_id, provider="phone", external_id=digits)
+                    customer_id, status, needs_review = self._identity_link_customer_if_allowed(cursor, user=existing_user, phone=digits)
+                else:
+                    customer_id = existing_user.get("linked_party_id")
+                    status = "existing_identity"
+                    needs_review = False
+                self._identity_upsert(
+                    cursor,
+                    user_id=user_id,
+                    provider="wechat",
+                    external_id=openid,
+                    openid=openid,
+                    unionid=unionid,
+                    profile=profile,
+                )
+                return {
+                    "code": 0,
+                    "data": {
+                        "user_id": user_id,
+                        "customer_id": customer_id,
+                        "phone": digits or existing_user.get("phone") or "",
+                        "bind_status": status,
+                        "needs_review": needs_review,
+                    },
+                }
+
+            users = self._identity_users_by_phone(cursor, digits) if digits else []
+            if len(users) > 1:
+                return {
+                    "code": 409,
+                    "msg": "手机号匹配多个用户，请人工处理",
+                    "data": {"phone": digits, "needs_review": True},
+                    "_http_status": 409,
+                }
+            if len(users) == 1:
+                user = users[0]
+                user_id = int(user["id"])
+                if digits:
+                    self._identity_upsert(cursor, user_id=user_id, provider="phone", external_id=digits)
+                    customer_id, status, needs_review = self._identity_link_customer_if_allowed(cursor, user=user, phone=digits)
+                else:
+                    customer_id = user.get("linked_party_id")
+                    status = "linked_existing_user"
+                    needs_review = False
+                self._identity_upsert(
+                    cursor,
+                    user_id=user_id,
+                    provider="wechat",
+                    external_id=openid,
+                    openid=openid,
+                    unionid=unionid,
+                    profile=profile,
+                )
+                return {
+                    "code": 0,
+                    "data": {
+                        "user_id": user_id,
+                        "customer_id": customer_id,
+                        "phone": digits or user.get("phone") or "",
+                        "bind_status": "linked_existing_user" if status == "no_customer_match" else status,
+                        "needs_review": needs_review,
+                    },
+                }
+
+            customers = self._identity_customers_by_phone(cursor, digits) if digits else []
+            if len(customers) > 1:
+                return {
+                    "code": 409,
+                    "msg": "手机号匹配多个客户，请人工处理",
+                    "data": {"phone": digits, "needs_review": True},
+                    "_http_status": 409,
+                }
+            customer_id = int(customers[0]["id"]) if len(customers) == 1 else None
+            display_name = self._identity_display_name(profile, fallback=f"微信用户{digits[-4:]}" if digits else "微信用户")
+            username = f"wechat:{hashlib.sha1(openid.encode('utf-8')).hexdigest()[:24]}"
+            approval_status = "approved" if digits else "pending"
+            cursor.execute(
+                """
+                INSERT INTO auth_user
+                    (username, password_hash, display_name, phone, role, linked_party_id,
+                     approval_status, is_active, is_admin, created_at, updated_at)
+                VALUES (%s,NULL,%s,%s,'customer',%s,%s,1,0,%s,%s)
+                ON DUPLICATE KEY UPDATE
+                    display_name=VALUES(display_name),
+                    phone=COALESCE(VALUES(phone), phone),
+                    linked_party_id=COALESCE(VALUES(linked_party_id), linked_party_id),
+                    updated_at=VALUES(updated_at)
+                """,
+                (username, display_name, digits or None, customer_id, approval_status, now, now),
+            )
+            cursor.execute("SELECT id FROM auth_user WHERE username=%s LIMIT 1", (username,))
+            user_id = int(cursor.fetchone()["id"])
+            self._identity_upsert(
+                cursor,
+                user_id=user_id,
+                provider="wechat",
+                external_id=openid,
+                openid=openid,
+                unionid=unionid,
+                profile=profile,
+            )
+            if digits:
+                self._identity_upsert(cursor, user_id=user_id, provider="phone", external_id=digits)
+        return {
+            "code": 0,
+            "data": {
+                "user_id": user_id,
+                "customer_id": customer_id,
+                "phone": digits,
+                "bind_status": "created_customer_user" if customer_id else "created_phone_user" if digits else "created_pending_wechat_user",
+                "needs_review": False,
+            },
+        }
 
     def warehouse_list(self) -> list[dict]:
         rows = self.query(
@@ -2784,6 +3757,11 @@ class NativeDBClient:
         page: int = 1,
         page_size: int = 20,
         status: Any = None,
+        status_filter: str = "active",
+        pay_status: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        customer_id: int | None = None,
     ) -> tuple[list[dict], int]:
         self._ensure_operator_columns()
         self._ensure_sales_delete_columns()
@@ -2794,8 +3772,22 @@ class NativeDBClient:
         if status not in (None, ""):
             where.append("s.status=%s")
             params.append(str(status))
+        elif status_filter == "deleted":
+            where.append("s.status='deleted'")
         else:
             where.append("s.status NOT IN ('canceled', 'deleted')")
+        if pay_status:
+            where.append("s.pay_status=%s")
+            params.append(str(pay_status))
+        if date_from:
+            where.append("DATE(s.sales_at)>=%s")
+            params.append(str(date_from)[:10])
+        if date_to:
+            where.append("DATE(s.sales_at)<=%s")
+            params.append(str(date_to)[:10])
+        if customer_id:
+            where.append("s.customer_id=%s")
+            params.append(int(customer_id))
         join_items = ""
         if keyword:
             join_items = " LEFT JOIN sales_order_item si_filter ON si_filter.sales_order_id=s.id"
@@ -4339,6 +5331,46 @@ class NativeDBClient:
         if not affected:
             return {"code": 404, "msg": "客户不存在"}
         return {"code": 0, "data": {"id": customer_id, "is_monthly_customer": value}}
+
+    def update_customer_profile(
+        self,
+        customer_id: int,
+        *,
+        name: Any = None,
+        contacts_name: Any = None,
+        address: Any = None,
+    ) -> dict:
+        self._ensure_party_columns()
+        customer_id = int(customer_id or 0)
+        fields: list[str] = []
+        params: list[Any] = []
+        if name is not None:
+            clean_name = str(name or "").strip()
+            if not clean_name:
+                return {"code": 400, "msg": "客户名称不能为空"}
+            fields.append("name=%s")
+            params.append(clean_name)
+        if contacts_name is not None:
+            fields.append("contact_name=%s")
+            params.append(str(contacts_name or "").strip())
+        if address is not None:
+            fields.append("address=%s")
+            params.append(str(address or "").strip())
+        if not fields:
+            return {"code": 0, "data": {"id": customer_id}}
+        fields.append("updated_at=%s")
+        params.append(_now())
+        affected = self.execute(
+            f"""
+            UPDATE party
+            SET {', '.join(fields)}
+            WHERE id=%s AND kind='customer' AND deleted_at IS NULL
+            """,
+            params + [customer_id],
+        )
+        if not affected:
+            return {"code": 404, "msg": "客户不存在"}
+        return {"code": 0, "data": {"id": customer_id}}
 
     # ---- inventory writes ----
 
