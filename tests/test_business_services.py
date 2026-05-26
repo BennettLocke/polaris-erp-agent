@@ -398,6 +398,59 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(user["id"], 1)
         self.assertEqual(user["role"], "admin")
 
+    def test_auth_service_wechat_quick_login_exchanges_phone_code_before_binding(self):
+        class PhoneCodeAuthService(AuthService):
+            def __init__(self, db):
+                super().__init__(db=db)
+                self.phone_code_calls = []
+
+            def wechat_session_from_code(self, authcode: str, appid: str) -> dict:
+                return {"code": 0, "data": {"openid": "wx-openid", "unionid": "wx-unionid"}}
+
+            def wechat_phone_from_code(self, phone_code: str, appid: str) -> dict:
+                self.phone_code_calls.append((phone_code, appid))
+                return {
+                    "code": 0,
+                    "data": {
+                        "phone": "138 0013 8000",
+                        "phone_info": {
+                            "phoneNumber": "+86 138 0013 8000",
+                            "purePhoneNumber": "13800138000",
+                            "countryCode": "86",
+                        },
+                    },
+                }
+
+        db = FakeDB()
+        service = PhoneCodeAuthService(db=db)
+
+        result = service.wechat_quick_login(
+            authcode="login-code",
+            phone_code="phone-code",
+            appid="wx-appid",
+            profile={"nickName": "彬"},
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(service.phone_code_calls, [("phone-code", "wx-appid")])
+        self.assertIn(
+            (
+                "identity_link_wechat",
+                {
+                    "openid": "wx-openid",
+                    "unionid": "wx-unionid",
+                    "phone": "13800138000",
+                    "profile": {
+                        "nickName": "彬",
+                        "phoneNumber": "+86 138 0013 8000",
+                        "purePhoneNumber": "13800138000",
+                        "countryCode": "86",
+                    },
+                },
+            ),
+            db.calls,
+        )
+
     def test_sales_service_normalizes_unit_before_create_order(self):
         db = FakeDB()
         service = SalesService(db=db)

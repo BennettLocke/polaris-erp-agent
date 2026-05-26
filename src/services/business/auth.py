@@ -42,6 +42,7 @@ _AUTH_READY = False
 _AUTH_LOCK = threading.Lock()
 _TOKEN_CACHE: dict[str, tuple[float, dict]] = {}
 _TOKEN_CACHE_TTL = 60
+_WECHAT_ACCESS_TOKEN_CACHE: dict[str, tuple[float, str]] = {}
 
 
 def phone_digits(value: Any) -> str:
@@ -498,6 +499,77 @@ class AuthService(BusinessService):
             return {"code": 401, "msg": data.get("errmsg") or "微信登录失败", "raw": data}
         return {"code": 0, "data": data}
 
+    def wechat_access_token(self, appid: str) -> dict:
+        appid = str(appid or "").strip()
+        secret = os.environ.get("WECHAT_MINIAPP_SECRET") or os.environ.get("WX_MINIAPP_SECRET") or ""
+        if not appid or not secret:
+            return {"code": 400, "msg": "未配置微信小程序 appid/secret，不能换取手机号"}
+        now = time.time()
+        cached = _WECHAT_ACCESS_TOKEN_CACHE.get(appid)
+        if cached and cached[0] > now:
+            return {"code": 0, "data": {"access_token": cached[1], "cached": True}}
+        import requests
+
+        resp = requests.get(
+            "https://api.weixin.qq.com/cgi-bin/token",
+            params={
+                "grant_type": "client_credential",
+                "appid": appid,
+                "secret": secret,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return {"code": 500, "msg": "微信 access_token 返回格式异常"}
+        if data.get("errcode"):
+            return {"code": 401, "msg": data.get("errmsg") or "微信 access_token 获取失败", "raw": data}
+        access_token = str(data.get("access_token") or "").strip()
+        if not access_token:
+            return {"code": 500, "msg": "微信 access_token 为空", "raw": data}
+        try:
+            expires_in = int(data.get("expires_in") or 7200)
+        except (TypeError, ValueError):
+            expires_in = 7200
+        _WECHAT_ACCESS_TOKEN_CACHE[appid] = (now + max(60, expires_in - 300), access_token)
+        return {"code": 0, "data": {"access_token": access_token, "cached": False}}
+
+    def wechat_phone_from_code(self, phone_code: str, appid: str) -> dict:
+        phone_code = str(phone_code or "").strip()
+        if not phone_code:
+            return {"code": 400, "msg": "缺少微信手机号 code", "_http_status": 400}
+        token_result = self.wechat_access_token(appid)
+        if int(token_result.get("code", -1)) != 0:
+            return {**token_result, "_http_status": int(token_result.get("_http_status") or 400)}
+        access_token = str(((token_result.get("data") or {}).get("access_token")) or "").strip()
+        if not access_token:
+            return {"code": 500, "msg": "微信 access_token 为空", "_http_status": 500}
+        import requests
+
+        resp = requests.post(
+            "https://api.weixin.qq.com/wxa/business/getuserphonenumber",
+            params={"access_token": access_token},
+            json={"code": phone_code},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return {"code": 500, "msg": "微信手机号返回格式异常", "_http_status": 500}
+        if int(data.get("errcode") or 0) != 0:
+            return {
+                "code": 401,
+                "msg": data.get("errmsg") or "微信手机号换取失败",
+                "raw": data,
+                "_http_status": 400,
+            }
+        phone_info = data.get("phone_info") if isinstance(data.get("phone_info"), dict) else {}
+        phone = self._profile_phone(phone_info)
+        if not phone:
+            return {"code": 500, "msg": "微信手机号返回为空", "raw": data, "_http_status": 500}
+        return {"code": 0, "data": {"phone": phone, "phone_info": phone_info, "raw": data}}
+
     def upsert_wechat_user(self, openid: str, unionid: str = "", profile: dict | None = None) -> dict:
         openid = str(openid or "").strip()
         unionid = str(unionid or "").strip()
@@ -533,12 +605,14 @@ class AuthService(BusinessService):
         unionid: str = "",
         profile: dict | None = None,
         authcode: str = "",
+        phone_code: str = "",
         appid: str = "",
         ip: str = "",
         user_agent: str = "",
     ) -> dict:
         openid = str(openid or "").strip()
         unionid = str(unionid or "").strip()
+        profile = profile if isinstance(profile, dict) else {}
         if not openid:
             if not authcode:
                 return {"code": 400, "msg": "缺少微信登录 code 或 openid", "_http_status": 400}
@@ -548,6 +622,13 @@ class AuthService(BusinessService):
             wx_data = wx_result.get("data") or {}
             openid = str(wx_data.get("openid") or "")
             unionid = str(wx_data.get("unionid") or unionid or "")
+        if phone_code and not self._profile_phone(profile):
+            phone_result = self.wechat_phone_from_code(phone_code, appid)
+            if int(phone_result.get("code", -1)) != 0:
+                return {**phone_result, "_http_status": int(phone_result.get("_http_status") or 400)}
+            phone_info = (phone_result.get("data") or {}).get("phone_info")
+            if isinstance(phone_info, dict):
+                profile = {**profile, **phone_info}
         from .identity import IdentityLinkService
 
         link_result = IdentityLinkService(db=self.db).link_wechat(

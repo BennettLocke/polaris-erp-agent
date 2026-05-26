@@ -4334,7 +4334,19 @@ def auth_login():
 def auth_wechat_quick_login():
     """Login through native WeChat identity binding."""
     body = request.get_json(silent=True) or request.form.to_dict() or {}
-    authcode = (body.get("authcode") or body.get("code") or "").strip()
+    phone_code = (body.get("phone_code") or body.get("phoneCode") or "").strip()
+    authcode = (
+        body.get("authcode")
+        or body.get("login_code")
+        or body.get("loginCode")
+        or body.get("js_code")
+        or body.get("jsCode")
+        or ""
+    ).strip()
+    if not authcode:
+        fallback_code = (body.get("code") or "").strip()
+        if fallback_code and fallback_code != phone_code:
+            authcode = fallback_code
     openid = (body.get("openid") or body.get("open_id") or "").strip()
     unionid = (body.get("unionid") or body.get("union_id") or "").strip()
     profile = body.get("userInfo") if isinstance(body.get("userInfo"), dict) else body
@@ -4345,6 +4357,7 @@ def auth_wechat_quick_login():
             unionid=unionid,
             profile=profile,
             authcode=authcode,
+            phone_code=phone_code,
             appid=miniapp_appid,
             ip=request.headers.get("X-Forwarded-For") or request.remote_addr or "",
             user_agent=request.headers.get("User-Agent") or "",
