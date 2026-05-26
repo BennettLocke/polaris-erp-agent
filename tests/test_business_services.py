@@ -593,6 +593,9 @@ class BusinessServiceTests(unittest.TestCase):
                 "category_ids": None,
                 "listed_only": True,
                 "sort": "",
+                "listed_state": "",
+                "stock_mode": "",
+                "quality": "",
             },
         ))
         self.assertEqual(db.calls[1], ("product_info", {"product_id": 88, "listed_only": True}))
@@ -615,6 +618,9 @@ class BusinessServiceTests(unittest.TestCase):
                 "category_ids": None,
                 "listed_only": True,
                 "sort": "price_asc",
+                "listed_state": "",
+                "stock_mode": "",
+                "quality": "",
             },
         ))
 
@@ -637,6 +643,9 @@ class BusinessServiceTests(unittest.TestCase):
                 "listed_only": False,
                 "sort": "",
                 "product_type": "bag",
+                "listed_state": "",
+                "stock_mode": "",
+                "quality": "",
             },
         ))
 

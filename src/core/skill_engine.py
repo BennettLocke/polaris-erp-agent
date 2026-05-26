@@ -1039,6 +1039,7 @@ class SkillEngine:
                 "qty": int(float(compact_match.group(2))),
                 "unit": compact_match.group(3),
                 "color": color,
+                "_qty_text": compact_match.group(2),
             })
         if not products:
             cleaned = re.sub(r'(?<![\u4e00-\u9fa5A-Za-z0-9])客户[:：]?\s*[^\s，,]+', '', text_without_command or text)
@@ -1052,7 +1053,7 @@ class SkillEngine:
                         color = c
                         name = name.replace(c, "")
                         break
-                products.append({"name": name.replace("商品", "").replace("产品", "").strip(), "qty": int(match.group(2)), "unit": match.group(3), "color": color})
+                products.append({"name": name.replace("商品", "").replace("产品", "").strip(), "qty": int(match.group(2)), "unit": match.group(3), "color": color, "_qty_text": match.group(2)})
         if customer or products:
             return {"intent": "order", "customer": customer, "products": products}
         return None

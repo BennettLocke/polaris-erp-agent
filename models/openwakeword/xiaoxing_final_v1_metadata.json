@@ -1,0 +1,206 @@
+{
+  "model": "/tts/models/xiaoxing_final_v1/xiaoxing_v1.onnx",
+  "input_shape": [
+    16,
+    96
+  ],
+  "positive_phrases": [
+    "小星小星",
+    "小新小新",
+    "小心小心"
+  ],
+  "negative_notes": "Includes near-sounding non-wake words, single short words, inventory/business commands, and processing phrases as hard negatives.",
+  "training_counts": {
+    "positive": 5000,
+    "negative": 5000,
+    "train": 54250,
+    "val": 10500
+  },
+  "recommended_threshold": {
+    "threshold": 0.05,
+    "recall": 0.872,
+    "negative_hit_rate": 0.017025641025641025,
+    "precision": 0.7975609756097561,
+    "f1": 0.8331210191082802,
+    "tp": 654,
+    "fp": 166,
+    "tn": 9584,
+    "fn": 96
+  },
+  "history_tail": [
+    {
+      "epoch": 51,
+      "loss": 0.004622704889251903,
+      "lr": 4.3597390324652926e-05,
+      "threshold": 0.3499999999999999,
+      "recall": 0.8426666666666667,
+      "negative_hit_rate": 0.014461538461538461,
+      "precision": 0.8175937904269082,
+      "f1": 0.829940906106369,
+      "tp": 632,
+      "fp": 141,
+      "tn": 9609,
+      "fn": 118,
+      "selection_score": 0.8810414303247421
+    },
+    {
+      "epoch": 52,
+      "loss": 0.0043563681033018204,
+      "lr": 3.458181694295964e-05,
+      "threshold": 0.4499999999999999,
+      "recall": 0.8466666666666667,
+      "negative_hit_rate": 0.014974358974358974,
+      "precision": 0.8130601792573624,
+      "f1": 0.8295231874591771,
+      "tp": 635,
+      "fp": 146,
+      "tn": 9604,
+      "fn": 115,
+      "selection_score": 0.8830496076693259
+    },
+    {
+      "epoch": 53,
+      "loss": 0.004151771995480577,
+      "lr": 2.6567829401119323e-05,
+      "threshold": 0.4099999999999999,
+      "recall": 0.8466666666666667,
+      "negative_hit_rate": 0.015076923076923076,
+      "precision": 0.8120204603580563,
+      "f1": 0.8289817232375979,
+      "tp": 635,
+      "fp": 147,
+      "tn": 9603,
+      "fn": 115,
+      "selection_score": 0.8826379434717031
+    },
+    {
+      "epoch": 54,
+      "loss": 0.003966272672427431,
+      "lr": 1.95773934819386e-05,
+      "threshold": 0.38999999999999996,
+      "recall": 0.848,
+      "negative_hit_rate": 0.015384615384615385,
+      "precision": 0.8091603053435115,
+      "f1": 0.8281249999999999,
+      "tp": 636,
+      "fp": 150,
+      "tn": 9600,
+      "fn": 114,
+      "selection_score": 0.882762184380505
+    },
+    {
+      "epoch": 55,
+      "loss": 0.0039063431421417815,
+      "lr": 1.3629669484372683e-05,
+      "threshold": 0.26999999999999996,
+      "recall": 0.8533333333333334,
+      "negative_hit_rate": 0.015897435897435898,
+      "precision": 0.8050314465408805,
+      "f1": 0.8284789644012946,
+      "tp": 640,
+      "fp": 155,
+      "tn": 9595,
+      "fn": 110,
+      "selection_score": 0.8861441702951137
+    },
+    {
+      "epoch": 56,
+      "loss": 0.003805133124224771,
+      "lr": 8.74095970647773e-06,
+      "threshold": 0.3,
+      "recall": 0.8466666666666667,
+      "negative_hit_rate": 0.015282051282051281,
+      "precision": 0.8099489795918368,
+      "f1": 0.8279009126466754,
+      "tp": 635,
+      "fp": 149,
+      "tn": 9601,
+      "fn": 115,
+      "selection_score": 0.8818154107796965
+    },
+    {
+      "epoch": 57,
+      "loss": 0.0037220943280394663,
+      "lr": 4.9246637619449396e-06,
+      "threshold": 0.38999999999999996,
+      "recall": 0.8453333333333334,
+      "negative_hit_rate": 0.014666666666666666,
+      "precision": 0.8159588159588159,
+      "f1": 0.8303863785199739,
+      "tp": 634,
+      "fp": 143,
+      "tn": 9607,
+      "fn": 116,
+      "selection_score": 0.882929214929215
+    },
+    {
+      "epoch": 58,
+      "loss": 0.0036810312885791063,
+      "lr": 2.191241852690641e-06,
+      "threshold": 0.37999999999999995,
+      "recall": 0.8453333333333334,
+      "negative_hit_rate": 0.014871794871794871,
+      "precision": 0.8138639281129654,
+      "f1": 0.8293001962066712,
+      "tp": 634,
+      "fp": 145,
+      "tn": 9605,
+      "fn": 116,
+      "selection_score": 0.8821043415292453
+    },
+    {
+      "epoch": 59,
+      "loss": 0.003652558383039849,
+      "lr": 5.481860981704671e-07,
+      "threshold": 0.41999999999999993,
+      "recall": 0.8426666666666667,
+      "negative_hit_rate": 0.014564102564102564,
+      "precision": 0.8165374677002584,
+      "f1": 0.8293963254593175,
+      "tp": 632,
+      "fp": 142,
+      "tn": 9608,
+      "fn": 118,
+      "selection_score": 0.8806281057443848
+    },
+    {
+      "epoch": 60,
+      "loss": 0.0036314867776247478,
+      "lr": 0.0,
+      "threshold": 0.41999999999999993,
+      "recall": 0.8426666666666667,
+      "negative_hit_rate": 0.014666666666666666,
+      "precision": 0.8154838709677419,
+      "f1": 0.8288524590163935,
+      "tp": 632,
+      "fp": 143,
+      "tn": 9607,
+      "fn": 118,
+      "selection_score": 0.8802150537634408
+    }
+  ],
+  "created_at": "2026-05-21 03:40:58",
+  "model_name": "xiaoxing_final_v1",
+  "excluded_wake_phrases": [
+    "小宁小宁"
+  ],
+  "runtime_recommended_threshold": 0.9998,
+  "runtime_alternative_thresholds": {
+    "balanced_but_more_false_wake": 0.9995,
+    "stricter_but_misses_more": 0.9999
+  },
+  "streaming_eval_fast_200": {
+    "threshold_0.9995": {
+      "recall": 0.75,
+      "negative_hit_rate": 0.04
+    },
+    "threshold_0.9998": {
+      "recall": 0.65,
+      "negative_hit_rate": 0.015
+    },
+    "threshold_0.9999": {
+      "recall": 0.31,
+      "negative_hit_rate": 0.01
+    }
+  }
+}

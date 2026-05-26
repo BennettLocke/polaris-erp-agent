@@ -11,6 +11,8 @@ node_modules/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.tsbuildinfo
+.codex_*/
 
 # Runtime data
 logs/
@@ -33,3 +35,7 @@ Thumbs.db
 
 # Accidental pip/output file
 =1.0.0
+
+# Local TypeScript build byproducts
+admin/vite.config.js
+admin/vite.config.d.ts

@@ -58,3 +58,15 @@ CREATE TABLE IF NOT EXISTS system_setting_log (
     PRIMARY KEY (id),
     KEY idx_system_setting_log_key (setting_key, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO system_setting
+    (setting_key, setting_value, note, created_at, updated_at)
+VALUES
+    (
+        'payment_rules',
+        '{"payment_statuses":["已付","月结","未付"],"paid_methods":["微信","现金","余额","转账","支付宝"],"default_payment_status":"已付","default_paid_method":"微信","balance_adjust_reasons":["手动调整","客户充值","售后退回","对账修正"],"monthly_customer_rule":"客户设为月结后，销售单默认计入欠款；结款后销售单改为已付。新客户默认不是月结客户。"}',
+        '销售单付款状态、已付方式、余额调整原因和月结客户默认规则',
+        NOW(),
+        NOW()
+    )
+ON DUPLICATE KEY UPDATE setting_key=VALUES(setting_key);

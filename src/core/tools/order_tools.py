@@ -4,15 +4,32 @@ The tool names stay compatible with earlier agent flows, but every runtime
 operation now goes through sjagent_core.
 """
 
-from src.engine.native_db import get_native_db_client
 from src.core.tools.registry import tool
+from src.services.business import (
+    get_inventory_service,
+    get_product_service,
+    get_sales_service,
+    get_workflow_service,
+)
 from src.utils import get_logger
 
 logger = get_logger("sjagent.tools.order")
 
 
-def _native_db():
-    return get_native_db_client()
+def _inventory_service():
+    return get_inventory_service()
+
+
+def _product_service():
+    return get_product_service()
+
+
+def _sales_service():
+    return get_sales_service()
+
+
+def _workflow_service():
+    return get_workflow_service()
 
 
 @tool("workflow_order_save", "保存工作流订单")
@@ -29,7 +46,7 @@ def workflow_order_save(
     remark: str = "",
 ) -> dict:
     try:
-        result = _native_db().save_workflow_order(
+        result = _workflow_service().save_order(
             order_id=order_id,
             customer_name=customer_name,
             customer_phone=customer_phone,
@@ -51,7 +68,7 @@ def workflow_order_save(
 @tool("workflow_order_list", "工作流订单列表")
 def workflow_order_list(keyword: str = None, page: int = 1, page_size: int = 20) -> dict:
     try:
-        cards, total = _native_db().workflow_orders(
+        cards, total = _workflow_service().list_orders(
             keyword=keyword or "",
             page=page,
             page_size=page_size,
@@ -66,13 +83,7 @@ def workflow_order_list(keyword: str = None, page: int = 1, page_size: int = 20)
 @tool("workflow_order_detail", "工作流订单详情")
 def workflow_order_detail(order_id: int) -> dict:
     try:
-        rows = _native_db().query(
-            "SELECT * FROM workflow_order WHERE id=%s AND deleted_at IS NULL LIMIT 1",
-            (order_id,),
-        )
-        if not rows:
-            return {"code": 404, "msg": "工作流订单不存在"}
-        return {"code": 0, "data": rows[0]}
+        return _workflow_service().detail(order_id)
     except Exception as e:
         logger.error(f"native workflow order detail failed: {e}")
         return {"error": str(e)}
@@ -81,7 +92,7 @@ def workflow_order_detail(order_id: int) -> dict:
 @tool("workflow_order_delete", "删除工作流订单")
 def workflow_order_delete(ids: str) -> dict:
     try:
-        result = _native_db().delete_workflow_orders(ids)
+        result = _workflow_service().delete_orders(ids)
         logger.info(f"native workflow order deleted: ids={ids}")
         return result
     except Exception as e:
@@ -92,7 +103,7 @@ def workflow_order_delete(ids: str) -> dict:
 @tool("workflow_order_status_update", "更新工作流订单状态")
 def workflow_order_status_update(order_id: int, field: str, value: int) -> dict:
     try:
-        result = _native_db().update_workflow_status(order_id=order_id, field=field, value=value)
+        result = _workflow_service().update_status(order_id=order_id, field=field, value=value)
         logger.info(f"native workflow status updated: id={order_id}, field={field}, value={value}")
         return result
     except Exception as e:
@@ -103,7 +114,7 @@ def workflow_order_status_update(order_id: int, field: str, value: int) -> dict:
 @tool("sales_print_task", "创建销售单打印任务")
 def sales_print_task(sales_id: int) -> dict:
     try:
-        result = _native_db().create_sales_print_task(sales_id=sales_id)
+        result = _sales_service().create_print_task(sales_id=sales_id)
         logger.info(f"native sales print task created: sales_id={sales_id}")
         return result
     except Exception as e:
@@ -114,7 +125,7 @@ def sales_print_task(sales_id: int) -> dict:
 @tool("sales_print", "获取销售单打印数据")
 def sales_print(sales_id: int) -> dict:
     try:
-        return _native_db().sales_print_data(sales_id)
+        return _sales_service().print_data(sales_id)
     except Exception as e:
         logger.error(f"native sales print data failed: {e}")
         return {"error": str(e)}
@@ -123,7 +134,7 @@ def sales_print(sales_id: int) -> dict:
 @tool("sales_history_price", "查询客户历史成交价")
 def sales_history_price(customer_id: int, product_id: int) -> float | None:
     try:
-        price = _native_db().sales_history_price(customer_id, product_id)
+        price = _sales_service().history_price(customer_id, product_id)
         if price:
             logger.info(f"native history price: customer_id={customer_id}, product_id={product_id}, price={price}")
         return price
@@ -135,7 +146,7 @@ def sales_history_price(customer_id: int, product_id: int) -> float | None:
 @tool("get_product_price", "获取商品价格")
 def get_product_price(product_id: int) -> float | None:
     try:
-        return _native_db().get_product_price(product_id)
+        return _product_service().price(product_id)
     except Exception as e:
         logger.error(f"native product price failed: {e}")
         return None
@@ -144,7 +155,7 @@ def get_product_price(product_id: int) -> float | None:
 @tool("sales_print_task_list", "待打印任务列表")
 def sales_print_task_list() -> dict:
     try:
-        return _native_db().sales_print_task_list()
+        return _sales_service().print_task_list()
     except Exception as e:
         logger.error(f"native sales print task list failed: {e}")
         return {"error": str(e)}
@@ -153,7 +164,7 @@ def sales_print_task_list() -> dict:
 @tool("sales_print_task_done", "标记打印完成")
 def sales_print_task_done(task_id: int) -> dict:
     try:
-        return _native_db().sales_print_task_done(task_id)
+        return _sales_service().print_task_done(task_id)
     except Exception as e:
         logger.error(f"native sales print task done failed: {e}")
         return {"error": str(e)}
@@ -168,7 +179,7 @@ def purchase_add(company_id: int, products: list[dict], note: str = "") -> dict:
                 warehouse_id = int(item.get("warehouse_id"))
                 break
         final_note = note or f"供应商#{company_id} 采购入库"
-        return _native_db().create_stock_in(
+        return _inventory_service().create_stock_in(
             warehouse_id=warehouse_id,
             products=products,
             note=final_note,

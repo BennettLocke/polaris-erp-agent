@@ -25,8 +25,8 @@ from src.core.product_matcher import ProductMatcher
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.utils import get_logger
 from scripts.image_processor import ImageProcessor
-from scripts.common.color_filter import STANDARD_COLORS, filter_uv, extract_color_from_text
-from scripts.common.unit_converter import calculate_order_quantity
+from scripts.common.color_filter import COLOR_ALIASES, STANDARD_COLORS, filter_uv, extract_color_from_text
+from scripts.common.unit_converter import calculate_order_quantity, parse_unit_from_simple_desc
 
 logger = get_logger("sjagent.nodes.image_workflow")
 REMARK_OCR_TOP_RATIO = 0.22
@@ -124,6 +124,7 @@ def process_single_image(image_path: str, caller) -> dict:
                 child_results.append(_process_ocr_order(ocr_texts, temp_path, caller))
 
             result["items"] = child_results
+            propagate_batch_customer_context(child_results)
             result["workflow_orders"] = [item["workflow_order"] for item in child_results if item.get("workflow_order")]
             result["workflow_order_payloads"] = [
                 item["workflow_order_payload"]
@@ -192,7 +193,12 @@ def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
     item["parsed"] = parsed
 
     goods_name = parsed.get("goods_name", "")
-    product_info = find_product_by_goods_name(goods_name, caller, parsed.get("color", ""))
+    color = parsed.get("color", "")
+    product_info = find_product_by_goods_name(goods_name, caller, color)
+    case_pack_info = product_info
+    if product_info is None and goods_name and color:
+        # 颜色可能是定制色或 OCR 偏差；工作流仍要按同 SPU 件规换算数量。
+        case_pack_info = find_case_pack_by_goods_name(goods_name, caller)
     if product_info is None:
         if goods_name:
             item["product_warning"].append(goods_name)
@@ -200,9 +206,10 @@ def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
     else:
         parsed["product_id"] = product_info.get("id")
         parsed["product_info"] = product_info
+    if case_pack_info is not None:
         order_qty = parsed.get("quantity", 1)
         reported_unit = parsed.get("unit") or "套"
-        simple_desc = product_info.get("simple_desc", "")
+        simple_desc = case_pack_info.get("simple_desc", "")
         per_piece = parse_per_piece(simple_desc)
         if per_piece > 1 and reported_unit == "件":
             order_qty = calculate_order_quantity(
@@ -352,6 +359,17 @@ def _parse_quantity(line: str) -> tuple[int, str] | None:
     return None
 
 
+def _is_plausible_unlabeled_goods(value: str) -> bool:
+    text = _clean_field_value(value)
+    if not text or len(text) < 2:
+        return False
+    if re.fullmatch(r"(客户|客人|客户名称|下单|商品|产品|货品|品名|名称|H|h)", text):
+        return False
+    if re.search(r"(电话|手机|编号|单号|日期)", text):
+        return False
+    return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", text))
+
+
 def _goods_word_pattern() -> str:
     return r"(长款半斤|长半斤|短半斤|半斤|[一二三四五六七八九十\d]+两|[一二三四五六七八九十\d]+小盒|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
 
@@ -381,8 +399,11 @@ def _extract_goods_from_remark(line: str) -> str:
     without_prefix = re.sub(r"^(客户|下单)\s*:?\s*", "", without_date).strip()
     without_qty = re.sub(r"(?:UV|uv)?\d+\s*(套|件|个|张|只|盒)", "", without_prefix)
     without_craft = re.sub(r"\([^)]*(丝印|印刷|提袋)[^)]*\)", "", without_qty)
+    without_craft = re.sub(r"(提袋\s*)?(丝印|印刷|UV|uv|烫金|烫银|击凸|击凹)", "", without_craft)
+    without_craft = re.sub(r"提袋", "", without_craft)
     goods = without_craft
-    for color in sorted(STANDARD_COLORS, key=len, reverse=True):
+    color_words = list(dict.fromkeys([*STANDARD_COLORS, *COLOR_ALIASES.keys()]))
+    for color in sorted(color_words, key=len, reverse=True):
         goods = goods.replace(color, "")
     return _clean_field_value(goods)
 
@@ -402,7 +423,7 @@ def _clean_goods_value(value: str) -> str:
 
 def _extract_craft_terms(line: str) -> list[str]:
     terms = []
-    for term in re.findall(r"丝印|印刷|UV|uv|烫金|烫银|击凸|击凹", line):
+    for term in re.findall(r"提袋|丝印|印刷|UV|uv|烫金|烫银|击凸|击凹", line):
         normalized = "UV" if term.lower() == "uv" else term
         if normalized not in terms:
             terms.append(normalized)
@@ -444,6 +465,9 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
         line = _normalize_ocr_line(line)
         if not line:
             continue
+        line_quantity = _parse_quantity(line)
+        line_craft_terms = _extract_craft_terms(line)
+        line_color = extract_color_from_text(line) or ""
 
         if pending_label == "customer":
             if not _looks_like_goods_text(line):
@@ -480,6 +504,10 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
             remark_goods = _extract_goods_from_remark(line)
             if remark_goods and not re.fullmatch(r"下单|客户", remark_goods):
                 result["goods_name"] = remark_goods
+        elif not result["goods_name"] and (line_quantity or line_craft_terms or line_color):
+            remark_goods = _extract_goods_from_remark(line)
+            if _is_plausible_unlabeled_goods(remark_goods):
+                result["goods_name"] = remark_goods
 
         # 颜色
         color = _extract_after_label(line, ("颜色", "色号"))
@@ -487,19 +515,17 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
             result["color"] = filter_uv(color)
 
         # 数量
-        quantity = _parse_quantity(line)
-        if quantity:
-            result["quantity"], result["unit"] = quantity
+        if line_quantity:
+            result["quantity"], result["unit"] = line_quantity
 
         # 工艺
         craft = _extract_after_label(line, ("工艺", "做法"))
         if craft:
             result["craft"] = craft
 
-        craft_terms = _extract_craft_terms(line)
-        if craft_terms:
+        if line_craft_terms:
             existing = [item for item in re.split(r"[、,，/ ]+", result["craft"]) if item]
-            for term in craft_terms:
+            for term in line_craft_terms:
                 if term not in existing:
                     existing.append(term)
             result["craft"] = "、".join(existing)
@@ -566,6 +592,30 @@ def repair_ocr_parsed_fields(parsed: dict, caller) -> dict:
     parsed["customer_name"] = customer_name
     parsed["goods_name"] = goods_name
     return parsed
+
+
+def propagate_batch_customer_context(items: list[dict]) -> None:
+    """Within one uploaded image, use the reliable customer for OCR-missed frames."""
+    names: list[str] = []
+    for item in items or []:
+        parsed = item.get("parsed") or {}
+        name = _clean_field_value(str(parsed.get("customer_name") or ""))
+        if name and not _is_invalid_customer(name) and not parsed.get("customer_missing") and name not in names:
+            names.append(name)
+    if len(names) != 1:
+        return
+
+    batch_customer = names[0]
+    for item in items or []:
+        parsed = item.get("parsed") or {}
+        name = _clean_field_value(str(parsed.get("customer_name") or ""))
+        if parsed.get("customer_missing") or _is_invalid_customer(name):
+            parsed["customer_name"] = batch_customer
+            parsed["customer_inferred"] = True
+            parsed["customer_missing"] = False
+            payload = item.get("workflow_order_payload")
+            if isinstance(payload, dict):
+                payload["customer"] = batch_customer
 
 
 def _split_customer_goods_by_erp(text: str, caller, color: str = "") -> tuple[str, str] | None:
@@ -654,6 +704,46 @@ def find_product_by_goods_name(goods_name: str, caller, color: str = "") -> dict
         except Exception as e:
             logger.warning(f"OCR商品详情补全失败: {e}")
     return product
+
+
+def _case_pack_text_from_product(row: dict) -> str:
+    simple_desc = str(row.get("simple_desc") or row.get("piece_text") or "").strip()
+    if simple_desc:
+        return simple_desc
+    case_pack_qty = str(row.get("case_pack_qty") or "").strip()
+    if case_pack_qty:
+        return f"1件{case_pack_qty}套"
+    return ""
+
+
+def find_case_pack_by_goods_name(goods_name: str, caller) -> dict | None:
+    """Find a reliable case-pack row by SPU name, even when OCR color is not a SKU color."""
+    if not goods_name:
+        return None
+    terms = _keyword_terms(goods_name)
+    for keyword in _product_search_keywords(goods_name):
+        try:
+            rows = caller.call("product_search", keyword=keyword) or []
+        except Exception as e:
+            logger.warning(f"OCR件规兜底查询失败: {goods_name}, error={e}")
+            continue
+
+        candidates = []
+        for row in rows:
+            title = str(row.get("title") or row.get("name") or "")
+            normalized_title = _normalize_goods_keyword(title).replace(" ", "")
+            if terms and not all(_normalize_goods_keyword(term).replace(" ", "") in normalized_title for term in terms):
+                continue
+            simple_desc = _case_pack_text_from_product(row)
+            per_piece = parse_per_piece(simple_desc)
+            if per_piece > 1:
+                candidates.append({**row, "simple_desc": simple_desc})
+
+        per_values = {parse_per_piece(str(row.get("simple_desc") or "")) for row in candidates}
+        per_values.discard(1)
+        if candidates and len(per_values) == 1:
+            return candidates[0]
+    return None
 
 
 def _normalize_goods_keyword(goods_name: str) -> str:
@@ -767,7 +857,4 @@ def create_workflow_order(parsed: dict, image_url: str, caller) -> dict | None:
 
 def parse_per_piece(simple_desc: str) -> int:
     """从 simple_desc 提取每件套数"""
-    match = re.search(r"(\d+)\s*套\s*/\s*件", simple_desc)
-    if match:
-        return int(match.group(1))
-    return 1
+    return parse_unit_from_simple_desc(simple_desc) or 1

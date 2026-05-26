@@ -1,6 +1,6 @@
 """泡袋新品上传流程。
 
-当前只实现前置测试阶段：收集模板、商品名、图片，并按 ERP 的 SJ 自动编号规则生成预览，
+当前只实现前置测试阶段：收集模板、商品名、图片，并按商品库的 SJ 自动编号规则生成预览，
 不真正创建/上传商品。
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from src.services.business import get_product_service
 from src.skills.base import BaseWorkflow
 from src.utils import get_logger
 
@@ -100,7 +101,7 @@ class BagUploadWorkflow(BaseWorkflow):
             upload = self._extract_upload_path(user_input)
             if not upload:
                 return self._ask(
-                    "请上传一个 zip 压缩包，里面放要处理的 PNG 图片；每张图片的文件名会作为 ERP 商品标题。",
+                    "请上传一个 zip 压缩包，里面放要处理的 PNG 图片；每张图片的文件名会作为商品库标题。",
                     state,
                 )
             try:
@@ -189,7 +190,7 @@ class BagUploadWorkflow(BaseWorkflow):
     def _ask_archive(self, bag_type: str) -> dict:
         meta = BAG_TYPES.get(bag_type, BAG_TYPES["岩茶"])
         return self._ask(
-            f"已选择{bag_type}模板（{meta['suffix']}）。请上传 zip 压缩包，里面放多个 PNG；每个 PNG 文件名会作为 ERP 商品标题，默认售价 {self._bag_price(bag_type)} 元。",
+            f"已选择{bag_type}模板（{meta['suffix']}）。请上传 zip 压缩包，里面放多个 PNG；每个 PNG 文件名会作为商品库标题，默认售价 {self._bag_price(bag_type)} 元。",
             {"pending_action": "collect_bag_archive", "bag_type": bag_type},
         )
 
@@ -223,13 +224,13 @@ class BagUploadWorkflow(BaseWorkflow):
             f"模板：{draft.get('template_name')}\n"
             f"商品名：{draft.get('product_name')}\n"
             f"分类：{draft.get('category_name')}（ID {draft.get('category_id')}）\n"
-            f"预计编号：{draft.get('coding_preview')}（正式创建时仍由 ERP 自动生成）\n"
+            f"预计编号：{draft.get('coding_preview')}（正式创建时仍由商品库自动生成）\n"
             f"预计标题：{draft.get('title')}\n"
             f"图片：{image_name}\n\n"
             f"标准图：{draft.get('standard_url')}\n"
             f"主图：{draft.get('main_url')}\n"
             f"详情页：{draft.get('detail_url')}\n\n"
-            "确认后本轮只结束前置测试，不会写入 ERP。"
+            "确认后本轮只结束前置测试，不会写入商品库。"
         )
 
     def _test_done_text(self, state: dict) -> str:
@@ -240,7 +241,7 @@ class BagUploadWorkflow(BaseWorkflow):
             f"编号预览：{state.get('coding_preview')}\n"
             f"主图：{state.get('main_url')}\n"
             f"详情页：{state.get('detail_url')}\n"
-            "目前没有上传产品；下一步可以接生成主图/详情图和 ERP 新建商品。"
+            "目前没有上传产品；下一步可以接生成主图/详情图和商品库新建商品。"
         )
 
     def _process_batch_upload(self, upload_path: str, state: dict) -> dict:
@@ -332,14 +333,14 @@ class BagUploadWorkflow(BaseWorkflow):
             if task["has_existing_code"]:
                 existing_product = self._find_existing_product_by_code(code)
                 if not existing_product:
-                    raise ValueError(f"文件名带编号 {code}，但 ERP 里没有找到对应商品；为避免重复创建，已跳过。")
+                    raise ValueError(f"文件名带编号 {code}，但商品库里没有找到对应商品；为避免重复创建，已跳过。")
                 if title == "泡袋新品":
                     title = self._display_title_from_filename(
                         existing_product.get("title") or existing_product.get("name") or existing_product.get("product_name") or ""
                     )
-                erp_title = existing_product.get("title") or self._format_erp_title(code, title, task["suffix"])
+                core_title = existing_product.get("title") or self._format_core_title(code, title, task["suffix"])
             else:
-                erp_title = self._format_erp_title(code, title, task["suffix"])
+                core_title = self._format_core_title(code, title, task["suffix"])
 
             category = self._classify_category(title, task["bag_type"]) or self._default_category(task["bag_type"])
             assets = self._generate_preview_assets(
@@ -351,7 +352,7 @@ class BagUploadWorkflow(BaseWorkflow):
             main_oss = self._upload_to_oss(Path(assets["main_path"]))
             detail_oss = self._upload_to_oss(Path(assets["detail_path"]))
             if existing_product:
-                erp_result = self._update_existing_product_images(
+                core_result = self._update_existing_product_images(
                     existing_product=existing_product,
                     code=code,
                     category_id=category["category_id"],
@@ -361,8 +362,8 @@ class BagUploadWorkflow(BaseWorkflow):
                 )
                 action = "更新"
             else:
-                erp_result = self._save_product_to_erp(
-                    title=erp_title,
+                core_result = self._save_product_to_core(
+                    title=core_title,
                     code=code,
                     category_id=category["category_id"],
                     main_url=main_oss["url"],
@@ -374,14 +375,14 @@ class BagUploadWorkflow(BaseWorkflow):
                 "ok": True,
                 "item": {
                     "index": task["index"],
-                    "title": erp_title,
+                    "title": core_title,
                     "source_title": title,
                     "code": code,
                     "action": action,
                     "category_name": category["category_name"],
                     "main_url": main_oss["url"],
                     "detail_url": detail_oss["url"],
-                    "erp_result": erp_result,
+                    "core_result": core_result,
                 },
             }
         except Exception as e:
@@ -400,7 +401,7 @@ class BagUploadWorkflow(BaseWorkflow):
             f"默认售价：{result.get('price', BAG_DEFAULT_PRICE)} 元",
         ]
         if success:
-            lines.append("\n已上传 ERP：")
+            lines.append("\n已上传商品库：")
             for item in success[:20]:
                 lines.append(f"{item['index']}. [{item.get('action', '新增')}] {item['title']} | {item['code']} | {item['category_name']}")
             if len(success) > 20:
@@ -489,9 +490,7 @@ class BagUploadWorkflow(BaseWorkflow):
         if not code:
             return None
         try:
-            from src.engine.native_db import get_native_db_client
-
-            rows = get_native_db_client().product_search(code, limit=20)
+            rows = get_product_service().search(code, limit=20)
             for row in rows:
                 row_code = self._extract_sj_code(row.get("sku_no") or row.get("coding") or "")
                 title_code = self._extract_sj_code(row.get("title") or row.get("name") or row.get("product_name") or "")
@@ -514,7 +513,7 @@ class BagUploadWorkflow(BaseWorkflow):
                 return self._api_data_list(data["data"])
         return []
 
-    def _format_erp_title(self, code: str, name: str, suffix: str) -> str:
+    def _format_core_title(self, code: str, name: str, suffix: str) -> str:
         cleaned = str(name or "").strip()
         cleaned = re.sub(r"(?i)^【?\s*SJ[\s_-]*\d{3,6}\s*】?", "", cleaned).strip()
         cleaned = re.sub(r"(?i)[-_\s]*【?\s*SJ[\s_-]*\d{3,6}\s*】?$", "", cleaned).strip()
@@ -536,7 +535,7 @@ class BagUploadWorkflow(BaseWorkflow):
         self._delete_path(path, "泡袋 OSS 图片")
         return result
 
-    def _save_product_to_erp(
+    def _save_product_to_core(
         self,
         title: str,
         code: str,
@@ -545,8 +544,6 @@ class BagUploadWorkflow(BaseWorkflow):
         detail_url: str,
         price: int = BAG_DEFAULT_PRICE,
     ) -> dict:
-        from src.engine.native_db import get_native_db_client
-
         payload = {
             "title": title,
             "product_type": "bubble_bag",
@@ -579,7 +576,7 @@ class BagUploadWorkflow(BaseWorkflow):
                 }
             },
         }
-        return get_native_db_client().save_product(payload)
+        return get_product_service().save(payload)
 
     def _update_existing_product_images(
         self,
@@ -590,14 +587,11 @@ class BagUploadWorkflow(BaseWorkflow):
         detail_url: str,
         price: int = BAG_DEFAULT_PRICE,
     ) -> dict:
-        from src.engine.native_db import get_native_db_client
-
         product_id = int(existing_product.get("id") or existing_product.get("product_id") or 0)
         if not product_id:
             raise ValueError(f"编号 {code} 找到的商品缺少 product_id")
 
-        client = get_native_db_client()
-        detail = self._load_product_for_edit(client, product_id)
+        detail = self._load_product_for_edit(product_id)
         title = detail.get("title") or detail.get("name") or existing_product.get("title") or existing_product.get("name")
         category_ids = self._product_category_ids(detail) or self._product_category_ids(existing_product) or [category_id]
         if category_id and category_id not in category_ids:
@@ -617,11 +611,12 @@ class BagUploadWorkflow(BaseWorkflow):
         }
         if simple_desc:
             payload["simple_desc"] = simple_desc
-        return client.save_product(payload)
+        return get_product_service().save(payload)
 
-    def _load_product_for_edit(self, client, product_id: int) -> dict:
+    def _load_product_for_edit(self, product_id: int) -> dict:
         try:
-            data = client.product_options(product_id).get("data") or client.product_info(product_id)
+            service = get_product_service()
+            data = service.options(product_id).get("data") or service.info(product_id)
             if isinstance(data, dict):
                 return data
         except Exception as e:
@@ -902,15 +897,10 @@ class BagUploadWorkflow(BaseWorkflow):
 
     def _next_sj_code(self, start_number: int = 1001) -> str:
         try:
-            from src.engine.native_db import get_native_db_client
-
-            db = get_native_db_client()
-            with db.cursor() as cursor:
-                return db._next_sku_no(
-                    cursor,
-                    start_number=max(int(start_number or 1001), 1001),
-                    compact_from_start=True,
-                )
+            return get_product_service().next_sku_no(
+                start_number=max(int(start_number or 1001), 1001),
+                compact_from_start=True,
+            )
         except Exception as e:
             logger.warning(f"SJ code preview failed, using fallback SJ1001: {e}")
         return f"SJ{max(int(start_number or 1001), 1001):04d}"

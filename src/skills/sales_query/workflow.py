@@ -237,10 +237,10 @@ class SalesQueryWorkflow(BaseWorkflow):
 
     def _get_recent_sales_orders(self, customer_id: int, count: int = 1) -> list[dict]:
         matched = []
-        page_size = 100
+        page_size = max(1, min(max(count, 10), 100))
         for page in range(1, 6):
             try:
-                result = self.caller.call("sales_list", page=page, page_size=page_size)
+                result = self.caller.call("sales_list", customer_id=customer_id, page=page, page_size=page_size)
             except Exception as e:
                 logger.warning(f"[SalesQuery] 销售单列表查询失败: {e}")
                 return matched
@@ -250,11 +250,9 @@ class SalesQueryWorkflow(BaseWorkflow):
             if not orders:
                 return matched
             for order in orders:
-                oid_customer = order.get("customer_id") or order.get("company_id")
-                if str(oid_customer or "") == str(customer_id):
-                    matched.append(order)
-                    if len(matched) >= count:
-                        return matched
+                matched.append(order)
+                if len(matched) >= count:
+                    return matched
             if len(orders) < page_size:
                 return matched
         return matched

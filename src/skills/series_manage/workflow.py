@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from src.core.config import get_config
+from src.services.business import get_product_service
 from src.skills.base import BaseWorkflow
 from src.utils import get_logger
 
@@ -141,10 +142,8 @@ class SeriesManageWorkflow(BaseWorkflow):
         if action not in {"set_one_piece", "set_non_one_piece"}:
             return {}
         try:
-            from src.engine.native_db import get_native_db_client
-
             policy = "one_case" if action == "set_one_piece" else "order_qty"
-            return get_native_db_client().update_purchase_policy_by_series(series, policy)
+            return get_product_service().update_purchase_policy_by_series(series, policy)
         except Exception as e:
             logger.warning(f"同步系列起订规则到商品库失败: {e}")
             return {}

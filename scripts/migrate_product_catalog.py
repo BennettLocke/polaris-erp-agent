@@ -402,6 +402,10 @@ class ProductCatalogMigrator:
                 product_type VARCHAR(30) NOT NULL,
                 inventory_policy VARCHAR(20) NULL,
                 default_unit_id BIGINT UNSIGNED NULL,
+                icon VARCHAR(500) NULL,
+                icon_active VARCHAR(500) NULL,
+                realistic_images VARCHAR(500) NULL,
+                big_images VARCHAR(500) NULL,
                 sort_order INT NULL,
                 is_enabled TINYINT NOT NULL DEFAULT 1,
                 created_at DATETIME NOT NULL,
@@ -634,7 +638,14 @@ class ProductCatalogMigrator:
     def import_categories(self, source_cursor, target_cursor):
         rows = self.query(
             source_cursor,
-            f"SELECT id, pid, name, sort, is_enable, add_time, upd_time FROM {self.source_table('sxo_plugins_erp_product_category')} ORDER BY id",
+            f"""
+            SELECT c.id, c.pid, c.name, c.sort, c.is_enable, c.add_time, c.upd_time,
+                   gc.icon, gc.icon_active, gc.realistic_images, gc.big_images
+            FROM {self.source_table('sxo_plugins_erp_product_category')} c
+            LEFT JOIN {self.source_table('sxo_goods_category')} gc
+              ON gc.name = c.name AND gc.is_enable = 1
+            ORDER BY c.id
+            """,
         )
         self.category_names = {int(row["id"]): str(row["name"] or "").strip() for row in rows}
         for row in rows:
@@ -646,12 +657,15 @@ class ProductCatalogMigrator:
                 f"""
                 INSERT INTO {self.table('product_category')}
                     (id, parent_id, code, name, product_type, inventory_policy, default_unit_id,
+                     icon, icon_active, realistic_images, big_images,
                      sort_order, is_enabled, created_at, updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON DUPLICATE KEY UPDATE
                     parent_id=VALUES(parent_id), code=VALUES(code), name=VALUES(name),
                     product_type=VALUES(product_type), inventory_policy=VALUES(inventory_policy),
-                    default_unit_id=VALUES(default_unit_id), sort_order=VALUES(sort_order),
+                    default_unit_id=VALUES(default_unit_id), icon=VALUES(icon),
+                    icon_active=VALUES(icon_active), realistic_images=VALUES(realistic_images),
+                    big_images=VALUES(big_images), sort_order=VALUES(sort_order),
                     is_enabled=VALUES(is_enabled), updated_at=VALUES(updated_at)
                 """,
                 (
@@ -662,6 +676,10 @@ class ProductCatalogMigrator:
                     product_type,
                     inventory_policy(product_type),
                     category_default_unit_id(name),
+                    first_non_empty(row.get("icon")),
+                    first_non_empty(row.get("icon_active")),
+                    first_non_empty(row.get("realistic_images")),
+                    first_non_empty(row.get("big_images")),
                     int(row.get("sort") or 0),
                     int(row.get("is_enable") or 0),
                     as_dt(row.get("add_time")),

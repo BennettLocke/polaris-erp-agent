@@ -40,6 +40,7 @@ def parse_unit_from_simple_desc(simple_desc: str) -> int | None:
       - "规格:20套/件"  → 20
       - "规格:30个/件"  → 30
       - "28套/件"      → 28
+      - "1件28套"      → 28
 
     Returns:
         每件套数，未知则返回 None
@@ -51,6 +52,8 @@ def parse_unit_from_simple_desc(simple_desc: str) -> int | None:
         r"(\d+)\s*套\s*/\s*件",
         r"(\d+)\s*个\s*/\s*件",
         r"(\d+)\s*张\s*/\s*件",
+        r"(?:1\s*)?件\s*(\d+)\s*(?:套|个|张|只|盒)",
+        r"每\s*件\s*(\d+)\s*(?:套|个|张|只|盒)",
     ]
 
     for pattern in patterns:

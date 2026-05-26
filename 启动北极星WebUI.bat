@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 title 肆计包装-北极星订单管理机器人
 
-set "APP_DIR=C:\Users\chuji\Downloads\sjagent\sjagent"
+set "APP_DIR=Z:\sjagent"
 set "WEB_URL=http://127.0.0.1:8081/web"
 set "LOG_FILE=%APP_DIR%\logs\webui_startup.log"
 

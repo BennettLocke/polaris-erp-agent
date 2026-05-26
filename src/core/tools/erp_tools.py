@@ -7,20 +7,37 @@ through NativeDBClient and no longer call the old ERP API.
 from src.core.customer_name import normalize_customer_name
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.core.tools.registry import tool
-from src.engine.native_db import get_native_db_client
+from src.services.business import (
+    get_customer_service,
+    get_inventory_service,
+    get_product_service,
+    get_sales_service,
+)
 from src.utils import get_logger
 
 logger = get_logger("sjagent.tools.erp")
 
 
-def _native_db():
-    return get_native_db_client()
+def _inventory_service():
+    return get_inventory_service()
+
+
+def _product_service():
+    return get_product_service()
+
+
+def _customer_service():
+    return get_customer_service()
+
+
+def _sales_service():
+    return get_sales_service()
 
 
 @tool("inventory_query_by_id", "按商品ID查询库存")
 def inventory_query_by_id(product_id: int) -> list[dict]:
     try:
-        rows = _native_db().get_product_inventory(product_id)
+        rows = _inventory_service().product_inventory(product_id)
         logger.info(f"native inventory by product: product_id={product_id}, rows={len(rows)}")
         return rows
     except Exception as e:
@@ -31,7 +48,7 @@ def inventory_query_by_id(product_id: int) -> list[dict]:
 @tool("inventory_query_by_warehouse", "查询某仓库全部库存")
 def inventory_query_by_warehouse(warehouse_id: int) -> list[dict]:
     try:
-        rows = _native_db().get_warehouse_inventory(warehouse_id)
+        rows = _inventory_service().warehouse_inventory(warehouse_id)
         logger.info(f"native inventory by warehouse: warehouse_id={warehouse_id}, rows={len(rows)}")
         return rows
     except Exception as e:
@@ -43,7 +60,7 @@ def inventory_query_by_warehouse(warehouse_id: int) -> list[dict]:
 def inventory_search(keyword: str, color: str = "", only_in_stock: bool = False, limit: int = 100) -> list[dict]:
     keyword = normalize_product_name(keyword, specs=PRODUCT_SPECS)
     try:
-        rows = _native_db().search_inventory(
+        rows = _inventory_service().search(
             keyword=keyword,
             color=color,
             only_in_stock=only_in_stock,
@@ -60,7 +77,7 @@ def inventory_search(keyword: str, color: str = "", only_in_stock: bool = False,
 def product_search(keyword: str) -> list[dict]:
     keyword = normalize_product_name(keyword, specs=PRODUCT_SPECS)
     try:
-        rows = _native_db().product_search(keyword)
+        rows = _product_service().search(keyword)
         logger.info(f"native product search: keyword={keyword}, rows={len(rows)}")
         return rows
     except Exception as e:
@@ -71,7 +88,7 @@ def product_search(keyword: str) -> list[dict]:
 @tool("product_info", "获取商品详细信息")
 def product_info(product_id: int) -> dict | None:
     try:
-        info = _native_db().product_info(product_id)
+        info = _product_service().info(product_id)
         if info:
             logger.info(f"native product info: product_id={product_id}, title={info.get('title')}")
         return info
@@ -83,7 +100,7 @@ def product_info(product_id: int) -> dict | None:
 @tool("customer_query", "查询客户")
 def customer_query(keyword: str) -> list[dict]:
     try:
-        rows = _native_db().customer_list(keyword)
+        rows = _customer_service().list(keyword)
         logger.info(f"native customer query: keyword={keyword}, rows={len(rows)}")
         return rows
     except Exception as e:
@@ -97,7 +114,7 @@ def customer_create(name: str, contacts_name: str = "", contacts_tel: str = "") 
     if not name:
         return {"error": "客户名称为空，无法创建客户"}
     try:
-        result = _native_db().customer_create(
+        result = _customer_service().create(
             name=name,
             contacts_name=contacts_name,
             contacts_tel=contacts_tel,
@@ -119,7 +136,7 @@ def sales_add(
     pay_type: str | None = None,
 ) -> dict:
     try:
-        result = _native_db().create_sales_order(
+        result = _sales_service().create_order(
             customer_id=customer_id,
             warehouse_id=warehouse_id,
             products=products,
@@ -141,7 +158,7 @@ def sales_delete(ids: str) -> dict:
         for item in str(ids or "").split(","):
             item = item.strip()
             if item:
-                results.append(_native_db().delete_sales_order(int(item)))
+                results.append(_sales_service().delete_order(int(item)))
         logger.info(f"native sales order deleted: ids={ids}, result={results}")
         return {"code": 0, "data": results}
     except Exception as e:
@@ -152,7 +169,7 @@ def sales_delete(ids: str) -> dict:
 @tool("other_enter_add", "其他入库")
 def other_enter_add(warehouse_id: int, products: list[dict], note: str = "智能体进货") -> dict:
     try:
-        result = _native_db().create_stock_in(warehouse_id=warehouse_id, products=products, note=note)
+        result = _inventory_service().create_stock_in(warehouse_id=warehouse_id, products=products, note=note)
         logger.info(f"native stock-in created: {result}")
         return result
     except Exception as e:
@@ -168,7 +185,7 @@ def inventory_transfer(
     note: str = "智能体调拨",
 ) -> dict:
     try:
-        result = _native_db().create_transfer(
+        result = _inventory_service().create_transfer(
             out_warehouse_id=out_warehouse_id,
             enter_warehouse_id=enter_warehouse_id,
             products=products,
@@ -184,7 +201,7 @@ def inventory_transfer(
 @tool("inventory_sync", "盘点同步")
 def inventory_sync(warehouse_id: int, products: list[dict], note: str = "智能体盘点同步") -> dict:
     try:
-        result = _native_db().create_stocktake(warehouse_id=warehouse_id, products=products, note=note)
+        result = _inventory_service().create_stocktake(warehouse_id=warehouse_id, products=products, note=note)
         logger.info(f"native stocktake created: {result}")
         return result
     except Exception as e:
@@ -195,7 +212,7 @@ def inventory_sync(warehouse_id: int, products: list[dict], note: str = "智能�
 @tool("sales_detail", "销售单详情")
 def sales_detail(sales_id: int) -> dict:
     try:
-        return _native_db().sales_detail(sales_id)
+        return _sales_service().detail(sales_id)
     except Exception as e:
         logger.error(f"native sales detail failed: {e}")
         return {"error": str(e)}
@@ -204,10 +221,13 @@ def sales_detail(sales_id: int) -> dict:
 @tool("sales_list", "销售单列表")
 def sales_list(keyword: str = None, customer_id: int = None, status: int = None, page: int = 1, page_size: int = 20) -> dict:
     try:
-        cards, total = _native_db().sales_cards(keyword=keyword or "", page=page, page_size=page_size, status=status)
-        if customer_id:
-            cards = [card for card in cards if int(card.get("customer_id") or 0) == int(customer_id)]
-            total = len(cards)
+        cards, total = _sales_service().cards(
+            keyword=keyword or "",
+            page=page,
+            page_size=page_size,
+            status=status,
+            customer_id=customer_id,
+        )
         return {"code": 0, "data": {"list": cards, "total": total, "page": page, "page_size": page_size}}
     except Exception as e:
         logger.error(f"native sales list failed: {e}")
@@ -217,7 +237,7 @@ def sales_list(keyword: str = None, customer_id: int = None, status: int = None,
 @tool("warehouse_list", "仓库列表")
 def warehouse_list() -> list[dict]:
     try:
-        return _native_db().warehouse_list()
+        return _inventory_service().warehouse_list()
     except Exception as e:
         logger.error(f"native warehouse list failed: {e}")
         return []
@@ -226,7 +246,7 @@ def warehouse_list() -> list[dict]:
 @tool("product_add", "添加商品")
 def product_add(title: str, spec: str = "", unit_id: int = 1, simple_desc: str = "", brand_name: str = "") -> dict:
     try:
-        return _native_db().save_product({
+        return _product_service().save({
             "title": title,
             "simple_desc": simple_desc,
             "base": {

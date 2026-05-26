@@ -111,6 +111,10 @@
 | `product_type` | VARCHAR(30) | 是 | 分类对应大类 | `gift_box/bag/material/service/shipping/other` |
 | `inventory_policy` | VARCHAR(20) | 否 | 默认库存策略 | 分类级默认值，如礼盒 strict、服务 none |
 | `default_unit_id` | BIGINT | 否 | 默认单位 | 礼盒=套，泡袋=捆 |
+| `icon` | VARCHAR(500) | 否 | 分类普通图标 | 来自 ShopXO `sxo_goods_category.icon` |
+| `icon_active` | VARCHAR(500) | 否 | 分类选中图标 | 来自 ShopXO `sxo_goods_category.icon_active` |
+| `realistic_images` | VARCHAR(500) | 否 | 分类实景图 | 兼容 ShopXO 分类页字段 |
+| `big_images` | VARCHAR(500) | 否 | 分类楼层大图 | 兼容 ShopXO 首页/分类字段 |
 | `sort_order` | INT | 否 | 排序 | 商品管理页分类排序 |
 | `is_enabled` | TINYINT | 是 | 是否启用 | 1 启用，0 停用 |
 | `created_at` | DATETIME | 是 | 创建时间 | 新库时间 |

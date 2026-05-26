@@ -728,6 +728,9 @@ def _db_product_list(
     product_type: str = "",
     listed_only: bool = False,
     sort: str = "",
+    listed_state: str = "",
+    stock_mode: str = "",
+    quality: str = "",
 ) -> tuple[list[dict], int]:
     return get_product_service().list(
         keyword=keyword,
@@ -740,6 +743,9 @@ def _db_product_list(
         product_type=product_type,
         listed_only=listed_only,
         sort=sort,
+        listed_state=listed_state,
+        stock_mode=stock_mode,
+        quality=quality,
     )
 
 def _db_product_categories(
@@ -3004,6 +3010,9 @@ def product_list():
         if item.strip().isdigit()
     ]
     product_type = str(request.args.get("product_type") or "").strip()
+    listed_state = str(request.args.get("listed_state") or "").strip()
+    stock_mode = str(request.args.get("stock_mode") or "").strip()
+    quality = str(request.args.get("quality") or "").strip()
     group = request.args.get("group", default=1, type=int) == 1
 
     try:
@@ -3016,6 +3025,9 @@ def product_list():
             group,
             category_ids=category_ids,
             product_type=product_type,
+            listed_state=listed_state,
+            stock_mode=stock_mode,
+            quality=quality,
         )
         return jsonify({
             "code": 0,

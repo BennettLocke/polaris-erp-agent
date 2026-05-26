@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS party (
     wechat_name VARCHAR(120) NULL,
     auto_print_sales TINYINT NOT NULL DEFAULT 0,
     settlement_type VARCHAR(30) NULL,
+    is_monthly_customer TINYINT NOT NULL DEFAULT 0,
     tags JSON NULL,
     note TEXT NULL,
     source VARCHAR(30) NOT NULL DEFAULT 'manual',

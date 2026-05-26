@@ -333,7 +333,8 @@ class OrderFlowWorkflow(BaseWorkflow):
             if not raw_name or raw_name in {"开单", "下单", "销售单", "客户", "商品"}:
                 continue
             colors = self._extract_colors_in_text(raw_name)
-            qty = int(float(match.group(2)))
+            qty_text = match.group(2)
+            qty = int(float(qty_text))
             unit = match.group(3)
             if "各" in raw_name and len(colors) >= 2:
                 name = raw_name.replace("各", "")
@@ -341,11 +342,11 @@ class OrderFlowWorkflow(BaseWorkflow):
                     name = name.replace(color, "")
                 name = name.strip()
                 for color in colors:
-                    products.append({"name": name, "color": color, "qty": qty, "quantity": qty, "unit": unit})
+                    products.append({"name": name, "color": color, "qty": qty, "quantity": qty, "unit": unit, "_qty_text": qty_text})
                 continue
             color = colors[0] if colors else ""
             name = raw_name.replace(color, "").strip() if color else raw_name
-            products.append({"name": name, "color": color or "", "qty": qty, "quantity": qty, "unit": unit})
+            products.append({"name": name, "color": color or "", "qty": qty, "quantity": qty, "unit": unit, "_qty_text": qty_text})
         return products
 
     def _extract_warehouse_hint(self, text: str) -> str | None:
@@ -476,6 +477,24 @@ class OrderFlowWorkflow(BaseWorkflow):
         target = match.product
         logger.info(f"[OrderFlow] 商品匹配 '{keyword}', color={color} → {match.reason}, 候选={len(results)}")
 
+        if target is not None:
+            repaired = self._repair_numeric_suffix_from_target(name, target, qty, product.get("_qty_text"))
+            if repaired:
+                name = repaired["name"]
+                keyword = repaired["keyword"]
+                qty = repaired["qty"]
+                logger.info(f"[OrderFlow] 数字后缀数量修正: {product.get('name')} → {name}, qty={qty}")
+
+        if target is None:
+            repaired = self._retry_numeric_suffix_product(name, color, qty, product.get("_qty_text"))
+            if repaired:
+                name = repaired["name"]
+                keyword = repaired["keyword"]
+                qty = repaired["qty"]
+                target = repaired["target"]
+                results = repaired["results"]
+                logger.info(f"[OrderFlow] 数字后缀修正: {product.get('name')} → {name}, qty={qty}")
+
         if target is None and color and self._is_non_gift(keyword):
             no_color_match = self.product_matcher.match(
                 keyword,
@@ -558,6 +577,72 @@ class OrderFlowWorkflow(BaseWorkflow):
         }
         logger.info(f"[OrderFlow] 商品解析: {resolved['name']} {spec} → id={product_id}, qty={qty}, unit={unit}")
         return resolved
+
+    def _repair_numeric_suffix_from_target(self, name: str, target: dict, qty: object, qty_text: object = None) -> dict | None:
+        digits = str(qty_text or qty or "").strip()
+        if not digits.isdigit() or len(digits) < 2:
+            return None
+        base_name = str(name or "").strip()
+        if not base_name:
+            return None
+        normalized_identifiers = {
+            self._normalize_product_name(str(value or ""))
+            for value in (
+                target.get("title"),
+                target.get("name"),
+                target.get("sku_no"),
+                target.get("product_no"),
+                target.get("search_text"),
+            )
+            if value
+        }
+        for split_at in range(len(digits) - 1, 0, -1):
+            candidate_qty_text = digits[split_at:]
+            if not candidate_qty_text or int(candidate_qty_text) <= 0:
+                continue
+            candidate_name = f"{base_name}{digits[:split_at]}"
+            candidate_keyword = self._normalize_product_name(candidate_name)
+            if candidate_keyword in normalized_identifiers:
+                return {
+                    "name": candidate_name,
+                    "keyword": candidate_keyword,
+                    "qty": int(candidate_qty_text),
+                }
+        return None
+
+    def _retry_numeric_suffix_product(self, name: str, color: str, qty: object, qty_text: object = None) -> dict | None:
+        """Recover inputs like SJ157010套 as product SJ1570 + quantity 10."""
+        digits = str(qty_text or qty or "").strip()
+        if not digits.isdigit() or len(digits) < 2:
+            return None
+        base_name = str(name or "").strip()
+        if not base_name:
+            return None
+        for split_at in range(len(digits) - 1, 0, -1):
+            candidate_qty_text = digits[split_at:]
+            if not candidate_qty_text or int(candidate_qty_text) <= 0:
+                continue
+            candidate_name = f"{base_name}{digits[:split_at]}"
+            candidate_keyword = self._normalize_product_name(candidate_name)
+            candidate_match = self.product_matcher.match(
+                candidate_keyword,
+                color=color,
+                use_inventory=False,
+                allow_product_fallback=True,
+                product_limit=100,
+                inventory_limit=80,
+                allow_llm=False,
+                broad_keywords=False,
+            )
+            if candidate_match.product is not None:
+                return {
+                    "name": candidate_name,
+                    "keyword": candidate_keyword,
+                    "qty": int(candidate_qty_text),
+                    "target": candidate_match.product,
+                    "results": candidate_match.candidates,
+                }
+        return None
 
     def _enrich_order_products(self, products: list[dict], user_input: str = "") -> list[dict]:
         enriched = []
@@ -1344,7 +1429,9 @@ class OrderFlowWorkflow(BaseWorkflow):
             # 解析结果
             data = result if isinstance(result, dict) else json.loads(json.dumps(result))
             if data.get("code") == 0:
-                sales_no = data.get("data", "")
+                payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+                sales_id = payload.get("sales_id") or payload.get("id") or ""
+                sales_no = payload.get("sales_no") or sales_id or data.get("data", "")
                 # 构建回复
                 lines = [f"开单成功！销售单号：{sales_no}", ""]
                 lines.append(f"客户：{customer_name}")
@@ -1372,7 +1459,8 @@ class OrderFlowWorkflow(BaseWorkflow):
                 if sales_no:
                     SessionManager(get_current_session_id()).set_meta("last_order", {
                         "type": "sales",
-                        "id": str(sales_no),
+                        "id": str(sales_id or sales_no),
+                        "sales_no": str(sales_no),
                         "customer": customer_name,
                         "products": order_items,
                         "total": total,

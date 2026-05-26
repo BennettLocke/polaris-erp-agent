@@ -896,6 +896,9 @@ class NativeDBClient:
         product_type: str = "",
         active_only: bool = False,
         listed_only: bool = False,
+        listed_state: str = "",
+        stock_mode: str = "",
+        quality: str = "",
     ) -> tuple[str, list[Any]]:
         where = ["s.deleted_at IS NULL", "sp.deleted_at IS NULL"]
         params: list[Any] = []
@@ -913,6 +916,33 @@ class NativeDBClient:
             where.append("s.status = 'active'")
         if listed_only:
             where.append("s.is_listed = 1")
+        listed_value = str(listed_state or "").strip().lower()
+        if listed_value in {"listed", "1", "true", "yes"}:
+            where.append("s.is_listed = 1")
+        elif listed_value in {"unlisted", "0", "false", "no"}:
+            where.append("s.is_listed = 0")
+        stock_value = str(stock_mode or "").strip().lower()
+        if stock_value in {"stock", "stock_item", "1", "true", "yes"}:
+            where.append("s.is_stock_item = 1")
+        elif stock_value in {"non_stock", "no_stock", "0", "false", "no"}:
+            where.append("s.is_stock_item = 0")
+        quality_value = str(quality or "").strip().lower()
+        if quality_value == "missing_image":
+            where.append(
+                "("
+                "NULLIF(TRIM(COALESCE(s.main_image_url, '')), '') IS NULL "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM product_media pm "
+                "  WHERE pm.spu_id = sp.id "
+                "    AND pm.media_type = 'main_image' "
+                "    AND pm.is_active = 1"
+                ")"
+                ")"
+            )
+        elif quality_value == "missing_case_pack":
+            where.append("(sp.case_pack_qty IS NULL OR sp.case_pack_qty = 0)")
+        elif quality_value == "missing_price":
+            where.append("(COALESCE(s.retail_price, s.min_price, s.max_price, 0) <= 0)")
         product_type_values = [
             item.strip()
             for item in str(product_type or "").split(",")
@@ -1208,6 +1238,9 @@ class NativeDBClient:
         product_type: str = "",
         listed_only: bool = False,
         sort: Any = "",
+        listed_state: str = "",
+        stock_mode: str = "",
+        quality: str = "",
     ) -> tuple[list[dict], int]:
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or 20), 200))
@@ -1221,6 +1254,9 @@ class NativeDBClient:
             category_ids=category_ids,
             product_type=product_type,
             listed_only=listed_only,
+            listed_state=listed_state,
+            stock_mode=stock_mode,
+            quality=quality,
         )
         if not group:
             order_sql = "s.updated_at DESC, s.id DESC"

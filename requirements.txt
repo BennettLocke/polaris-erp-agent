@@ -35,6 +35,7 @@ loguru>=0.7.3
 
 # Web 框架（HTTP API）
 flask>=3.0.0
+reportlab>=4.2.0
 
 # 飞书 SDK
 lark-oapi>=1.2.0

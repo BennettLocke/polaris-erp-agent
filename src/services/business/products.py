@@ -24,6 +24,9 @@ class ProductService(BusinessService):
         product_type: str = "",
         listed_only: bool = False,
         sort: str = "",
+        listed_state: str = "",
+        stock_mode: str = "",
+        quality: str = "",
     ) -> tuple[list[dict], int]:
         if str(product_type or "").strip():
             return self.db.product_list(
@@ -37,6 +40,9 @@ class ProductService(BusinessService):
                 product_type=product_type,
                 listed_only=listed_only,
                 sort=sort,
+                listed_state=listed_state,
+                stock_mode=stock_mode,
+                quality=quality,
             )
         return self.db.product_list(
             keyword=keyword,
@@ -48,6 +54,9 @@ class ProductService(BusinessService):
             category_ids=category_ids,
             listed_only=listed_only,
             sort=sort,
+            listed_state=listed_state,
+            stock_mode=stock_mode,
+            quality=quality,
         )
 
     def categories(self, *, listed_only: bool = False, exclude_names: Iterable[str] | None = None) -> list[dict]:
