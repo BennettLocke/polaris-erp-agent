@@ -83,6 +83,22 @@ class AdminProductsRedesignContractTest(unittest.TestCase):
         self.assertIn("missing_case_pack", db_source)
         self.assertIn("missing_image", db_source)
 
+    def test_product_page_size_tracks_visible_grid_capacity(self):
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("calculateProductPageSize", product_source)
+        self.assertIn("PRODUCT_PAGE_SIZE_MIN", product_source)
+        self.assertIn("PRODUCT_PAGE_SIZE_MAX", product_source)
+        self.assertIn("PRODUCT_PAGE_SIZE_BUFFER_ROWS", product_source)
+        self.assertIn("ResizeObserver", product_source)
+        self.assertIn("gridRef", product_source)
+        self.assertIn("setPageSize", product_source)
+        self.assertIn("productPageRangeText", product_source)
+        self.assertIn("pageSize={pageSize}", product_source)
+        self.assertNotIn("const pageSize = 14;", product_source)
+
 
 if __name__ == "__main__":
     unittest.main()

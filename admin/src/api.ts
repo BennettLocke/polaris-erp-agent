@@ -199,7 +199,7 @@ export const api = {
     const params = new URLSearchParams();
     params.set("keyword", options.keyword || "");
     params.set("page", String(options.page || 1));
-    params.set("page_size", String(options.pageSize || 14));
+    params.set("page_size", String(options.pageSize || 20));
     params.set("group", "1");
     if (options.categoryId) params.set("category_id", String(options.categoryId));
     if (options.productType) params.set("product_type", options.productType);

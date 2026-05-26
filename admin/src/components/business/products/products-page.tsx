@@ -1,4 +1,4 @@
-import { useEffect, useState, type WheelEvent } from "react";
+import { useCallback, useEffect, useState, type WheelEvent } from "react";
 import { ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 
 import { api } from "@/api";
@@ -123,6 +123,73 @@ const QUALITY_FILTERS: ProductFilterOption[] = [
   { value: "missing_case_pack", label: "缺件规" },
   { value: "missing_price", label: "缺价格" }
 ];
+
+const PRODUCT_CARD_MIN_WIDTH = 208;
+const PRODUCT_GRID_GAP = 10;
+const PRODUCT_PAGE_SIZE_MIN = 20;
+const PRODUCT_PAGE_SIZE_MAX = 60;
+const PRODUCT_PAGE_SIZE_BUFFER_ROWS = 1;
+const PRODUCT_CARD_ESTIMATED_HEIGHT = 400;
+const PRODUCT_GRID_TOP_FALLBACK = 520;
+const PRODUCT_PAGE_SIZE_RESIZE_DELAY = 160;
+
+type ProductPageSizeMetrics = {
+  gridWidth: number;
+  viewportHeight: number;
+  gridTop: number;
+  cardHeight?: number;
+};
+
+function clampProductPageSize(value: number) {
+  return Math.min(PRODUCT_PAGE_SIZE_MAX, Math.max(PRODUCT_PAGE_SIZE_MIN, value));
+}
+
+function calculateProductPageSize({
+  gridWidth,
+  viewportHeight,
+  gridTop,
+  cardHeight = PRODUCT_CARD_ESTIMATED_HEIGHT
+}: ProductPageSizeMetrics) {
+  const safeCardHeight = Math.max(280, cardHeight);
+  const columns = Math.max(
+    1,
+    Math.floor((Math.max(1, gridWidth) + PRODUCT_GRID_GAP) / (PRODUCT_CARD_MIN_WIDTH + PRODUCT_GRID_GAP))
+  );
+  const availableHeight = Math.max(safeCardHeight, viewportHeight - gridTop - 72);
+  const visibleRows = Math.max(2, Math.ceil(availableHeight / safeCardHeight));
+  return clampProductPageSize(columns * (visibleRows + PRODUCT_PAGE_SIZE_BUFFER_ROWS));
+}
+
+function initialProductPageSize() {
+  if (typeof window === "undefined") return PRODUCT_PAGE_SIZE_MIN;
+  return calculateProductPageSize({
+    gridWidth: Math.max(PRODUCT_CARD_MIN_WIDTH, window.innerWidth - 320),
+    viewportHeight: window.innerHeight,
+    gridTop: PRODUCT_GRID_TOP_FALLBACK
+  });
+}
+
+function measuredProductPageSize(gridElement: HTMLDivElement | null) {
+  if (typeof window === "undefined" || !gridElement) return PRODUCT_PAGE_SIZE_MIN;
+  const gridRect = gridElement.getBoundingClientRect();
+  const firstCard = gridElement.querySelector(".product-spu-card:not(.product-spu-card--loading)") as HTMLElement | null;
+  const cardHeight = firstCard?.getBoundingClientRect().height || PRODUCT_CARD_ESTIMATED_HEIGHT;
+  return calculateProductPageSize({
+    gridWidth: gridRect.width,
+    viewportHeight: window.innerHeight,
+    gridTop: gridRect.top,
+    cardHeight
+  });
+}
+
+function productPageRangeText(page: number, pageSize: number, total: number) {
+  if (!total) return "共 0 个商品";
+  const safePage = Math.max(1, page);
+  const safePageSize = Math.max(1, pageSize);
+  const start = Math.min(total, (safePage - 1) * safePageSize + 1);
+  const end = Math.min(total, safePage * safePageSize);
+  return `第 ${start}-${end} 件 / 共 ${total} 件`;
+}
 
 function categoryProductType(category: ProductCategory) {
   const rawType = String(category.product_type || "").trim().toLowerCase();
@@ -1180,6 +1247,7 @@ function ProductToolbar({
   keyword,
   page,
   pageCount,
+  pageSize,
   total,
   loading,
   onKeywordChange,
@@ -1189,6 +1257,7 @@ function ProductToolbar({
   keyword: string;
   page: number;
   pageCount: number;
+  pageSize: number;
   total: number;
   loading: boolean;
   onKeywordChange: (value: string) => void;
@@ -1198,7 +1267,7 @@ function ProductToolbar({
   return (
     <div className="products-toolbar">
       <div className="products-title-block">
-        <Badge variant="outline">{page} / {pageCount} · 共 {total} 个商品</Badge>
+        <Badge variant="outline">{productPageRangeText(page, pageSize, total)} · 第 {page}/{pageCount} 页 · 每页 {pageSize}</Badge>
         <div className="products-toolbar-copy">
           <strong>商品资料工作台</strong>
           <CardDescription>按 SPU 管商品，快速查看颜色、件规、价格和库存规则。</CardDescription>
@@ -1528,6 +1597,7 @@ function ProductCardGrid({
   items,
   loading,
   actionProductId,
+  gridRef,
   onEdit,
   onReset,
   onToggleShelves,
@@ -1536,6 +1606,7 @@ function ProductCardGrid({
   items: ProductItem[];
   loading: boolean;
   actionProductId: number;
+  gridRef?: (node: HTMLDivElement | null) => void;
   onEdit: (product: ProductItem) => void;
   onReset: () => void;
   onToggleShelves: (product: ProductItem, state: number) => void;
@@ -1544,7 +1615,7 @@ function ProductCardGrid({
   if (loading) return <ProductListSkeleton />;
   if (!items.length) return <ProductEmptyState onReset={onReset} />;
   return (
-    <div className="products-grid">
+    <div className="products-grid" ref={gridRef}>
       {items.map((product) => (
         <ProductCard
           key={product.spu_id || product.id || product.product_id}
@@ -1562,12 +1633,16 @@ function ProductCardGrid({
 function ProductPager({
   page,
   pageCount,
+  pageSize,
+  total,
   loading,
   onPrevious,
   onNext
 }: {
   page: number;
   pageCount: number;
+  pageSize: number;
+  total: number;
   loading: boolean;
   onPrevious: () => void;
   onNext: () => void;
@@ -1579,7 +1654,7 @@ function ProductPager({
           <PaginationPrevious disabled={page <= 1 || loading} onClick={onPrevious} />
         </PaginationItem>
         <PaginationItem>
-          <Badge variant="outline">{page} / {pageCount}</Badge>
+          <Badge variant="outline">{productPageRangeText(page, pageSize, total)}</Badge>
         </PaginationItem>
         <PaginationItem>
           <PaginationNext disabled={page >= pageCount || loading} onClick={onNext} />
@@ -1605,7 +1680,11 @@ export function ProductsPage() {
   const [notice, setNotice] = useState("");
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
   const [actionProductId, setActionProductId] = useState(0);
-  const pageSize = 14;
+  const [pageSize, setPageSize] = useState(initialProductPageSize);
+  const [gridElement, setGridElement] = useState<HTMLDivElement | null>(null);
+  const gridRef = useCallback((node: HTMLDivElement | null) => {
+    setGridElement(node);
+  }, []);
 
   async function loadProducts(
     nextPage = page,
@@ -1614,7 +1693,8 @@ export function ProductsPage() {
     nextProductType = productType,
     nextListedState = listedState,
     nextStockMode = stockMode,
-    nextQuality = quality
+    nextQuality = quality,
+    nextPageSize = pageSize
   ) {
     setLoading(true);
     setError("");
@@ -1622,7 +1702,7 @@ export function ProductsPage() {
       const data = await api.productList({
         keyword: nextKeyword,
         page: nextPage,
-        pageSize,
+        pageSize: nextPageSize,
         categoryId: nextCategory,
         productType: productTypeQueryValue(nextProductType),
         listedState: nextListedState,
@@ -1641,7 +1721,7 @@ export function ProductsPage() {
 
   async function afterProductSaved() {
     setNotice("商品已保存");
-    await loadProducts(page, keyword, categoryId, productType);
+    await loadProducts(page, keyword, categoryId, productType, listedState, stockMode, quality);
   }
 
   function resetFilters() {
@@ -1696,6 +1776,36 @@ export function ProductsPage() {
     void loadProducts(1, "", "", "");
   }, []);
 
+  useEffect(() => {
+    if (!gridElement) return undefined;
+
+    let resizeTimer = 0;
+    const syncPageSize = () => {
+      const nextPageSize = measuredProductPageSize(gridElement);
+      setPageSize((currentPageSize) => {
+        if (currentPageSize === nextPageSize) return currentPageSize;
+        const firstItemIndex = Math.max(1, (page - 1) * currentPageSize + 1);
+        const nextPage = Math.max(1, Math.ceil(firstItemIndex / nextPageSize));
+        void loadProducts(nextPage, keyword, categoryId, productType, listedState, stockMode, quality, nextPageSize);
+        return nextPageSize;
+      });
+    };
+    const scheduleSync = () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(syncPageSize, PRODUCT_PAGE_SIZE_RESIZE_DELAY);
+    };
+
+    scheduleSync();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleSync);
+    observer?.observe(gridElement);
+    window.addEventListener("resize", scheduleSync);
+    return () => {
+      window.clearTimeout(resizeTimer);
+      observer?.disconnect();
+      window.removeEventListener("resize", scheduleSync);
+    };
+  }, [gridElement, items.length, page, keyword, categoryId, productType, listedState, stockMode, quality]);
+
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const allProductsTotal = Number(categories.find((category) => !category.id)?.total || total);
 
@@ -1705,6 +1815,7 @@ export function ProductsPage() {
         keyword={keyword}
         page={page}
         pageCount={pageCount}
+        pageSize={pageSize}
         total={total}
         loading={loading}
         onKeywordChange={setKeyword}
@@ -1754,6 +1865,7 @@ export function ProductsPage() {
         items={items}
         loading={loading}
         actionProductId={actionProductId}
+        gridRef={gridRef}
         onReset={resetFilters}
         onEdit={(product) => {
           setNotice("");
@@ -1765,6 +1877,8 @@ export function ProductsPage() {
       <ProductPager
         page={page}
         pageCount={pageCount}
+        pageSize={pageSize}
+        total={total}
         loading={loading}
         onPrevious={() => void loadProducts(page - 1, keyword, categoryId, productType, listedState, stockMode, quality)}
         onNext={() => void loadProducts(page + 1, keyword, categoryId, productType, listedState, stockMode, quality)}
