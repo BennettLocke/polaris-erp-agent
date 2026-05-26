@@ -27,12 +27,13 @@ import { customerName, customerPhone, displayDate, money, moneyNumber } from "./
 type Props = {
   customers: CustomerItem[];
   loading: boolean;
+  gridRef?: (node: HTMLDivElement | null) => void;
   onOpenDetail: (customer: CustomerItem, tab?: string) => void;
   onAction: (customer: CustomerItem, action: CustomerBalanceActionPayload["action"]) => void;
   onToggleMonthly: (customer: CustomerItem) => void;
 };
 
-function CustomerCardGrid({ customers, loading, onOpenDetail, onAction, onToggleMonthly }: Props) {
+function CustomerCardGrid({ customers, loading, gridRef, onOpenDetail, onAction, onToggleMonthly }: Props) {
   if (loading) {
     return (
       <div className="customer-card-grid">
@@ -55,7 +56,7 @@ function CustomerCardGrid({ customers, loading, onOpenDetail, onAction, onToggle
   }
 
   return (
-    <div className="customer-card-grid">
+    <div className="customer-card-grid" ref={gridRef}>
       {customers.map((customer) => {
         const name = customerName(customer);
         const phone = customerPhone(customer);

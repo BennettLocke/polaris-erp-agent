@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Search } from "lucide-react";
 
 import { api } from "@/api";
@@ -33,7 +33,72 @@ import {
   type CustomerFilter
 } from "./utils";
 
-const customerPageSize = 12;
+const CUSTOMER_CARD_MIN_WIDTH = 300;
+const CUSTOMER_GRID_GAP = 12;
+const CUSTOMER_PAGE_SIZE_MIN = 18;
+const CUSTOMER_PAGE_SIZE_MAX = 72;
+const CUSTOMER_PAGE_SIZE_BUFFER_ROWS = 1;
+const CUSTOMER_CARD_ESTIMATED_HEIGHT = 220;
+const CUSTOMER_GRID_TOP_FALLBACK = 430;
+const CUSTOMER_PAGE_SIZE_RESIZE_DELAY = 160;
+
+type CustomerPageSizeMetrics = {
+  gridWidth: number;
+  viewportHeight: number;
+  gridTop: number;
+  cardHeight?: number;
+};
+
+function clampCustomerPageSize(value: number) {
+  return Math.min(CUSTOMER_PAGE_SIZE_MAX, Math.max(CUSTOMER_PAGE_SIZE_MIN, value));
+}
+
+function calculateCustomerPageSize({
+  gridWidth,
+  viewportHeight,
+  gridTop,
+  cardHeight = CUSTOMER_CARD_ESTIMATED_HEIGHT
+}: CustomerPageSizeMetrics) {
+  const safeCardHeight = Math.max(160, cardHeight);
+  const columns = Math.max(
+    1,
+    Math.floor((Math.max(1, gridWidth) + CUSTOMER_GRID_GAP) / (CUSTOMER_CARD_MIN_WIDTH + CUSTOMER_GRID_GAP))
+  );
+  const availableHeight = Math.max(safeCardHeight, viewportHeight - gridTop - 72);
+  const visibleRows = Math.max(2, Math.ceil(availableHeight / safeCardHeight));
+  return clampCustomerPageSize(columns * (visibleRows + CUSTOMER_PAGE_SIZE_BUFFER_ROWS));
+}
+
+function initialCustomerPageSize() {
+  if (typeof window === "undefined") return CUSTOMER_PAGE_SIZE_MIN;
+  return calculateCustomerPageSize({
+    gridWidth: Math.max(CUSTOMER_CARD_MIN_WIDTH, window.innerWidth - 320),
+    viewportHeight: window.innerHeight,
+    gridTop: CUSTOMER_GRID_TOP_FALLBACK
+  });
+}
+
+function measuredCustomerPageSize(gridElement: HTMLDivElement | null) {
+  if (typeof window === "undefined" || !gridElement) return CUSTOMER_PAGE_SIZE_MIN;
+  const gridRect = gridElement.getBoundingClientRect();
+  const firstCard = gridElement.querySelector(".customer-card-new") as HTMLElement | null;
+  const cardHeight = firstCard?.getBoundingClientRect().height || CUSTOMER_CARD_ESTIMATED_HEIGHT;
+  return calculateCustomerPageSize({
+    gridWidth: gridRect.width,
+    viewportHeight: window.innerHeight,
+    gridTop: gridRect.top,
+    cardHeight
+  });
+}
+
+function customerPageRangeText(page: number, customerPageSize: number, total: number) {
+  if (!total) return "共 0 个客户";
+  const safePage = Math.max(1, page);
+  const safePageSize = Math.max(1, customerPageSize);
+  const start = Math.min(total, (safePage - 1) * safePageSize + 1);
+  const end = Math.min(total, safePage * safePageSize);
+  return `第 ${start}-${end} 位 / 共 ${total} 位`;
+}
 
 function CustomersPage() {
   const [keyword, setKeyword] = useState("");
@@ -50,24 +115,29 @@ function CustomersPage() {
   const [actionTarget, setActionTarget] = useState<CustomerItem | null>(null);
   const [action, setAction] = useState<CustomerBalanceActionPayload["action"] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [customerPageSize, setCustomerPageSize] = useState(initialCustomerPageSize);
+  const [gridElement, setGridElement] = useState<HTMLDivElement | null>(null);
+  const gridRef = useCallback((node: HTMLDivElement | null) => {
+    setGridElement(node);
+  }, []);
   const summary = useMemo(() => normalizeCustomerSummary(remoteSummary, items), [remoteSummary, items]);
   const pageCount = Math.max(1, Math.ceil(total / customerPageSize));
 
-  async function load(nextPage = page, nextKeyword = keyword, nextFilter = filter) {
+  async function load(nextPage = page, nextKeyword = keyword, nextFilter = filter, nextPageSize = customerPageSize) {
     setLoading(true);
     setError("");
     try {
       const data = await api.customers({
         keyword: nextKeyword,
         page: nextPage,
-        pageSize: customerPageSize,
+        pageSize: nextPageSize,
         filter: nextFilter
       });
       const nextList = data.list || [];
       const nextTotal = data.total || 0;
-      const nextPageCount = Math.max(1, Math.ceil(nextTotal / customerPageSize));
+      const nextPageCount = Math.max(1, Math.ceil(nextTotal / nextPageSize));
       if (!nextList.length && nextTotal > 0 && nextPage > nextPageCount) {
-        void load(nextPageCount, nextKeyword, nextFilter);
+        void load(nextPageCount, nextKeyword, nextFilter, nextPageSize);
         return;
       }
       setItems(nextList);
@@ -88,6 +158,36 @@ function CustomersPage() {
   useEffect(() => {
     if (page > pageCount) setPage(pageCount);
   }, [page, pageCount]);
+
+  useEffect(() => {
+    if (!gridElement) return undefined;
+
+    let resizeTimer = 0;
+    const syncPageSize = () => {
+      const nextPageSize = measuredCustomerPageSize(gridElement);
+      setCustomerPageSize((currentPageSize) => {
+        if (currentPageSize === nextPageSize) return currentPageSize;
+        const firstItemIndex = Math.max(1, (page - 1) * currentPageSize + 1);
+        const nextPage = Math.max(1, Math.ceil(firstItemIndex / nextPageSize));
+        void load(nextPage, keyword, filter, nextPageSize);
+        return nextPageSize;
+      });
+    };
+    const scheduleSync = () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(syncPageSize, CUSTOMER_PAGE_SIZE_RESIZE_DELAY);
+    };
+
+    scheduleSync();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleSync);
+    observer?.observe(gridElement);
+    window.addEventListener("resize", scheduleSync);
+    return () => {
+      window.clearTimeout(resizeTimer);
+      observer?.disconnect();
+      window.removeEventListener("resize", scheduleSync);
+    };
+  }, [gridElement, items.length, page, keyword, filter]);
 
   function openDetail(customer: CustomerItem, tab = "overview") {
     setDetailTab(tab);
@@ -143,7 +243,9 @@ function CustomersPage() {
           )}
           actions={(
             <CardAction className="customers-page-actions">
-              <span className="customers-page-count">第 {Math.min(page, pageCount)} / {pageCount} 页 · 共 {total} 个客户</span>
+              <span className="customers-page-count">
+                {customerPageRangeText(Math.min(page, pageCount), customerPageSize, total)} · 第 {Math.min(page, pageCount)}/{pageCount} 页 · 每页 {customerPageSize}
+              </span>
               <Button variant="outline" size="sm" type="button" onClick={() => load(page, keyword, filter)}>
                 <RefreshCw data-icon="inline-start" /> 刷新
               </Button>
@@ -215,6 +317,7 @@ function CustomersPage() {
         <CustomerCardGrid
           customers={items}
           loading={loading}
+          gridRef={gridRef}
           onOpenDetail={openDetail}
           onAction={openAction}
           onToggleMonthly={(customer) => void toggleMonthly(customer)}
@@ -225,7 +328,7 @@ function CustomersPage() {
               <PaginationPrevious disabled={page <= 1 || loading} onClick={() => goToPage(page - 1)}>上一页</PaginationPrevious>
             </PaginationItem>
             <PaginationItem>
-              <Badge variant="outline">{Math.min(page, pageCount)} / {pageCount}</Badge>
+              <Badge variant="outline">{customerPageRangeText(Math.min(page, pageCount), customerPageSize, total)}</Badge>
             </PaginationItem>
             <PaginationItem>
               <PaginationNext disabled={page >= pageCount || loading} onClick={() => goToPage(page + 1)}>下一页</PaginationNext>

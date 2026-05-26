@@ -19,6 +19,7 @@ class AdminProductEditContractTest(unittest.TestCase):
             "function ProductToolbar", 1
         )[0]
         type_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+        style_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn("productDetail", api_source)
         self.assertIn("/api/product/${id}", api_source)
@@ -40,6 +41,11 @@ class AdminProductEditContractTest(unittest.TestCase):
         self.assertIn("ScrollArea", product_source)
         self.assertIn("product-spec-table", product_source)
         self.assertIn("asset-picker-search", product_source)
+        self.assertIn(".asset-picker-dialog .asset-picker-card.sj-button", style_source)
+        self.assertIn("width: 100%;", style_source)
+        self.assertIn("display: grid;", style_source)
+        self.assertIn(".asset-picker-dialog .asset-picker-card img", style_source)
+        self.assertIn("display: block;", style_source)
         self.assertIn("未绑定", product_source)
         self.assertIn("本产品图片", product_source)
         self.assertIn("全部图片", product_source)

@@ -123,7 +123,7 @@ export const api = {
     const params = new URLSearchParams();
     params.set("keyword", query.keyword || "");
     params.set("page", String(query.page || 1));
-    params.set("page_size", String(query.pageSize || 12));
+    params.set("page_size", String(query.pageSize || 18));
     params.set("filter", query.filter || "all");
     return request<CustomerListResult>(`/api/customers?${params.toString()}`);
   },
