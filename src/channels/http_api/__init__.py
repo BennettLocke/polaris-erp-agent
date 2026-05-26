@@ -18,6 +18,7 @@ from src.core.features import feature_enabled
 from src.core.product_name import PRODUCT_SPECS, normalize_product_name
 from src.services.business.customers import build_customer_statement_pdf
 from src.services.business import (
+    get_analytics_service,
     get_auth_service,
     get_customer_balance_service,
     get_customer_service,
@@ -270,6 +271,7 @@ def _miniapp_path_is_public(path: str) -> bool:
     public_mini_paths = {
         "/api/miniapp/config",
         "/api/mini/home",
+        "/api/mini/analytics/hot-products",
         "/api/mini/goods/category",
         "/api/mini/goods/detail",
         "/api/mini/search/index",
@@ -2286,6 +2288,41 @@ def dashboard_summary():
     except Exception as e:
         logger.warning(f"?????????: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+def _analytics_hot_products_payload(payload: dict) -> dict:
+    period = str(_mini_value(payload, "period", "range", default="30d") or "30d").strip()
+    dimension = str(_mini_value(payload, "dimension", "by", default="product") or "product").strip()
+    limit = _mini_int(_mini_value(payload, "limit", "page_size", default=20), 20)
+    return get_analytics_service().hot_products(period=period, limit=limit, dimension=dimension)
+
+
+@app.route("/api/analytics/hot-products", methods=["GET"])
+def analytics_hot_products_api():
+    """Hot product ranking for WebUI dashboards."""
+    try:
+        return jsonify({"code": 0, "data": _analytics_hot_products_payload(request.args.to_dict(flat=True))})
+    except Exception as e:
+        logger.warning(f"热销商品查询失败: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/mini/analytics/hot-products", methods=["GET", "POST"])
+def mini_analytics_hot_products_api():
+    """Hot product ranking for the mini-program home page and dashboards."""
+    try:
+        data = _analytics_hot_products_payload(_mini_request_payload())
+        return jsonify({
+            "code": 0,
+            "data": {
+                **data,
+                "cart_total": _mini_empty_cart_total(),
+            },
+        })
+    except Exception as e:
+        logger.error(f"小程序热销商品查询异常: {e}")
+        return _api_exception_response(e)
+
 
 @app.route("/api/sales/cards", methods=["GET"])
 def sales_cards():

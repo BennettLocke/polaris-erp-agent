@@ -1,6 +1,7 @@
 """Business service entrypoints for sjagent-owned workflows."""
 
 from .auth import AuthService, get_auth_service
+from .analytics import AnalyticsService, get_analytics_service
 from .customers import CustomerBalanceService, CustomerService, get_customer_balance_service, get_customer_service
 from .dashboard import DashboardService, get_dashboard_service
 from .identity import IdentityLinkService, get_identity_link_service
@@ -14,6 +15,7 @@ from .workflow import WorkflowService, get_workflow_service
 
 __all__ = [
     "AuthService",
+    "AnalyticsService",
     "CustomerBalanceService",
     "CustomerService",
     "DashboardService",
@@ -26,6 +28,7 @@ __all__ = [
     "UserService",
     "WorkflowService",
     "get_auth_service",
+    "get_analytics_service",
     "get_customer_balance_service",
     "get_customer_service",
     "get_dashboard_service",
