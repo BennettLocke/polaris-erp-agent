@@ -1374,23 +1374,52 @@ class NativeDBClient:
             for row in rows
         ]
 
-    def miniapp_assets(self, scene: str | None = None) -> list[dict]:
-        where = ["enabled=1"]
+    def miniapp_assets(self, scene: str | None = None, include_disabled: bool = False) -> list[dict]:
+        where = [] if include_disabled else ["enabled=1"]
         params: list[Any] = []
         if scene:
             where.append("scene=%s")
             params.append(str(scene))
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         return self.query(
             f"""
             SELECT id, scene, name, asset_url, active_asset_url,
                    link_type, link_value, badge_text, subtitle,
                    sort_order, enabled, extra_json
             FROM miniapp_asset
-            WHERE {" AND ".join(where)}
+            {where_sql}
             ORDER BY sort_order DESC, id ASC
             """,
             params,
         )
+
+    def update_miniapp_asset_image(self, asset_id: int, field: str, url: str) -> dict:
+        allowed = {"asset_url", "active_asset_url"}
+        if field not in allowed:
+            return {"code": 400, "msg": "不支持的小程序图片字段"}
+        clean_url = str(url or "").strip()
+        rows = self.query("SELECT id FROM miniapp_asset WHERE id=%s", (int(asset_id),))
+        if not rows:
+            return {"code": 404, "msg": "小程序图片配置不存在"}
+        affected = self.execute(
+            f"UPDATE miniapp_asset SET {field}=%s, updated_at=%s WHERE id=%s",
+            (clean_url, _now(), int(asset_id)),
+        )
+        return {"code": 0, "data": {"id": int(asset_id), field: clean_url, "affected": affected}}
+
+    def update_product_category_image(self, category_id: int, field: str, url: str) -> dict:
+        allowed = {"icon", "icon_active", "realistic_images", "big_images"}
+        if field not in allowed:
+            return {"code": 400, "msg": "不支持的分类图片字段"}
+        clean_url = str(url or "").strip()
+        rows = self.query("SELECT id FROM product_category WHERE id=%s", (int(category_id),))
+        if not rows:
+            return {"code": 404, "msg": "商品分类不存在"}
+        affected = self.execute(
+            f"UPDATE product_category SET {field}=%s, updated_at=%s WHERE id=%s",
+            (clean_url, _now(), int(category_id)),
+        )
+        return {"code": 0, "data": {"id": int(category_id), field: clean_url, "affected": affected}}
 
     def product_options(self, product_id: int | None = None) -> dict:
         categories = self.product_categories()

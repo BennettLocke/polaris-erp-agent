@@ -242,6 +242,8 @@ API_PERMISSION_RULES = [
     ({"POST", "PATCH"}, re.compile(r"^/api/customers/\d+$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customers/\d+/balance$"), "调余额"),
     ({"POST"}, re.compile(r"^/api/product/upload$"), "图片上传"),
+    ({"POST"}, re.compile(r"^/api/miniapp/image-config/upload$"), "图片上传"),
+    ({"GET", "POST", "PATCH"}, re.compile(r"^/api/miniapp/image-config$"), "设置"),
     ({"POST"}, re.compile(r"^/api/workflow/images/upload$"), "图片上传"),
     ({"POST", "DELETE"}, re.compile(r"^/api/product/media/\d+$"), "图片绑定"),
     ({"POST"}, re.compile(r"^/api/product/(save|delete)$"), "设置"),
@@ -3079,6 +3081,31 @@ def miniapp_config_api():
         return _api_exception_response(e)
 
 
+@app.route("/api/miniapp/image-config", methods=["GET"])
+def miniapp_image_config_api():
+    """WebUI editor payload for mini-program images."""
+    try:
+        return jsonify({"code": 0, "data": get_miniapp_service().image_config_payload()})
+    except Exception as e:
+        logger.error(f"小程序图片配置加载异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/miniapp/image-config", methods=["POST", "PATCH"])
+def miniapp_image_config_update_api():
+    """Update mini-program image URLs from WebUI."""
+    try:
+        body = request.get_json(silent=True)
+        if body is None:
+            body = request.form.to_dict(flat=True)
+        result = get_miniapp_service().update_image_config(body or {})
+        status = 200 if int(result.get("code") or 0) == 0 else int(result.get("code") or 400)
+        return jsonify(result), status
+    except Exception as e:
+        logger.error(f"小程序图片配置保存异常: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/mini/home", methods=["GET", "POST"])
 def mini_home_api():
     """Mini-program home data backed by sjagent_core."""
@@ -3615,6 +3642,40 @@ def product_upload_api():
         return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"商品图片上传异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/miniapp/image-config/upload", methods=["POST"])
+def miniapp_image_config_upload_api():
+    """Upload mini-program configuration images to OSS."""
+    try:
+        file = request.files.get("image")
+        if file is None:
+            return jsonify({"code": 400, "msg": "缺少图片文件"}), 400
+        filename = secure_filename(file.filename or f"miniapp_{int(time.time())}.jpg")
+        if not _allowed_image(filename):
+            return jsonify({"code": 400, "msg": "只支持 png/jpg/jpeg/webp/bmp 图片"}), 400
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = _safe_upload_suffix(file.filename, ALLOWED_IMAGE_EXTENSIONS, ".jpg")
+        save_name = f"miniapp_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
+        save_path = UPLOAD_DIR / save_name
+        file.save(save_path)
+        if not save_path.exists() or save_path.stat().st_size <= 0:
+            return jsonify({"code": 400, "msg": "图片文件为空"}), 400
+
+        from scripts.oss_uploader import OSSUploader
+        from src.core.config import get_config
+
+        result = OSSUploader(get_config().oss_config).upload(str(save_path))
+        if not isinstance(result, dict):
+            return jsonify({"code": 500, "msg": "OSS 上传返回异常", "data": result}), 500
+        if result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        _delete_local_upload(save_path, "小程序配置图片")
+        return jsonify({"code": 0, "data": result})
+    except Exception as e:
+        logger.error(f"小程序配置图片上传异常: {e}")
         return _api_exception_response(e)
 
 

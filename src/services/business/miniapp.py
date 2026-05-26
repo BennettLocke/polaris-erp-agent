@@ -187,6 +187,50 @@ class MiniAppService(BusinessService):
             return []
         return rows if isinstance(rows, list) else []
 
+    def image_config_payload(self) -> dict:
+        assets = []
+        for index, item in enumerate(self._safe_rows("miniapp_assets", None, True)):
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            row["title"] = self._title(row)
+            row["asset_url"] = self._asset_url(row)
+            row["active_asset_url"] = self._active_asset_url(row)
+            row["sort_order"] = int(row.get("sort_order") or 0)
+            row["enabled"] = int(row.get("enabled") or 0)
+            row["index"] = index
+            assets.append(row)
+        categories = [
+            dict(item)
+            for item in self._safe_rows("product_categories")
+            if isinstance(item, dict)
+        ]
+        return {
+            "assets": assets,
+            "categories": categories,
+        }
+
+    def update_image_config(self, payload: dict) -> dict:
+        data = payload if isinstance(payload, dict) else {}
+        target_type = str(data.get("target_type") or "").strip()
+        field = str(data.get("field") or "").strip()
+        url = str(data.get("url") or "").strip()
+        try:
+            target_id = int(data.get("id") or 0)
+        except Exception:
+            target_id = 0
+        if target_id <= 0:
+            return {"code": 400, "msg": "缺少图片配置ID"}
+        if target_type == "miniapp_asset":
+            if not hasattr(self.db, "update_miniapp_asset_image"):
+                return {"code": 500, "msg": "数据库服务未实现小程序图片更新"}
+            return self.db.update_miniapp_asset_image(target_id, field, url)
+        if target_type == "category":
+            if not hasattr(self.db, "update_product_category_image"):
+                return {"code": 500, "msg": "数据库服务未实现分类图片更新"}
+            return self.db.update_product_category_image(target_id, field, url)
+        return {"code": 400, "msg": "不支持的图片配置类型"}
+
     def config_payload(self) -> dict:
         banners = [
             self._normalize_banner(item, index)

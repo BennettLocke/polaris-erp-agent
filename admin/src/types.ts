@@ -1,0 +1,544 @@
+export type ApiResult<T> = {
+  code: number;
+  msg?: string;
+  data: T;
+};
+
+export type AuthUser = {
+  id: number;
+  username: string;
+  display_name: string;
+  role: string;
+  role_text: string;
+  approval_status: string;
+  is_admin: number;
+  is_active: number;
+};
+
+export type DashboardSummary = {
+  today_sales_count: number;
+  today_sales_amount: string;
+  pending_workflow_count: number;
+  updated_at: number;
+};
+
+export type RecentSale = {
+  id?: number;
+  sales_no?: string;
+  customer_name?: string;
+  product_summary?: string;
+  total_quantity?: number;
+  receivable_amount?: string;
+  date_text?: string;
+};
+
+export type RecentWorkflow = {
+  id?: number;
+  customer_name?: string;
+  goods_name?: string;
+  goods_color?: string;
+  order_quantity?: number;
+  status_text?: string;
+};
+
+export type CustomerItem = {
+  id: number;
+  customer_id?: number;
+  name?: string;
+  customer_name?: string;
+  company_name?: string;
+  contacts_name?: string;
+  phone?: string;
+  mobile?: string;
+  contacts_tel?: string;
+  address?: string;
+  is_monthly_customer?: number;
+  existed?: boolean;
+  latest_order_at?: string;
+  latest_order_amount?: string;
+  year_amount?: string;
+  balance_amount?: string;
+  sales_count?: number;
+};
+
+export type CustomerListSummary = {
+  total: number;
+  monthly: number;
+  debt: number;
+  normal_debt?: number;
+  monthly_debt?: number;
+  no_phone?: number;
+  credit?: number;
+  credit_amount: string;
+  debt_amount: string;
+};
+
+export type CustomerListResult = ListResult<CustomerItem> & {
+  filter?: string;
+  summary?: CustomerListSummary;
+};
+
+export type CustomerSalesItem = {
+  id: number;
+  sales_no?: string;
+  status?: string;
+  status_text?: string;
+  pay_type?: string;
+  pay_type_text?: string;
+  pay_status?: string;
+  pay_status_text?: string;
+  total_quantity?: string | number;
+  goods_amount?: string;
+  receivable_amount?: string;
+  sales_at?: string;
+  created_by_name?: string;
+  items_preview?: string;
+  note?: string;
+};
+
+export type CustomerSalesSummary = {
+  period?: string;
+  label?: string;
+  total: number;
+  total_amount: string;
+  unpaid_amount: string;
+  balance_amount: string;
+};
+
+export type CustomerSalesResult = ListResult<CustomerSalesItem> & {
+  summary: CustomerSalesSummary;
+};
+
+export type CustomerBalanceLedgerItem = {
+  id: number;
+  ledger_no: string;
+  customer_id: number;
+  entry_type: string;
+  entry_type_text: string;
+  pay_type?: string;
+  pay_type_text?: string;
+  amount: string;
+  applied_amount: string;
+  balance_delta: string;
+  related_month?: string;
+  note?: string;
+  created_by_name?: string;
+  created_at?: string;
+};
+
+export type CustomerBalanceSummary = {
+  customer_id: number;
+  customer_name: string;
+  wallet_amount: string;
+  debt_amount: string;
+  balance_amount: string;
+};
+
+export type CustomerBalanceLedgerResult = ListResult<CustomerBalanceLedgerItem> & {
+  summary: CustomerBalanceSummary;
+};
+
+export type CustomerStatementSalesLine = {
+  line_no?: number;
+  sku_no?: string;
+  title?: string;
+  color?: string;
+  quantity?: string;
+  unit_price?: string;
+  amount?: string;
+  warehouse_name?: string;
+};
+
+export type CustomerStatementSalesItem = {
+  id: number;
+  sales_no?: string;
+  sales_at?: string;
+  pay_status?: string;
+  pay_status_text?: string;
+  pay_type?: string;
+  pay_type_text?: string;
+  total_quantity?: string;
+  goods_amount?: string;
+  receivable_amount?: string;
+  created_by_name?: string;
+  items?: CustomerStatementSalesLine[];
+};
+
+export type CustomerStatement = {
+  customer: CustomerItem & {
+    contact_name?: string;
+    is_monthly_customer?: number;
+  };
+  period_label: string;
+  month?: string;
+  date_from: string;
+  date_to: string;
+  generated_at?: string;
+  opening_balance: string;
+  sales_amount: string;
+  receipt_amount: string;
+  settlement_amount: string;
+  adjust_amount: string;
+  ledger_delta?: string;
+  unpaid_amount: string;
+  ending_balance: string;
+  sales_quantity: string;
+  sales_count: number;
+  ledger_count: number;
+  sales: CustomerStatementSalesItem[];
+  ledger: CustomerBalanceLedgerItem[];
+};
+
+export type CustomerBalanceActionPayload = {
+  action: "receipt" | "recharge" | "settlement" | "adjust";
+  amount: string;
+  pay_type?: string;
+  month?: string;
+  note?: string;
+};
+
+export type SalesProduct = {
+  id?: number;
+  product_id?: number;
+  spu_id?: number;
+  unit_id?: number;
+  name?: string;
+  title?: string;
+  series?: string;
+  size_label?: string;
+  product_type?: string;
+  color?: string;
+  spec?: string;
+  coding?: string;
+  sku_no?: string;
+  color_count?: number;
+  color_names?: string[];
+  color_text?: string;
+  available_colors?: string[];
+  quantity?: string | number;
+  buy_number?: string | number;
+  price?: string | number;
+  min_price?: string | number;
+  max_price?: string | number;
+  total_price?: string;
+  warehouse_name?: string;
+  warehouse_id?: number;
+  image?: string;
+  images?: string;
+  main_images?: string;
+  spu_main_image_url?: string;
+  spec_image_url?: string;
+  inventory?: string | number;
+  is_stock_item?: number;
+  is_listed?: number;
+  status_text?: string;
+  product_category_text?: string;
+  piece_text?: string;
+  case_pack_qty?: string | number;
+  purchase_policy?: string;
+  is_one_case_purchase?: number;
+  product_group_data?: SalesProduct[];
+  product_category_ids?: number[];
+  simple_desc?: string;
+  content?: string;
+  content_html?: string;
+  detail_image_urls?: string[] | string;
+  main_images_list?: string[];
+  primary_category_id?: string | number;
+  media_assets?: ProductMediaAsset[];
+  base?: Array<{
+    id?: number;
+    unit_id?: number;
+    coding?: string;
+    barcode?: string;
+    price?: string | number;
+    cost_price?: string | number;
+    images?: string;
+    is_stock_item?: number;
+  }>;
+};
+
+export type ProductItem = SalesProduct;
+
+export type ProductStatusOption = {
+  value: string | number;
+  name: string;
+};
+
+export type ProductOptions = {
+  data?: ProductItem;
+  product_category?: ProductCategory[];
+  unit_list?: ProductUnit[];
+  product_status_list?: ProductStatusOption[];
+  media_assets?: ProductMediaAsset[];
+};
+
+export type ProductSavePayload = {
+  id?: string | number;
+  title: string;
+  product_type?: string;
+  product_category_id: Array<string | number>;
+  status?: string | number;
+  purchase_policy: "one_case" | "order_qty";
+  simple_desc?: string;
+  content?: string;
+  main_images: string[];
+  base: Record<string, {
+    images?: string;
+    spec?: string;
+    coding?: string;
+    is_stock_item?: number;
+    unit: Record<string, {
+      unit_id: string | number;
+      unit_number: number;
+      coding?: string;
+      barcode?: string;
+      weight: number;
+      volume: number;
+      price: string | number;
+      cost_price: string | number;
+      extends: string;
+    }>;
+  }>;
+};
+
+export type ProductUploadResult = {
+  url?: string;
+  full_url?: string;
+  images?: string;
+  path?: string;
+};
+
+export type MiniappAssetImageItem = {
+  id: number;
+  scene: string;
+  name: string;
+  title?: string;
+  asset_url?: string;
+  active_asset_url?: string;
+  link_type?: string;
+  link_value?: string;
+  badge_text?: string;
+  subtitle?: string;
+  sort_order?: number;
+  enabled?: number;
+};
+
+export type MiniappImageConfig = {
+  assets: MiniappAssetImageItem[];
+  categories: ProductCategory[];
+};
+
+export type MiniappImageUpdatePayload = {
+  target_type: "miniapp_asset" | "category";
+  id: number;
+  field: "asset_url" | "active_asset_url" | "icon" | "icon_active" | "realistic_images" | "big_images";
+  url: string;
+};
+
+export type SalesCard = {
+  id: number;
+  sales_id?: number;
+  sales_no?: string;
+  customer_id?: number;
+  customer_name?: string;
+  status?: string;
+  status_text?: string;
+  pay_status?: string;
+  pay_status_text?: string;
+  pay_type?: string;
+  pay_type_text?: string;
+  receivable_amount?: string;
+  total_price?: string;
+  total_quantity?: string | number;
+  buy_number_count?: string | number;
+  sales_at?: string;
+  date_text?: string;
+  created_by_name?: string;
+  product_summary?: string;
+  products?: SalesProduct[];
+};
+
+export type SalesDetail = SalesCard & {
+  sales_id?: number;
+  goods_amount?: string;
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string;
+  delete_reason?: string;
+  deleted_by_name?: string;
+  note?: string;
+  detail?: SalesProduct[];
+  items?: SalesProduct[];
+};
+
+export type SalesPrintTask = {
+  id?: number;
+  task_id?: number;
+  job_no?: string;
+  sales_id?: number;
+  sales_no?: string;
+  status?: string;
+};
+
+export type SalesOrderLinePayload = {
+  product_id: number;
+  unit_id: number;
+  warehouse_id: number;
+  buy_number: number;
+  price: number;
+};
+
+export type SalesOrderPayload = {
+  customer_id: number;
+  customer_name?: string;
+  warehouse_id: number;
+  create_time: string;
+  pay_status: "paid" | "monthly" | "unpaid";
+  pay_type?: string;
+  products: SalesOrderLinePayload[];
+};
+
+export type SalesOrderResult = {
+  id?: number;
+  sales_id?: number;
+  sales_no?: string;
+  order_no?: string;
+};
+
+export type ProductCategory = {
+  id?: number;
+  name: string;
+  product_type?: string;
+  inventory_policy?: string;
+  icon?: string;
+  icon_active?: string;
+  realistic_images?: string;
+  big_images?: string;
+  total?: number;
+};
+
+export type ProductUnit = {
+  id?: number;
+  name: string;
+  code?: string;
+};
+
+export type Warehouse = {
+  id: number;
+  warehouse_id?: number;
+  code?: string;
+  name: string;
+  warehouse_name?: string;
+  type?: string;
+  is_default_sales?: number;
+  is_default_inbound?: number;
+};
+
+export type MediaSummary = {
+  total: number;
+  pending: number;
+  main: number;
+  detail: number;
+  color: number;
+};
+
+export type ProductMediaAsset = {
+  id?: number | null;
+  sku_id?: number | null;
+  spu_id?: number | null;
+  media_type: string;
+  media_type_text?: string;
+  url: string;
+  product_name?: string;
+  binding_text?: string;
+  category_name?: string;
+  asset_group_key?: string;
+  asset_group_text?: string;
+  sku_no?: string;
+  sku_color?: string;
+  source_text?: string;
+  created_at?: string;
+};
+
+export type SystemSetting = {
+  key: string;
+  value: Record<string, unknown>;
+  categories?: ProductCategory[];
+  units?: ProductUnit[];
+  warehouses?: Warehouse[];
+  media_summary?: MediaSummary;
+};
+
+export type NumberSequenceLog = {
+  id: number;
+  old_code: string;
+  new_code: string;
+  note?: string;
+  operator_user_id?: number | null;
+  created_at?: string;
+};
+
+export type NumberSequenceSettings = {
+  sequence_key: string;
+  prefix: string;
+  start_number: number;
+  next_number: number;
+  pad_width: number;
+  next_code: string;
+  start_code: string;
+  configured_code: string;
+  skipped_numbers: number[];
+  skipped_numbers_text: string;
+  used_count: number;
+  numeric_used_count: number;
+  used_min_code: string;
+  used_max_code: string;
+  total_sku_count: number;
+  note?: string;
+  updated_at?: string;
+  change_logs?: NumberSequenceLog[];
+};
+
+export type PrintSettings = {
+  id?: number;
+  name: string;
+  paper_size: string;
+  orientation: string;
+  font_size: number;
+  copies: number;
+  show_logo?: number;
+  show_operator?: number;
+  show_customer_phone?: number;
+  show_payment?: number;
+  show_note?: number;
+  header_text: string;
+  footer_text?: string;
+  custom_css?: string;
+  latest_sales_id?: number;
+  latest_sales_no?: string;
+  latest_print_url?: string;
+};
+
+export type UserListItem = {
+  id: number;
+  username: string;
+  account_display?: string;
+  display_name?: string;
+  phone?: string | null;
+  role: string;
+  role_text?: string;
+  linked_party_id?: number | null;
+  party_name?: string | null;
+  approval_status?: string;
+  is_active: number;
+  is_admin?: number;
+};
+
+export type ListResult<T> = {
+  list: T[];
+  total: number;
+  page?: number;
+  page_size?: number;
+  source?: string;
+};
