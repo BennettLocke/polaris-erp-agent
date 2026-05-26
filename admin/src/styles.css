@@ -1406,10 +1406,130 @@ nav button:hover {
 }
 
 .miniapp-images-head .sj-button svg,
+.miniapp-image-panel-head svg,
 .miniapp-image-section-head svg,
 .miniapp-upload-button svg {
   width: 16px;
   height: 16px;
+}
+
+.miniapp-image-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--sj-border);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.miniapp-image-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border-bottom: 1px solid var(--sj-border);
+}
+
+.miniapp-image-panel-head > div {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.miniapp-image-panel-head h2 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.miniapp-image-panel-head p {
+  margin: 4px 0 0;
+  color: var(--sj-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.miniapp-image-table {
+  display: grid;
+}
+
+.miniapp-image-table-head,
+.miniapp-image-row {
+  display: grid;
+  align-items: stretch;
+  gap: 0;
+}
+
+.miniapp-image-table--1-fields .miniapp-image-table-head,
+.miniapp-image-table--1-fields .miniapp-image-row {
+  grid-template-columns: minmax(180px, 0.78fr) minmax(280px, 1.6fr);
+}
+
+.miniapp-image-table--2-fields .miniapp-image-table-head,
+.miniapp-image-table--2-fields .miniapp-image-row {
+  grid-template-columns: minmax(168px, 0.7fr) minmax(240px, 1fr) minmax(240px, 1fr);
+}
+
+.miniapp-image-table-head {
+  min-height: 38px;
+  align-items: center;
+  color: var(--sj-muted);
+  background: var(--sj-surface-subtle);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.miniapp-image-table-head span,
+.miniapp-image-name,
+.miniapp-image-cell {
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--sj-border);
+}
+
+.miniapp-image-table-head span:last-child,
+.miniapp-image-row > *:last-child {
+  border-right: 0;
+}
+
+.miniapp-image-row {
+  border-top: 1px solid var(--sj-border);
+}
+
+.miniapp-image-row:first-of-type {
+  border-top: 0;
+}
+
+.miniapp-image-name {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.miniapp-image-name strong {
+  overflow: hidden;
+  color: var(--sj-foreground);
+  font-size: 14px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.miniapp-image-name span {
+  overflow: hidden;
+  color: var(--sj-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.miniapp-image-cell {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
 }
 
 .miniapp-image-section-head,
@@ -5084,6 +5204,82 @@ textarea,
 
 .asset-picker-dialog .asset-picker-card:hover {
   background: var(--sj-soft);
+}
+
+.square-crop-dialog {
+  width: min(620px, calc(100vw - 24px));
+  gap: 14px;
+  z-index: 100;
+}
+
+.square-crop-stage {
+  width: min(360px, 100%);
+  aspect-ratio: 1 / 1;
+  position: relative;
+  overflow: hidden;
+  justify-self: center;
+  border: 1px solid var(--sj-border);
+  border-radius: 12px;
+  background: var(--sj-soft);
+  touch-action: none;
+  cursor: grab;
+}
+
+.square-crop-stage:active {
+  cursor: grabbing;
+}
+
+.square-crop-image-layer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  transform-origin: center;
+}
+
+.square-crop-image-layer img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  pointer-events: none;
+}
+
+.square-crop-frame {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.18);
+  pointer-events: none;
+}
+
+.square-crop-frame::before,
+.square-crop-frame::after {
+  content: "";
+  position: absolute;
+  inset: 33.333% 0 auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.square-crop-frame::after {
+  inset: 66.666% 0 auto;
+}
+
+.square-crop-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.square-crop-controls .sj-input[type="range"] {
+  padding: 0;
+}
+
+.square-crop-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 @media (max-width: 900px) {

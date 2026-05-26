@@ -1,16 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Image, Images, Layers, RefreshCw, Upload } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Image, Images, Layers, Navigation, RefreshCw, Upload } from "lucide-react";
 
 import { api } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle
-} from "@/components/ui/card";
 import type {
   MiniappAssetImageItem,
   MiniappImageConfig,
@@ -21,19 +14,29 @@ import type {
 
 type MiniappImageField = MiniappImageUpdatePayload["field"];
 type MiniappImageTarget = MiniappImageUpdatePayload["target_type"];
+type MiniappAssetScene = "home_banner" | "bottom_tab";
 
-const sceneLabels: Record<string, string> = {
-  home_banner: "首页轮播图",
-  home_category: "首页分类入口",
-  home_quick: "首页快捷导航",
-  bottom_tab: "底部导航"
+type ImageFieldConfig<T> = {
+  field: MiniappImageField;
+  label: string;
+  desc: string;
+  value: (item: T) => string;
 };
 
-const categoryImageFields: Array<{ field: MiniappImageField; label: string; desc: string }> = [
-  { field: "icon", label: "默认图标", desc: "分类页、首页分类入口共用" },
-  { field: "icon_active", label: "选中图标", desc: "分类页选中状态使用" },
-  { field: "realistic_images", label: "写实图", desc: "后续需要写实预览时使用" },
-  { field: "big_images", label: "高清大图", desc: "首页大图标或后续大尺寸场景使用" }
+const visibleAssetScenes: MiniappAssetScene[] = ["home_banner", "bottom_tab"];
+
+const bannerFields: Array<ImageFieldConfig<MiniappAssetImageItem>> = [
+  { field: "asset_url", label: "轮播图片", desc: "首页顶部轮播使用", value: (asset) => asset.asset_url || "" }
+];
+
+const bottomTabFields: Array<ImageFieldConfig<MiniappAssetImageItem>> = [
+  { field: "asset_url", label: "未选中图标", desc: "底部导航默认状态", value: (asset) => asset.asset_url || "" },
+  { field: "active_asset_url", label: "选中图标", desc: "底部导航当前页面状态", value: (asset) => asset.active_asset_url || "" }
+];
+
+const categoryImageFields: Array<ImageFieldConfig<ProductCategory>> = [
+  { field: "icon", label: "未选中图标", desc: "首页分类入口和分类页默认状态共用", value: (category) => category.icon || "" },
+  { field: "icon_active", label: "选中图标", desc: "分类页选中状态使用", value: (category) => category.icon_active || "" }
 ];
 
 function uploadResultUrl(result: ProductUploadResult) {
@@ -47,21 +50,15 @@ function previewUrl(url = "") {
   return `${clean}${joiner}x-oss-process=image/resize,m_lfit,w_360,h_260/quality,q_85`;
 }
 
-function sceneLabel(scene: string) {
-  return sceneLabels[scene] || scene || "未分组";
+function assetMeta(asset: MiniappAssetImageItem) {
+  return [asset.link_type, asset.link_value].filter(Boolean).join(" / ") || "小程序图片";
 }
 
-function assetFields(asset: MiniappAssetImageItem): Array<{ field: MiniappImageField; label: string; desc: string }> {
-  const fields: Array<{ field: MiniappImageField; label: string; desc: string }> = [
-    { field: "asset_url", label: asset.scene === "home_banner" ? "图片" : "默认图", desc: "小程序默认展示图片" }
-  ];
-  if (asset.scene === "bottom_tab" || asset.active_asset_url) {
-    fields.push({ field: "active_asset_url", label: "选中图", desc: "底部导航或选中状态图片" });
-  }
-  return fields;
+function categoryMeta(category: ProductCategory) {
+  return `${category.total || 0} 款产品`;
 }
 
-function ImageSlot({
+function ImageUploadCell({
   url,
   label,
   desc,
@@ -70,19 +67,20 @@ function ImageSlot({
 }: {
   url?: string;
   label: string;
-  desc?: string;
+  desc: string;
   busy: boolean;
   onUpload: (file: File) => void;
 }) {
+  const cleanUrl = String(url || "").trim();
   return (
-    <div className="miniapp-image-slot">
+    <div className="miniapp-image-cell">
       <div className="miniapp-image-preview">
-        {url ? <img src={previewUrl(url)} alt={label} loading="lazy" /> : <Image aria-hidden="true" />}
+        {cleanUrl ? <img src={previewUrl(cleanUrl)} alt={label} loading="lazy" /> : <Image aria-hidden="true" />}
       </div>
       <div className="miniapp-image-slot-copy">
         <strong>{label}</strong>
-        {desc ? <span>{desc}</span> : null}
-        {url ? <code>{url}</code> : <em>暂未配置图片</em>}
+        <span>{desc}</span>
+        {cleanUrl ? <code>{cleanUrl}</code> : <em>暂未配置图片</em>}
       </div>
       <label className={busy ? "miniapp-upload-button disabled" : "miniapp-upload-button"}>
         <Upload aria-hidden="true" />
@@ -102,76 +100,80 @@ function ImageSlot({
   );
 }
 
-function AssetCard({
-  asset,
+function ImageConfigTable<T>({
+  icon,
+  title,
+  desc,
+  countText,
+  emptyText,
+  targetType,
+  items,
+  fields,
   busyKey,
+  getId,
+  getName,
+  getMeta,
   onUpload
 }: {
-  asset: MiniappAssetImageItem;
+  icon: ReactNode;
+  title: string;
+  desc: string;
+  countText: string;
+  emptyText: string;
+  targetType: MiniappImageTarget;
+  items: T[];
+  fields: Array<ImageFieldConfig<T>>;
   busyKey: string;
+  getId: (item: T) => number;
+  getName: (item: T) => string;
+  getMeta: (item: T) => string;
   onUpload: (targetType: MiniappImageTarget, id: number, field: MiniappImageField, file: File) => void;
 }) {
   return (
-    <Card className="miniapp-image-card">
-      <CardHeader>
-        <div className="miniapp-image-card-title">
-          <CardTitle>{asset.title || asset.name}</CardTitle>
-          <Badge variant={asset.enabled ? "secondary" : "outline"}>{sceneLabel(asset.scene)}</Badge>
+    <section className="miniapp-image-panel">
+      <div className="miniapp-image-panel-head">
+        <div>
+          {icon}
+          <div>
+            <h2>{title}</h2>
+            <p>{desc}</p>
+          </div>
         </div>
-        <CardDescription>
-          {[asset.link_type, asset.link_value].filter(Boolean).join(" / ") || "小程序配置图片"}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="miniapp-image-card-content">
-        {assetFields(asset).map((item) => (
-          <ImageSlot
-            key={item.field}
-            label={item.label}
-            desc={item.desc}
-            url={String(asset[item.field as keyof MiniappAssetImageItem] || "")}
-            busy={busyKey === `miniapp_asset:${asset.id}:${item.field}`}
-            onUpload={(file) => onUpload("miniapp_asset", asset.id, item.field, file)}
-          />
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
+        <Badge variant="outline">{countText}</Badge>
+      </div>
 
-function CategoryCard({
-  category,
-  busyKey,
-  onUpload
-}: {
-  category: ProductCategory;
-  busyKey: string;
-  onUpload: (targetType: MiniappImageTarget, id: number, field: MiniappImageField, file: File) => void;
-}) {
-  const categoryId = Number(category.id || 0);
-  return (
-    <Card className="miniapp-image-card">
-      <CardHeader>
-        <div className="miniapp-image-card-title">
-          <CardTitle>{category.name}</CardTitle>
-          <Badge variant="outline">{category.total || 0} 款产品</Badge>
+      {items.length ? (
+        <div className={`miniapp-image-table miniapp-image-table--${fields.length}-fields`}>
+          <div className="miniapp-image-table-head">
+            <span>名称</span>
+            {fields.map((field) => <span key={field.field}>{field.label}</span>)}
+          </div>
+          {items.map((item) => {
+            const id = getId(item);
+            return (
+              <div className="miniapp-image-row" key={`${targetType}-${id}-${getName(item)}`}>
+                <div className="miniapp-image-name">
+                  <strong>{getName(item)}</strong>
+                  <span>{getMeta(item)}</span>
+                </div>
+                {fields.map((field) => (
+                  <ImageUploadCell
+                    key={field.field}
+                    label={field.label}
+                    desc={field.desc}
+                    url={field.value(item)}
+                    busy={busyKey === `${targetType}:${id}:${field.field}`}
+                    onUpload={(file) => onUpload(targetType, id, field.field, file)}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
-        <CardDescription>
-          {category.product_type || "商品分类"} · {category.inventory_policy || "默认库存策略"}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="miniapp-image-card-content">
-        {categoryImageFields.map((item) => (
-          <ImageSlot
-            key={item.field}
-            label={item.label}
-            desc={item.desc}
-            url={String(category[item.field as keyof ProductCategory] || "")}
-            busy={busyKey === `category:${categoryId}:${item.field}`}
-            onUpload={(file) => onUpload("category", categoryId, item.field, file)}
-          />
-        ))}
-      </CardContent>
-    </Card>
+      ) : (
+        <div className="empty-state">{emptyText}</div>
+      )}
+    </section>
   );
 }
 
@@ -202,18 +204,15 @@ export function MiniappImagesPage() {
     void load();
   }, []);
 
-  const groupedAssets = useMemo(() => {
-    const groups = new Map<string, MiniappAssetImageItem[]>();
+  const assetsByScene = useMemo(() => {
+    const groups = new Map<MiniappAssetScene, MiniappAssetImageItem[]>();
+    for (const scene of visibleAssetScenes) groups.set(scene, []);
     for (const asset of config.assets) {
-      const key = asset.scene || "other";
-      groups.set(key, [...(groups.get(key) || []), asset]);
+      if (!visibleAssetScenes.includes(asset.scene as MiniappAssetScene)) continue;
+      const scene = asset.scene as MiniappAssetScene;
+      groups.set(scene, [...(groups.get(scene) || []), asset]);
     }
-    return Array.from(groups.entries()).sort(([left], [right]) => {
-      const order = ["home_banner", "home_category", "home_quick", "bottom_tab"];
-      const leftIndex = order.indexOf(left);
-      const rightIndex = order.indexOf(right);
-      return (leftIndex === -1 ? order.length : leftIndex) - (rightIndex === -1 ? order.length : rightIndex);
-    });
+    return groups;
   }, [config.assets]);
 
   async function uploadAndSave(targetType: MiniappImageTarget, id: number, field: MiniappImageField, file: File) {
@@ -242,7 +241,7 @@ export function MiniappImagesPage() {
         <div>
           <span className="pill">小程序图片配置</span>
           <h1>小程序图片</h1>
-          <p>维护首页图、底部导航图标、分类图标和后续大尺寸图片。</p>
+          <p>首页分类和分类页共用商品分类图标，后台只维护未选中和选中两种状态。</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
           <RefreshCw aria-hidden="true" />
@@ -252,49 +251,55 @@ export function MiniappImagesPage() {
 
       {notice ? <div className="form-success">{notice}</div> : null}
       {error ? <div className="form-error">{error}</div> : null}
+      {loading && !config.assets.length && !config.categories.length ? <div className="empty-state">小程序图片配置加载中</div> : null}
 
-      <div className="miniapp-image-section-head">
-        <div>
-          <Images aria-hidden="true" />
-          <h2>小程序配置图</h2>
-        </div>
-        <span>{config.assets.length} 项</span>
-      </div>
+      <ImageConfigTable
+        icon={<Images aria-hidden="true" />}
+        title="首页轮播图"
+        desc="只维护轮播图片本身，尺寸和裁切由小程序前端控制。"
+        countText={`${assetsByScene.get("home_banner")?.length || 0} 张`}
+        emptyText="暂无首页轮播图配置"
+        targetType="miniapp_asset"
+        items={assetsByScene.get("home_banner") || []}
+        fields={bannerFields}
+        busyKey={busyKey}
+        getId={(asset) => Number(asset.id || 0)}
+        getName={(asset) => asset.title || asset.name || "首页轮播图"}
+        getMeta={assetMeta}
+        onUpload={uploadAndSave}
+      />
 
-      {loading && !config.assets.length ? <div className="empty-state">小程序图片配置加载中</div> : null}
-      {groupedAssets.map(([scene, assets]) => (
-        <div className="miniapp-image-group" key={scene}>
-          <div className="miniapp-image-group-title">
-            <strong>{sceneLabel(scene)}</strong>
-            <span>{assets.length} 张配置</span>
-          </div>
-          <div className="miniapp-image-grid">
-            {assets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} busyKey={busyKey} onUpload={uploadAndSave} />
-            ))}
-          </div>
-        </div>
-      ))}
+      <ImageConfigTable
+        icon={<Layers aria-hidden="true" />}
+        title="商品分类图标"
+        desc="首页分类入口和分类页共用这一套图标，只区分未选中和选中。"
+        countText={`${config.categories.length} 个分类`}
+        emptyText="暂无商品分类"
+        targetType="category"
+        items={config.categories}
+        fields={categoryImageFields}
+        busyKey={busyKey}
+        getId={(category) => Number(category.id || 0)}
+        getName={(category) => category.name}
+        getMeta={categoryMeta}
+        onUpload={uploadAndSave}
+      />
 
-      <div className="miniapp-image-section-head">
-        <div>
-          <Layers aria-hidden="true" />
-          <h2>商品分类图标</h2>
-        </div>
-        <span>{config.categories.length} 个分类</span>
-      </div>
-
-      <div className="miniapp-image-grid">
-        {config.categories.map((category) => (
-          <CategoryCard
-            key={category.id || category.name}
-            category={category}
-            busyKey={busyKey}
-            onUpload={uploadAndSave}
-          />
-        ))}
-      </div>
-      {!loading && !config.categories.length ? <div className="empty-state">暂无商品分类</div> : null}
+      <ImageConfigTable
+        icon={<Navigation aria-hidden="true" />}
+        title="底部导航图标"
+        desc="底部导航保留未选中和选中两种状态，和分类图标规则一致。"
+        countText={`${assetsByScene.get("bottom_tab")?.length || 0} 个入口`}
+        emptyText="暂无底部导航图标配置"
+        targetType="miniapp_asset"
+        items={assetsByScene.get("bottom_tab") || []}
+        fields={bottomTabFields}
+        busyKey={busyKey}
+        getId={(asset) => Number(asset.id || 0)}
+        getName={(asset) => asset.title || asset.name || "导航入口"}
+        getMeta={assetMeta}
+        onUpload={uploadAndSave}
+      />
     </section>
   );
 }

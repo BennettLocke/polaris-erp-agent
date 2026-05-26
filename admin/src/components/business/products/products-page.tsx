@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type WheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 
 import { api } from "@/api";
@@ -355,6 +355,30 @@ type ImagePickerTarget = {
   type: "main" | "detail" | "spec";
   specIndex?: number;
 };
+
+type ImageCropTarget = {
+  url: string;
+  target: ImagePickerTarget;
+};
+
+type CropOffset = {
+  x: number;
+  y: number;
+};
+
+const SQUARE_CROP_OUTPUT_SIZE = 1200;
+const SQUARE_CROP_STAGE_SIZE = 360;
+const SQUARE_CROP_MAX_ZOOM = 3;
+
+function clampValue(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function squareCropFileName(sourceUrl: string) {
+  const rawName = sourceUrl.split("?")[0].split("/").filter(Boolean).pop() || "product-image";
+  const name = rawName.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-zA-Z0-9_-]+/g, "_") || "product-image";
+  return `${name}_1x1_${Date.now()}.jpg`;
+}
 
 function localProductKey() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -748,6 +772,202 @@ function ImageAssetPickerDialog({
   );
 }
 
+function SquareImageCropDialog({
+  cropTarget,
+  saving,
+  error,
+  onCancel,
+  onConfirm
+}: {
+  cropTarget: ImageCropTarget | null;
+  saving: boolean;
+  error: string;
+  onCancel: () => void;
+  onConfirm: (file: File) => void;
+}) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const dragRef = useRef<{ x: number; y: number; offset: CropOffset } | null>(null);
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState<CropOffset>({ x: 0, y: 0 });
+  const [localError, setLocalError] = useState("");
+
+  const imageUrl = cropTarget?.url || "";
+  const baseScale = imageSize.width && imageSize.height
+    ? Math.max(SQUARE_CROP_STAGE_SIZE / imageSize.width, SQUARE_CROP_STAGE_SIZE / imageSize.height)
+    : 1;
+  const cropScale = baseScale * zoom;
+  const displayWidth = imageSize.width * cropScale;
+  const displayHeight = imageSize.height * cropScale;
+
+  function clampOffset(nextOffset: CropOffset, nextZoom = zoom, nextSize = imageSize) {
+    if (!nextSize.width || !nextSize.height) return { x: 0, y: 0 };
+    const nextBaseScale = Math.max(SQUARE_CROP_STAGE_SIZE / nextSize.width, SQUARE_CROP_STAGE_SIZE / nextSize.height);
+    const nextScale = nextBaseScale * nextZoom;
+    const maxX = Math.max(0, (nextSize.width * nextScale - SQUARE_CROP_STAGE_SIZE) / 2);
+    const maxY = Math.max(0, (nextSize.height * nextScale - SQUARE_CROP_STAGE_SIZE) / 2);
+    return {
+      x: clampValue(nextOffset.x, -maxX, maxX),
+      y: clampValue(nextOffset.y, -maxY, maxY)
+    };
+  }
+
+  useEffect(() => {
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    setImageSize({ width: 0, height: 0 });
+    setLocalError("");
+  }, [imageUrl]);
+
+  useEffect(() => {
+    setOffset((current) => clampOffset(current));
+  }, [zoom, imageSize.width, imageSize.height]);
+
+  function startDrag(event: PointerEvent<HTMLDivElement>) {
+    if (!imageSize.width || saving) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { x: event.clientX, y: event.clientY, offset };
+  }
+
+  function moveDrag(event: PointerEvent<HTMLDivElement>) {
+    if (!dragRef.current || saving) return;
+    const nextOffset = {
+      x: dragRef.current.offset.x + event.clientX - dragRef.current.x,
+      y: dragRef.current.offset.y + event.clientY - dragRef.current.y
+    };
+    setOffset(clampOffset(nextOffset));
+  }
+
+  function stopDrag(event: PointerEvent<HTMLDivElement>) {
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  async function createCropFile() {
+    const image = imageRef.current;
+    if (!image || !imageSize.width || !imageSize.height) {
+      setLocalError("图片还没有加载完成");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = SQUARE_CROP_OUTPUT_SIZE;
+    canvas.height = SQUARE_CROP_OUTPUT_SIZE;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setLocalError("浏览器无法创建裁剪画布");
+      return;
+    }
+    const imageLeft = SQUARE_CROP_STAGE_SIZE / 2 + offset.x - displayWidth / 2;
+    const imageTop = SQUARE_CROP_STAGE_SIZE / 2 + offset.y - displayHeight / 2;
+    const sourceX = -imageLeft / cropScale;
+    const sourceY = -imageTop / cropScale;
+    const sourceSize = SQUARE_CROP_STAGE_SIZE / cropScale;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      sourceSize,
+      sourceSize,
+      0,
+      0,
+      SQUARE_CROP_OUTPUT_SIZE,
+      SQUARE_CROP_OUTPUT_SIZE
+    );
+    try {
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((nextBlob) => {
+          if (nextBlob) resolve(nextBlob);
+          else reject(new Error("图片裁剪失败"));
+        }, "image/jpeg", 0.92);
+      });
+      onConfirm(new File([blob], squareCropFileName(imageUrl), { type: "image/jpeg" }));
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "图片裁剪失败");
+    }
+  }
+
+  return (
+    <Dialog open={Boolean(cropTarget)} onOpenChange={(nextOpen) => {
+      if (!nextOpen && !saving) onCancel();
+    }}>
+      <DialogContent className="square-crop-dialog">
+        <DialogHeader>
+          <DialogTitle>调整为 1:1 图片</DialogTitle>
+          <DialogDescription>
+            主图和颜色规格图会保存为新的正方形图片，原图仍保留在图片资产里。
+          </DialogDescription>
+        </DialogHeader>
+        {(error || localError) ? <div className="form-error">{error || localError}</div> : null}
+        <div
+          className="square-crop-stage"
+          onPointerDown={startDrag}
+          onPointerMove={moveDrag}
+          onPointerUp={stopDrag}
+          onPointerCancel={stopDrag}
+        >
+          {imageUrl ? (
+            <div
+              className="square-crop-image-layer"
+              style={{
+                width: displayWidth || SQUARE_CROP_STAGE_SIZE,
+                height: displayHeight || SQUARE_CROP_STAGE_SIZE,
+                transform: `translate(${offset.x}px, ${offset.y}px)`
+              }}
+            >
+              <img
+                ref={imageRef}
+                src={imageUrl}
+                alt="待裁剪图片"
+                crossOrigin="anonymous"
+                draggable={false}
+                onLoad={(event) => {
+                  const image = event.currentTarget;
+                  setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+                }}
+                onError={() => setLocalError("图片加载失败")}
+              />
+            </div>
+          ) : null}
+          <div className="square-crop-frame" aria-hidden="true" />
+        </div>
+        <div className="square-crop-controls">
+          <Field>
+            <FieldLabel htmlFor="square-crop-zoom">缩放</FieldLabel>
+            <Input
+              id="square-crop-zoom"
+              type="range"
+              min="1"
+              max={String(SQUARE_CROP_MAX_ZOOM)}
+              step="0.01"
+              value={zoom}
+              disabled={saving || !imageSize.width}
+              onChange={(event) => setZoom(Number(event.target.value) || 1)}
+            />
+          </Field>
+          <div className="square-crop-actions">
+            <Button type="button" variant="outline" disabled={saving} onClick={() => {
+              setZoom(1);
+              setOffset({ x: 0, y: 0 });
+            }}>
+              重置
+            </Button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>取消</Button>
+          <Button type="button" disabled={saving || !imageSize.width} onClick={createCropFile}>
+            {saving ? "生成中" : "确认使用 1:1 图"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProductEditorDialog({
   product,
   availableCategories,
@@ -778,6 +998,9 @@ function ProductEditorDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pickerTarget, setPickerTarget] = useState<ImagePickerTarget | null>(null);
+  const [pendingSquareCrop, setPendingSquareCrop] = useState<ImageCropTarget | null>(null);
+  const [cropSaving, setCropSaving] = useState(false);
+  const [cropError, setCropError] = useState("");
   const productId = Number(product?.id || product?.product_id || 0);
   const forcedNonStock = productEditorForcedNonStock(productType, categories, categoryIds);
   const effectiveStockItem = forcedNonStock ? false : stockItem;
@@ -799,6 +1022,8 @@ function ProductEditorDialog({
   useEffect(() => {
     if (!product) return;
     setError("");
+    setCropError("");
+    setPendingSquareCrop(null);
     if (availableCategories.length) setCategories(availableCategories);
     applyProduct(product);
     const id = Number(product.id || product.product_id || 0);
@@ -843,14 +1068,40 @@ function ProductEditorDialog({
     setSpecs((prev) => prev.length <= 1 ? prev : prev.filter((_, itemIndex) => itemIndex !== index));
   }
 
-  function selectImage(url: string) {
-    if (!pickerTarget) return;
-    if (pickerTarget.type === "main") {
+  function applySelectedImage(target: ImagePickerTarget, url: string) {
+    if (target.type === "main") {
       setMainImages(url ? [url] : []);
-    } else if (pickerTarget.type === "detail") {
+    } else if (target.type === "detail") {
       setDetailImages((prev) => prev.concat(url));
     } else {
-      updateSpec(pickerTarget.specIndex || 0, { image: url });
+      updateSpec(target.specIndex || 0, { image: url });
+    }
+  }
+
+  function selectImage(url: string) {
+    if (!pickerTarget) return;
+    if (pickerTarget.type !== "detail") {
+      setCropError("");
+      setPendingSquareCrop({ url, target: pickerTarget });
+      return;
+    }
+    applySelectedImage(pickerTarget, url);
+  }
+
+  async function confirmSquareCrop(file: File) {
+    if (!pendingSquareCrop) return;
+    setCropSaving(true);
+    setCropError("");
+    try {
+      const result = await api.uploadProductImage(file);
+      const url = uploadedImageUrl(result);
+      if (!url) throw new Error("裁剪图上传成功但没有返回图片地址");
+      applySelectedImage(pendingSquareCrop.target, url);
+      setPendingSquareCrop(null);
+    } catch (err) {
+      setCropError(err instanceof Error ? err.message : "1:1 图片生成失败");
+    } finally {
+      setCropSaving(false);
     }
   }
 
@@ -1238,6 +1489,15 @@ function ProductEditorDialog({
         currentAssets={currentAssets}
         onClose={() => setPickerTarget(null)}
         onSelect={selectImage}
+      />
+      <SquareImageCropDialog
+        cropTarget={pendingSquareCrop}
+        saving={cropSaving}
+        error={cropError}
+        onCancel={() => {
+          if (!cropSaving) setPendingSquareCrop(null);
+        }}
+        onConfirm={confirmSquareCrop}
       />
     </>
   );

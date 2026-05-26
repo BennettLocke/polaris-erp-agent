@@ -1444,7 +1444,7 @@ class NativeDBClient:
         return {"code": 0, "data": {"id": int(asset_id), field: clean_url, "affected": affected}}
 
     def update_product_category_image(self, category_id: int, field: str, url: str) -> dict:
-        allowed = {"icon", "icon_active", "realistic_images", "big_images"}
+        allowed = {"icon", "icon_active"}
         if field not in allowed:
             return {"code": 400, "msg": "不支持的分类图片字段"}
         clean_url = str(url or "").strip()

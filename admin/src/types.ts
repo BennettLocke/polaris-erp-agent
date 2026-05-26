@@ -332,7 +332,7 @@ export type MiniappImageConfig = {
 export type MiniappImageUpdatePayload = {
   target_type: "miniapp_asset" | "category";
   id: number;
-  field: "asset_url" | "active_asset_url" | "icon" | "icon_active" | "realistic_images" | "big_images";
+  field: "asset_url" | "active_asset_url" | "icon" | "icon_active";
   url: string;
 };
 
@@ -413,8 +413,6 @@ export type ProductCategory = {
   inventory_policy?: string;
   icon?: string;
   icon_active?: string;
-  realistic_images?: string;
-  big_images?: string;
   total?: number;
 };
 

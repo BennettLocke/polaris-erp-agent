@@ -15,6 +15,20 @@ from .base import BusinessService
 from .products import ProductService
 
 DEFAULT_HERO_IMAGE = "https://img.513sjbz.com/static/upload/images/app_nav/2026/04/25/1777104334795209.jpg"
+MINIAPP_EXCLUDED_CATEGORY_NAMES = ("纯色泡袋", "品种茶泡袋", "2泡礼盒")
+HOME_CATEGORY_COPY = {
+    "半斤礼盒": ("30", "泡包装礼盒"),
+    "三两礼盒": ("18", "泡包装礼盒"),
+    "二两礼盒": ("12", "泡包装礼盒"),
+    "一两礼盒": ("06", "泡包装礼盒"),
+    "6小盒礼盒": ("12", "泡包装礼盒"),
+    "3小盒礼盒": ("06", "泡包装礼盒"),
+    "2小盒礼盒": ("02", "泡包装礼盒"),
+    "五格礼盒": ("20", "泡包装礼盒"),
+    "PVC礼盒": ("", "半斤/三两/二两等"),
+    "pvc礼盒": ("", "半斤/三两/二两等"),
+    "快递纸箱": ("", "30斤/20斤/15斤等"),
+}
 
 DEFAULT_BOTTOM_TABS = [
     {
@@ -176,6 +190,46 @@ class MiniAppService(BusinessService):
             "extra": extra,
         }
 
+    def _home_category_copy(self, title: str) -> tuple[str, str]:
+        clean_title = str(title or "").strip()
+        if clean_title in HOME_CATEGORY_COPY:
+            return HOME_CATEGORY_COPY[clean_title]
+        if "礼盒" in clean_title:
+            return "", "包装礼盒"
+        if "泡袋" in clean_title:
+            return "", "茶叶泡袋"
+        return "", ""
+
+    def _normalize_product_category_entry(self, item: dict, index: int) -> dict:
+        row = dict(item or {})
+        title = self._title(row) or str(row.get("category_name") or "").strip()
+        category_id = row.get("id") or row.get("category_id") or ""
+        badge_text, subtitle = self._home_category_copy(title)
+        row["link_type"] = "category" if category_id else "search"
+        row["link_value"] = str(category_id or title)
+        icon_url = self._asset_url(row)
+        active_icon_url = self._active_asset_url(row)
+        return {
+            "id": row.get("id") or f"category_{index + 1}",
+            "scene": "home_category",
+            "category_id": category_id,
+            "category_name": title,
+            "title": title,
+            "name": title,
+            "icon_url": icon_url,
+            "active_icon_url": active_icon_url,
+            "asset_url": icon_url,
+            "active_asset_url": active_icon_url,
+            "badge_text": badge_text,
+            "subtitle": subtitle,
+            "link_type": row["link_type"],
+            "link_value": row["link_value"],
+            "url": self._link_url(row),
+            "sort_order": int(row.get("sort_order") or 0),
+            "total": int(row.get("total") or 0),
+            "extra": {},
+        }
+
     def _safe_rows(self, method_name: str, *args) -> list[dict]:
         try:
             method = getattr(self.db, method_name)
@@ -189,17 +243,18 @@ class MiniAppService(BusinessService):
 
     def image_config_payload(self) -> dict:
         assets = []
-        for index, item in enumerate(self._safe_rows("miniapp_assets", None, True)):
-            if not isinstance(item, dict):
-                continue
-            row = dict(item)
-            row["title"] = self._title(row)
-            row["asset_url"] = self._asset_url(row)
-            row["active_asset_url"] = self._active_asset_url(row)
-            row["sort_order"] = int(row.get("sort_order") or 0)
-            row["enabled"] = int(row.get("enabled") or 0)
-            row["index"] = index
-            assets.append(row)
+        for scene in ("home_banner", "bottom_tab"):
+            for index, item in enumerate(self._safe_rows("miniapp_assets", scene, True)):
+                if not isinstance(item, dict):
+                    continue
+                row = dict(item)
+                row["title"] = self._title(row)
+                row["asset_url"] = self._asset_url(row)
+                row["active_asset_url"] = self._active_asset_url(row)
+                row["sort_order"] = int(row.get("sort_order") or 0)
+                row["enabled"] = int(row.get("enabled") or 0)
+                row["index"] = index
+                assets.append(row)
         categories = [
             dict(item)
             for item in self._safe_rows("product_categories")
@@ -251,18 +306,19 @@ class MiniAppService(BusinessService):
             ]
 
         categories = [
-            self._normalize_category_entry(item, index)
-            for index, item in enumerate(self._safe_rows("miniapp_assets", "home_category"))
+            self._normalize_product_category_entry(item, index)
+            for index, item in enumerate(
+                ProductService(db=self.db).categories(
+                    listed_only=True,
+                    exclude_names=MINIAPP_EXCLUDED_CATEGORY_NAMES,
+                )
+            )
             if isinstance(item, dict)
         ]
         if not categories:
             categories = [self._normalize_category_entry(item, index) for index, item in enumerate(DEFAULT_HOME_CATEGORIES)]
 
-        nav_items = [
-            self._normalize_nav_item(item, index, "home_quick")
-            for index, item in enumerate(self._safe_rows("miniapp_assets", "home_quick"))
-            if isinstance(item, dict)
-        ]
+        nav_items: list[dict] = []
 
         bottom_tabs = [
             self._normalize_nav_item(item, index, "bottom_tab")

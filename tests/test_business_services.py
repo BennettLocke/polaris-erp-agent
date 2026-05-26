@@ -77,8 +77,8 @@ class FakeDB:
             },
         }
 
-    def miniapp_assets(self, scene: str | None = None) -> list[dict]:
-        self.calls.append(("miniapp_assets", {"scene": scene}))
+    def miniapp_assets(self, scene: str | None = None, include_disabled: bool = False) -> list[dict]:
+        self.calls.append(("miniapp_assets", {"scene": scene, "include_disabled": include_disabled}))
         rows = {
             "home_banner": [
                 {
@@ -179,7 +179,17 @@ class FakeDB:
 
     def product_categories(self, **kwargs) -> list[dict]:
         self.calls.append(("product_categories", kwargs))
-        return [{"id": 1, "name": "礼盒"}]
+        if not kwargs.get("listed_only") and not kwargs.get("exclude_names"):
+            return [{"id": 1, "name": "礼盒"}]
+        return [
+            {
+                "id": 7,
+                "name": "半斤礼盒",
+                "icon": "https://img.example.test/category-default.png",
+                "icon_active": "https://img.example.test/category-active.png",
+                "total": 17,
+            }
+        ]
 
     def product_options(self, product_id: int | None = None) -> dict:
         self.calls.append(("product_options", {"product_id": product_id}))
@@ -728,15 +738,16 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(payload["banners"][0]["image_url"], "https://img.513sjbz.com/static/upload/images/app_nav/2026/04/25/1777104334795209.jpg")
         self.assertEqual(payload["home_categories"][0]["badge_text"], "30")
         self.assertEqual(payload["home_categories"][0]["subtitle"], "泡包装礼盒")
+        self.assertEqual(payload["home_categories"][0]["icon_url"], "https://img.example.test/category-default.png")
+        self.assertEqual(payload["home_categories"][0]["active_icon_url"], "https://img.example.test/category-active.png")
         self.assertEqual(payload["bottom_tabs"][0]["title"], "首页")
         self.assertEqual(payload["tabbar"]["items"][0]["page_path"], "/pages/home/index")
         self.assertEqual(
             db.calls,
             [
-                ("miniapp_assets", {"scene": "home_banner"}),
-                ("miniapp_assets", {"scene": "home_category"}),
-                ("miniapp_assets", {"scene": "home_quick"}),
-                ("miniapp_assets", {"scene": "bottom_tab"}),
+                ("miniapp_assets", {"scene": "home_banner", "include_disabled": False}),
+                ("product_categories", {"listed_only": True, "exclude_names": ("纯色泡袋", "品种茶泡袋", "2泡礼盒")}),
+                ("miniapp_assets", {"scene": "bottom_tab", "include_disabled": False}),
             ],
         )
 
