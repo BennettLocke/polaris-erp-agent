@@ -14,6 +14,7 @@ _PERIOD_DAYS = {
     "30d": 30,
     "90d": 90,
 }
+_PERIODS = {*_PERIOD_DAYS, "week", "month"}
 _DIMENSIONS = {"product", "sku"}
 
 
@@ -47,7 +48,7 @@ class AnalyticsService(BusinessService):
 
     def hot_products(self, *, period: str = "30d", limit: int = 20, dimension: str = "product") -> dict:
         clean_period = str(period or "30d").strip().lower()
-        if clean_period not in _PERIOD_DAYS and clean_period != "month":
+        if clean_period not in _PERIODS:
             clean_period = "30d"
 
         clean_dimension = str(dimension or "product").strip().lower()
@@ -72,6 +73,8 @@ class AnalyticsService(BusinessService):
     def _period_clause(self, period: str) -> tuple[str, list[Any]]:
         if period == "month":
             return "s.sales_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')", []
+        if period == "week":
+            return "s.sales_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)", []
         if period == "today":
             return "s.sales_at >= CURDATE()", []
         return "s.sales_at >= DATE_SUB(CURDATE(), INTERVAL %s DAY)", [_PERIOD_DAYS[period]]

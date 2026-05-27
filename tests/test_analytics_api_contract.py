@@ -21,6 +21,13 @@ class AnalyticsApiContractTests(unittest.TestCase):
         self.assertIn("SUM(i.amount)", source)
         self.assertIn("GROUP BY", source)
 
+    def test_hot_products_supports_calendar_week_period(self):
+        source = SERVICE_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn('"week"', source)
+        self.assertIn("WEEKDAY(CURDATE())", source)
+        self.assertIn("DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)", source)
+
     def test_hot_products_api_routes_are_exposed(self):
         source = HTTP_SOURCE.read_text(encoding="utf-8")
         init_source = SERVICE_INIT_SOURCE.read_text(encoding="utf-8")
