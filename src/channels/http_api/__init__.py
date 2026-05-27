@@ -906,6 +906,24 @@ def _mini_int(value, default: int = 0) -> int:
         return default
 
 
+def _mini_text_list(value) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        raw_values = re.split(r"[,，、/\s]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_values = value
+    else:
+        raw_values = [value]
+
+    items: list[str] = []
+    for raw in raw_values:
+        text = str(raw or "").strip()
+        if text and text not in items:
+            items.append(text)
+    return items
+
+
 def _mini_category_id(payload: dict) -> int | None:
     value = _mini_value(payload, "category_id", "cat_id", "cid", "id", default="")
     category_id = _mini_int(value, 0)
@@ -2294,7 +2312,15 @@ def _analytics_hot_products_payload(payload: dict) -> dict:
     period = str(_mini_value(payload, "period", "range", default="30d") or "30d").strip()
     dimension = str(_mini_value(payload, "dimension", "by", default="product") or "product").strip()
     limit = _mini_int(_mini_value(payload, "limit", "page_size", default=20), 20)
-    return get_analytics_service().hot_products(period=period, limit=limit, dimension=dimension)
+    category_names = _mini_text_list(
+        _mini_value(payload, "category_names", "categoryNames", "categories", default=[])
+    )
+    return get_analytics_service().hot_products(
+        period=period,
+        limit=limit,
+        dimension=dimension,
+        category_names=category_names,
+    )
 
 
 @app.route("/api/analytics/hot-products", methods=["GET"])

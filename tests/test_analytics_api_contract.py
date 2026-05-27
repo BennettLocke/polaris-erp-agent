@@ -28,6 +28,20 @@ class AnalyticsApiContractTests(unittest.TestCase):
         self.assertIn("WEEKDAY(CURDATE())", source)
         self.assertIn("DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)", source)
 
+    def test_hot_products_can_be_filtered_by_category_names(self):
+        source = SERVICE_SOURCE.read_text(encoding="utf-8")
+        http_source = HTTP_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("category_names", source)
+        self.assertIn("product_category pc", source)
+        self.assertIn("pc.name IN", source)
+        self.assertIn("sku.primary_category_id = pc.id", source)
+        self.assertIn("JSON_CONTAINS(sku.category_ids, CAST(pc.id AS CHAR))", source)
+        self.assertIn("category_names", http_source)
+        self.assertIn("categoryNames", http_source)
+        self.assertIn("categories", http_source)
+        self.assertIn("category_names=category_names", http_source)
+
     def test_hot_products_api_routes_are_exposed(self):
         source = HTTP_SOURCE.read_text(encoding="utf-8")
         init_source = SERVICE_INIT_SOURCE.read_text(encoding="utf-8")

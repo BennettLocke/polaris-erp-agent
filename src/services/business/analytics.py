@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -43,10 +44,35 @@ def _qty_number(value: Any) -> int | float:
     return float(number)
 
 
+def _clean_text_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        raw_values = re.split(r"[,，、/\s]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_values = value
+    else:
+        raw_values = [value]
+
+    items: list[str] = []
+    for raw in raw_values:
+        text = str(raw or "").strip()
+        if text and text not in items:
+            items.append(text)
+    return items
+
+
 class AnalyticsService(BusinessService):
     """Read-only analytics backed by current sales order data."""
 
-    def hot_products(self, *, period: str = "30d", limit: int = 20, dimension: str = "product") -> dict:
+    def hot_products(
+        self,
+        *,
+        period: str = "30d",
+        limit: int = 20,
+        dimension: str = "product",
+        category_names: Any = None,
+    ) -> dict:
         clean_period = str(period or "30d").strip().lower()
         if clean_period not in _PERIODS:
             clean_period = "30d"
@@ -57,15 +83,19 @@ class AnalyticsService(BusinessService):
 
         clean_limit = _clean_limit(limit)
         period_sql, params = self._period_clause(clean_period)
+        clean_category_names = _clean_text_list(category_names)
+        category_filter_sql, category_params = self._category_filter_clause(clean_category_names)
+        params.extend(category_params)
         params.append(clean_limit)
 
-        sql = self._hot_products_sql(clean_dimension, period_sql)
+        sql = self._hot_products_sql(clean_dimension, period_sql, category_filter_sql)
         rows = self.db.query(sql, tuple(params))
         items = [self._hot_product_item(index + 1, row) for index, row in enumerate(rows or [])]
         return {
             "period": clean_period,
             "dimension": clean_dimension,
             "limit": clean_limit,
+            "category_names": clean_category_names,
             "items": items,
             "source": "sales_order",
         }
@@ -79,7 +109,25 @@ class AnalyticsService(BusinessService):
             return "s.sales_at >= CURDATE()", []
         return "s.sales_at >= DATE_SUB(CURDATE(), INTERVAL %s DAY)", [_PERIOD_DAYS[period]]
 
-    def _hot_products_sql(self, dimension: str, period_sql: str) -> str:
+    def _category_filter_clause(self, category_names: list[str]) -> tuple[str, list[Any]]:
+        if not category_names:
+            return "", []
+        placeholders = ", ".join(["%s"] * len(category_names))
+        return f"""
+              AND EXISTS (
+                  SELECT 1
+                  FROM product_category pc
+                  WHERE pc.is_enabled = 1
+                    AND pc.name IN ({placeholders})
+                    AND (
+                        sku.primary_category_id = pc.id
+                        OR sp.default_category_id = pc.id
+                        OR JSON_CONTAINS(sku.category_ids, CAST(pc.id AS CHAR))
+                    )
+              )
+        """, list(category_names)
+
+    def _hot_products_sql(self, dimension: str, period_sql: str, category_filter_sql: str = "") -> str:
         if dimension == "sku":
             select_sql = """
                 COALESCE(sku.spu_id, i.sku_id) AS product_id,
@@ -126,6 +174,7 @@ class AnalyticsService(BusinessService):
               AND s.status NOT IN ('canceled', 'deleted')
               AND {period_sql}
               AND s.sales_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+              {category_filter_sql}
             GROUP BY {group_sql}
             ORDER BY sold_qty DESC, amount DESC, last_sold_at DESC
             LIMIT %s
