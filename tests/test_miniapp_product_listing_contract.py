@@ -21,7 +21,7 @@ class MiniappProductListingContractTest(unittest.TestCase):
         self.assertIn("listed_only=True", detail_source)
         self.assertIn("info(product_id, listed_only=True)", detail_source)
 
-    def test_miniapp_product_list_accepts_latest_and_price_sort_modes(self):
+    def test_miniapp_product_list_accepts_latest_price_and_sales_sort_modes(self):
         source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
         service_source = (ROOT / "src" / "services" / "business" / "products.py").read_text(encoding="utf-8")
         native_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
@@ -39,8 +39,14 @@ class MiniappProductListingContractTest(unittest.TestCase):
         self.assertIn("sort: str = \"\"", service_source)
         self.assertIn("sort=sort", service_source)
         self.assertIn("_product_sort_mode(sort)", product_list_source)
+        self.assertIn('{"sales", "popular", "hot", "comprehensive", "best"}', native_source)
         self.assertIn("price_asc", product_list_source)
         self.assertIn("COALESCE(NULLIF(s.retail_price, 0), NULLIF(s.min_price, 0), NULLIF(s.max_price, 0))", product_list_source)
+        self.assertIn("_product_sales_rank_join_sql()", product_list_source)
+        self.assertIn("FROM sales_order_item i", native_source)
+        self.assertIn("JOIN sales_order so ON so.id = i.sales_order_id", native_source)
+        self.assertIn("SUM(i.quantity) AS sold_qty", native_source)
+        self.assertIn("group_order_sql = \"sold_qty DESC, sales_amount DESC, latest_sales_at DESC, latest_time DESC, latest_id DESC\"", product_list_source)
         self.assertIn("MIN({price_sql}) AS min_price", product_list_source)
         self.assertIn("group_order_sql = \"min_price IS NULL ASC, min_price ASC, latest_time DESC, latest_id DESC\"", product_list_source)
         self.assertIn("group_order_sql = \"latest_time DESC, latest_id DESC\"", product_list_source)

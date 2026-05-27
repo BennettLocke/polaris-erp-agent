@@ -1224,7 +1224,28 @@ class NativeDBClient:
             return "latest"
         if value in {"price", "price_asc", "price_low", "price_low_to_high"}:
             return "price_asc"
+        if value in {"sales", "popular", "hot", "comprehensive", "best"}:
+            return "sales"
         return "default"
+
+    def _product_sales_rank_join_sql(self) -> str:
+        return """
+            LEFT JOIN (
+                SELECT
+                    i.sku_id,
+                    SUM(i.quantity) AS sold_qty,
+                    SUM(i.amount) AS sales_amount,
+                    COUNT(DISTINCT so.id) AS order_count,
+                    MAX(so.sales_at) AS latest_sales_at
+                FROM sales_order_item i
+                JOIN sales_order so ON so.id = i.sales_order_id
+                WHERE so.deleted_at IS NULL
+                  AND so.status NOT IN ('canceled', 'deleted')
+                  AND so.sales_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+                  AND so.sales_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+                GROUP BY i.sku_id
+            ) sales_rank ON sales_rank.sku_id = s.id
+        """
 
     def product_list(
         self,
@@ -1262,6 +1283,14 @@ class NativeDBClient:
             order_sql = "s.updated_at DESC, s.id DESC"
             if sort_mode == "price_asc":
                 order_sql = f"({price_sql} IS NULL) ASC, {price_sql} ASC, s.updated_at DESC, s.id DESC"
+            elif sort_mode == "sales":
+                order_sql = (
+                    "COALESCE(sales_rank.sold_qty, 0) DESC, "
+                    "COALESCE(sales_rank.sales_amount, 0) DESC, "
+                    "COALESCE(sales_rank.latest_sales_at, '1970-01-01') DESC, "
+                    "s.updated_at DESC, s.id DESC"
+                )
+            sales_rank_join_sql = self._product_sales_rank_join_sql() if sort_mode == "sales" else ""
             total_rows = self.query(
                 f"{self._product_select_sql()} WHERE {where_sql}",
                 params,
@@ -1270,6 +1299,7 @@ class NativeDBClient:
             rows = self.query(
                 f"""
                 {self._product_select_sql()}
+                {sales_rank_join_sql}
                 WHERE {where_sql}
                 ORDER BY {order_sql}
                 LIMIT %s OFFSET %s
@@ -1291,14 +1321,32 @@ class NativeDBClient:
         group_order_sql = "latest_time DESC, latest_id DESC"
         if sort_mode == "price_asc":
             group_order_sql = "min_price IS NULL ASC, min_price ASC, latest_time DESC, latest_id DESC"
+        elif sort_mode == "sales":
+            group_order_sql = "sold_qty DESC, sales_amount DESC, latest_sales_at DESC, latest_time DESC, latest_id DESC"
+        sales_rank_join_sql = self._product_sales_rank_join_sql() if sort_mode == "sales" else ""
+        sales_rank_select_sql = (
+            """
+                   COALESCE(SUM(sales_rank.sold_qty), 0) AS sold_qty,
+                   COALESCE(SUM(sales_rank.sales_amount), 0) AS sales_amount,
+                   COALESCE(MAX(sales_rank.latest_sales_at), '1970-01-01') AS latest_sales_at
+            """
+            if sort_mode == "sales"
+            else """
+                   0 AS sold_qty,
+                   0 AS sales_amount,
+                   '1970-01-01' AS latest_sales_at
+            """
+        )
         group_rows = self.query(
             f"""
             SELECT sp.id AS spu_id,
                    MAX(s.updated_at) AS latest_time,
                    MAX(s.id) AS latest_id,
-                   MIN({price_sql}) AS min_price
+                   MIN({price_sql}) AS min_price,
+                   {sales_rank_select_sql}
             FROM product_sku s
             JOIN product_spu sp ON sp.id = s.spu_id
+            {sales_rank_join_sql}
             WHERE {where_sql}
             GROUP BY sp.id
             ORDER BY {group_order_sql}
