@@ -369,6 +369,13 @@ class FakeDB:
 
     def update_user(self, user_id: int, role=None, is_active=None, display_name=None):
         self.calls.append(("update_user", {"user_id": user_id, "role": role, "is_active": is_active, "display_name": display_name}))
+        user = self.auth_users.get(int(user_id))
+        if user and display_name is not None:
+            user["display_name"] = display_name
+        if user and role is not None:
+            user["role"] = role
+        if user and is_active is not None:
+            user["is_active"] = is_active
         return {"code": 0, "data": {"id": user_id}}
 
     def identity_link_wechat(self, **kwargs):
@@ -440,6 +447,35 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(result["code"], 0)
         self.assertTrue(check_password_hash(db.auth_users[1]["password_hash"], "new-secret"))
         self.assertEqual(rejected["code"], 401)
+
+    def test_auth_service_uses_customer_name_when_user_is_bound_to_party(self):
+        db = FakeDB()
+        db.auth_users[1]["display_name"] = "Wechat Nick"
+        db.auth_users[1]["linked_party_id"] = 55
+        db.auth_users[1]["linked_party_name"] = "\u9f50\u552f\u8336\u4e1a"
+        service = AuthService(db=db)
+
+        user = service.user_public(db.auth_users[1])
+
+        self.assertEqual(user["display_name"], "\u9f50\u552f\u8336\u4e1a")
+        self.assertEqual(user["user_display_name"], "Wechat Nick")
+        self.assertEqual(user["display_name_source"], "customer")
+        self.assertFalse(user["can_edit_display_name"])
+
+    def test_auth_service_allows_profile_name_update_only_without_customer_binding(self):
+        db = FakeDB()
+        service = AuthService(db=db)
+
+        updated = service.update_native_profile(user_id=1, display_name="New Nick", token="token")
+        db.auth_users[1]["linked_party_id"] = 55
+        db.auth_users[1]["linked_party_name"] = "\u9f50\u552f\u8336\u4e1a"
+        rejected = service.update_native_profile(user_id=1, display_name="Should Not Save", token="token")
+
+        self.assertEqual(updated["code"], 0)
+        self.assertEqual(updated["data"]["user"]["display_name"], "New Nick")
+        self.assertTrue(updated["data"]["user"]["can_edit_display_name"])
+        self.assertEqual(rejected["code"], 403)
+        self.assertEqual(db.auth_users[1]["display_name"], "New Nick")
 
     def test_auth_service_wechat_quick_login_exchanges_phone_code_before_binding(self):
         class PhoneCodeAuthService(AuthService):

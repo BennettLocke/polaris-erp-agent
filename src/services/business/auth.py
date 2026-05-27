@@ -105,18 +105,25 @@ class AuthService(BusinessService):
         role = role_code(row.get("role"))
         is_admin = int(row.get("is_admin") or 0) == 1 or role == "admin"
         user_id = row.get("id") or row.get("user_id") or ""
-        display_name = (
+        account_display_name = (
             row.get("display_name")
             or row.get("nickname")
             or row.get("username")
             or row.get("phone")
             or (f"用户{user_id}" if user_id else "北极星用户")
         )
+        linked_party_id = row.get("linked_party_id")
+        linked_party_name = row.get("linked_party_name") or ""
+        has_customer_binding = bool(linked_party_id)
+        display_name = linked_party_name or account_display_name
         return {
             "id": user_id,
             "user_id": user_id,
             "token": token,
             "display_name": display_name,
+            "user_display_name": account_display_name,
+            "display_name_source": "customer" if has_customer_binding else "user",
+            "can_edit_display_name": not has_customer_binding,
             "nickname": row.get("nickname") or display_name,
             "username": row.get("username") or "",
             "mobile": row.get("phone") or "",
@@ -125,8 +132,8 @@ class AuthService(BusinessService):
             "avatar": row.get("avatar") or "",
             "role": role,
             "role_text": role_label(role),
-            "linked_party_id": row.get("linked_party_id"),
-            "linked_party_name": row.get("linked_party_name") or "",
+            "linked_party_id": linked_party_id,
+            "linked_party_name": linked_party_name,
             "approval_status": row.get("approval_status") or "",
             "is_active": int(row.get("is_active") or 0),
             "is_admin": is_admin,
@@ -505,6 +512,19 @@ class AuthService(BusinessService):
             return {"code": 400, "msg": "Username cannot be empty", "_http_status": 400}
         if len(display_name) > 80:
             display_name = display_name[:80]
+
+        current = self.user_by_id(user_id)
+        if not current:
+            _TOKEN_CACHE.pop(token, None)
+            return {"code": 401, "msg": "Login expired, please login again", "_http_status": 401}
+        if current.get("linked_party_id"):
+            user = self.user_public(current, token=token)
+            return {
+                "code": 403,
+                "msg": "Customer-bound accounts use the customer name and cannot edit the display name here",
+                "data": {"user": user},
+                "_http_status": 403,
+            }
 
         result = self.db.update_user(user_id, display_name=display_name)
         if int(result.get("code") or 0) != 0:
