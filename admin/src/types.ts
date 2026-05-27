@@ -298,6 +298,9 @@ export type SalesProduct = {
   inventory?: string | number;
   is_stock_item?: number;
   is_listed?: number;
+  system_goods_is_shelves?: number;
+  listed_sku_count?: number;
+  unlisted_sku_count?: number;
   status_text?: string;
   product_category_text?: string;
   piece_text?: string;

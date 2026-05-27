@@ -65,6 +65,33 @@ def _json_service_result(result: dict, default_status: int = 200):
     return jsonify(payload), status
 
 
+def _request_truthy_arg(*names: str) -> bool:
+    for name in names:
+        if name not in request.args:
+            continue
+        value = str(request.args.get(name) or "").strip().lower()
+        return value in {"1", "true", "yes", "on", "listed"}
+    return False
+
+
+def _payload_id_list(value) -> list[int]:
+    if value in (None, ""):
+        return []
+    raw_values = value
+    if isinstance(value, str):
+        raw_values = re.split(r"[,，、\s]+", value)
+    elif not isinstance(value, (list, tuple, set)):
+        raw_values = [value]
+    ids: list[int] = []
+    for raw in raw_values:
+        text = str(raw or "").strip()
+        if text.isdigit():
+            item = int(text)
+            if item > 0 and item not in ids:
+                ids.append(item)
+    return ids
+
+
 def _native_phone_digits(value) -> str:
     from src.services.business.auth import phone_digits
     return phone_digits(value)
@@ -2649,7 +2676,12 @@ def sales_print_html_api(sales_id: int):
         return Response("sales_id is required", status=400, mimetype="text/plain")
     try:
         auto_print = request.args.get("auto", "1") not in ("0", "false", "False")
-        html = get_sales_service().sales_print_html(sales_id, auto_print=auto_print)
+        show_actions = request.args.get("chrome", "1") not in ("0", "false", "False")
+        html = get_sales_service().sales_print_html(
+            sales_id,
+            auto_print=auto_print,
+            show_actions=show_actions,
+        )
         return Response(html, mimetype="text/html")
     except Exception as e:
         logger.error(f"sales print html failed: sales_id={sales_id}, error={e}")
@@ -3061,9 +3093,10 @@ def product_search():
     keyword = normalize_product_name(request.args.get("keyword", ""), specs=PRODUCT_SPECS)
     if not keyword:
         return jsonify({"code": 400, "msg": "keyword is required"}), 400
+    listed_only = _request_truthy_arg("listed_only", "only_listed", "is_listed")
 
     try:
-        results = get_product_service().search(keyword, limit=100)
+        results = get_product_service().search(keyword, limit=100, listed_only=listed_only)
         return jsonify({"code": 0, "data": results[:100], "source": "db"})
     except Exception as e:
         logger.error(f"商品自有库搜索异常: {e}")
@@ -3085,6 +3118,7 @@ def product_list():
     ]
     product_type = str(request.args.get("product_type") or "").strip()
     listed_state = str(request.args.get("listed_state") or "").strip()
+    listed_only = _request_truthy_arg("listed_only", "only_listed", "is_listed")
     stock_mode = str(request.args.get("stock_mode") or "").strip()
     quality = str(request.args.get("quality") or "").strip()
     group = request.args.get("group", default=1, type=int) == 1
@@ -3099,6 +3133,7 @@ def product_list():
             group,
             category_ids=category_ids,
             product_type=product_type,
+            listed_only=listed_only,
             listed_state=listed_state,
             stock_mode=stock_mode,
             quality=quality,
@@ -3943,7 +3978,9 @@ def product_shelves_api(product_id: int):
     try:
         body = request.get_json(silent=True) or request.form.to_dict(flat=True) or {}
         state = int(body.get("state", 0))
-        result = get_product_service().update_shelves(product_id, state)
+        spu_id = _mini_int(body.get("spu_id") or body.get("spuId"), 0)
+        sku_ids = _payload_id_list(body.get("sku_ids") or body.get("skuIds") or body.get("ids"))
+        result = get_product_service().update_shelves(product_id, state, spu_id=spu_id or None, sku_ids=sku_ids)
         return jsonify(result)
     except Exception as e:
         logger.error(f"商品上下架异常: {e}")

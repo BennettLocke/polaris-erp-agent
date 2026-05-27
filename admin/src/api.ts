@@ -288,12 +288,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ids: Array.isArray(ids) ? ids : [ids] })
     }),
-  updateProductShelves: (id: number, state: number) =>
+  updateProductShelves: (
+    id: number,
+    state: number,
+    options: { spuId?: number; skuIds?: Array<number | string> } = {}
+  ) =>
     request<{ id?: number; spu_id?: number; sku_ids?: number[]; is_listed: number; affected?: number }>(
       `/api/product/${id}/shelves`,
       {
         method: "POST",
-        body: JSON.stringify({ state })
+        body: JSON.stringify({ state, spu_id: options.spuId, sku_ids: options.skuIds })
       }
     ),
   uploadProductImage: (file: File) => {

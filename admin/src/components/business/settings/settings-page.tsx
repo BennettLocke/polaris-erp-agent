@@ -1368,8 +1368,11 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProductMediaAsset | null>(null);
+  const [selectedMediaIds, setSelectedMediaIds] = useState<number[]>([]);
+  const [confirmBatchDelete, setConfirmBatchDelete] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pageSize = 24;
   const mediaThumbRule = "x-oss-process";
@@ -1381,10 +1384,20 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
         api.systemSetting("image_rules"),
         api.productMedia({ page: nextPage, pageSize, mediaType: nextType })
       ]);
+      const mediaList = mediaData.list || [];
       setSetting(imageSetting);
-      setItems(mediaData.list || []);
+      setItems(mediaList);
       setTotal(mediaData.total || 0);
       setPage(nextPage);
+      setSelectedMediaIds((current) => {
+        if (nextType !== "pending") return [];
+        const pagePendingIds = new Set(
+          mediaList
+            .filter((asset) => asset.id && asset.media_type === "pending")
+            .map((asset) => Number(asset.id))
+        );
+        return current.filter((id) => pagePendingIds.has(id));
+      });
     } catch (err) {
       onError(err instanceof Error ? err.message : "图片资产加载失败");
     } finally {
@@ -1396,19 +1409,33 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
     void loadMedia(1, "");
   }, []);
 
-  async function uploadPendingImage(file: File) {
+  async function uploadPendingImages(files: File[]) {
+    if (!files.length) return;
     setUploading(true);
+    setUploadProgress("");
+    let uploadedCount = 0;
     try {
-      const result = await api.uploadProductImage(file);
-      const url = uploadResultUrl(result);
-      if (!url) throw new Error("OSS 没有返回图片地址");
+      for (const [index, file] of files.entries()) {
+        setUploadProgress(`${index + 1}/${files.length}`);
+        const result = await api.uploadProductImage(file);
+        const url = uploadResultUrl(result);
+        if (!url) throw new Error("OSS 没有返回图片地址");
+        uploadedCount += 1;
+      }
       setMediaType("pending");
+      setSelectedMediaIds([]);
       await loadMedia(1, "pending");
-      onSaved("上传待绑定图片成功，已进入未绑定图片列表");
+      onSaved(files.length === 1 ? "上传待绑定图片成功，已进入未绑定图片列表" : `已上传 ${uploadedCount} 张待绑定图片，已进入未绑定图片列表`);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "待绑定图片上传失败");
+      if (uploadedCount > 0) {
+        setMediaType("pending");
+        await loadMedia(1, "pending");
+      }
+      const message = err instanceof Error ? err.message : "待绑定图片上传失败";
+      onError(files.length > 1 ? `已上传 ${uploadedCount}/${files.length} 张，${message}` : message);
     } finally {
       setUploading(false);
+      setUploadProgress("");
     }
   }
 
@@ -1418,6 +1445,7 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
     try {
       await api.deleteProductMedia(Number(deleteTarget.id));
       setDeleteTarget(null);
+      setSelectedMediaIds((current) => current.filter((id) => id !== Number(deleteTarget.id)));
       await loadMedia(page, mediaType);
       onSaved("图片资产已删除");
     } catch (err) {
@@ -1427,7 +1455,43 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
     }
   }
 
+  async function deleteSelectedProductMedia() {
+    const ids = selectedPendingMediaIds;
+    if (!ids.length) return;
+    setDeleting(true);
+    try {
+      for (const id of ids) {
+        await api.deleteProductMedia(id);
+      }
+      setSelectedMediaIds([]);
+      setConfirmBatchDelete(false);
+      await loadMedia(page, "pending");
+      onSaved(`已删除 ${ids.length} 张未绑定图片`);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "未绑定图片批量删除失败");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function toggleMediaSelection(id: number) {
+    setSelectedMediaIds((current) => (
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    ));
+  }
+
+  function toggleAllPendingMedia() {
+    setSelectedMediaIds(allPendingSelected ? [] : pendingSelectableIds);
+  }
+
+  const isPendingMediaTab = mediaType === "pending";
+  const pendingSelectableIds = isPendingMediaTab
+    ? items.filter((asset) => asset.id && asset.media_type === "pending").map((asset) => Number(asset.id))
+    : [];
+  const selectedPendingMediaIds = selectedMediaIds.filter((id) => pendingSelectableIds.includes(id));
+  const allPendingSelected = pendingSelectableIds.length > 0 && pendingSelectableIds.every((id) => selectedPendingMediaIds.includes(id));
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const uploadButtonText = uploading ? (uploadProgress ? `上传中 ${uploadProgress}` : "上传中") : "上传待绑定图片";
 
   return (
     <>
@@ -1444,15 +1508,16 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
               className="settings-file-input"
               type="file"
               accept="image/*"
+              multiple
               onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
+                const files = Array.from(event.currentTarget.files || []);
                 event.currentTarget.value = "";
-                if (file) void uploadPendingImage(file);
+                if (files.length) void uploadPendingImages(files);
               }}
             />
             <Button type="button" size="sm" disabled={uploading} onClick={() => fileInputRef.current?.click()}>
               <Upload data-icon="inline-start" />
-              {uploading ? "上传中" : "上传待绑定图片"}
+              {uploadButtonText}
             </Button>
           </CardAction>
         </CardHeader>
@@ -1473,8 +1538,33 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
             </TabsList>
           </Tabs>
           <div className="settings-media-meta">
-            <Badge variant="outline">第 {page} / {pageCount} 页</Badge>
-            <span>共 {total} 张，缩略图规则使用 {mediaThumbRule}</span>
+            <div className="settings-media-meta-main">
+              <Badge variant="outline">第 {page} / {pageCount} 页</Badge>
+              <span>共 {total} 张，缩略图规则使用 {mediaThumbRule}</span>
+            </div>
+            {isPendingMediaTab ? (
+              <div className="settings-media-actions">
+                <Badge variant="outline">已选 {selectedPendingMediaIds.length} 张</Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!pendingSelectableIds.length || loading || deleting}
+                  onClick={toggleAllPendingMedia}
+                >
+                  {allPendingSelected ? "取消全选" : "本页全选"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  disabled={!selectedPendingMediaIds.length || deleting}
+                  onClick={() => setConfirmBatchDelete(true)}
+                >
+                  删除所选
+                </Button>
+              </div>
+            ) : null}
           </div>
           {loading ? (
             <div className="settings-media-grid">
@@ -1482,30 +1572,46 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
             </div>
           ) : items.length ? (
             <div className="settings-media-grid">
-              {items.map((asset, index) => (
-                <article className="settings-media-card" key={`${asset.id || asset.url}-${index}`}>
-                  <div className="settings-media-thumb">
-                    <img src={thumbnailUrl(asset.url)} alt={asset.binding_text || asset.product_name || "图片资产"} loading="lazy" />
-                    {asset.id ? (
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="secondary"
-                        className="settings-media-delete"
-                        aria-label="删除图片"
-                        onClick={() => setDeleteTarget(asset)}
-                      >
-                        <Trash2 />
-                      </Button>
-                    ) : null}
-                  </div>
-                  <div className="settings-media-info">
-                    <strong>{asset.product_name || asset.binding_text || "未绑定图片"}</strong>
-                    <span>{asset.asset_group_text || asset.category_name || "其他分类"}</span>
-                    <span>{[asset.media_type_text, asset.sku_color, asset.source_text].filter(Boolean).join(" / ") || asset.media_type}</span>
-                  </div>
-                </article>
-              ))}
+              {items.map((asset, index) => {
+                const assetId = asset.id ? Number(asset.id) : 0;
+                const canSelect = isPendingMediaTab && assetId > 0 && asset.media_type === "pending";
+                const selected = canSelect && selectedPendingMediaIds.includes(assetId);
+                return (
+                  <article className={`settings-media-card${selected ? " settings-media-card--selected" : ""}`} key={`${asset.id || asset.url}-${index}`}>
+                    <div className="settings-media-thumb">
+                      <img src={thumbnailUrl(asset.url)} alt={asset.binding_text || asset.product_name || "图片资产"} loading="lazy" />
+                      {canSelect ? (
+                        <label className="settings-media-select" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            aria-label={`选择${asset.product_name || asset.binding_text || "未绑定图片"}`}
+                            onChange={() => toggleMediaSelection(assetId)}
+                          />
+                          <span>选择</span>
+                        </label>
+                      ) : null}
+                      {asset.id ? (
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="secondary"
+                          className="settings-media-delete"
+                          aria-label="删除图片"
+                          onClick={() => setDeleteTarget(asset)}
+                        >
+                          <Trash2 />
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className="settings-media-info">
+                      <strong>{asset.product_name || asset.binding_text || "未绑定图片"}</strong>
+                      <span>{asset.asset_group_text || asset.category_name || "其他分类"}</span>
+                      <span>{[asset.media_type_text, asset.sku_color, asset.source_text].filter(Boolean).join(" / ") || asset.media_type}</span>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <SettingsEmpty title="没有图片资产" desc="当前筛选下没有可展示的商品图片。" />
@@ -1538,6 +1644,22 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
             <AlertDialogAction disabled={deleting} onClick={() => void deleteProductMedia()}>
+              {deleting ? "删除中" : "确认删除"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmBatchDelete} onOpenChange={setConfirmBatchDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除选中的未绑定图片？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除当前未绑定列表里选中的 {selectedPendingMediaIds.length} 张图片资产。已绑定商品图不会进入批量删除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            <AlertDialogAction disabled={deleting || !selectedPendingMediaIds.length} onClick={() => void deleteSelectedProductMedia()}>
               {deleting ? "删除中" : "确认删除"}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1809,6 +1931,7 @@ function PrintSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const previewFrameRef = useRef<HTMLIFrameElement | null>(null);
 
   async function load() {
     setLoading(true);
@@ -1852,9 +1975,10 @@ function PrintSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
   if (loading) return <SettingsLoading rows={3} />;
   if (!print) return <SettingsEmpty title="没有打印设置" desc="后端还没有返回销售单打印模板。" />;
 
-  const previewUrl = print.latest_print_url || (
+  const rawPreviewUrl = print.latest_print_url || (
     print.latest_sales_id ? `/api/sales/${encodeURIComponent(String(print.latest_sales_id))}/print-html?auto=0` : ""
   );
+  const previewUrl = rawPreviewUrl ? `${rawPreviewUrl}${rawPreviewUrl.includes("?") ? "&" : "?"}chrome=0` : "";
   const canPreview = Boolean(previewUrl);
 
   return (
@@ -1973,6 +2097,7 @@ function PrintSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
           </DialogHeader>
           {canPreview ? (
             <iframe
+              ref={previewFrameRef}
               className="settings-print-preview-frame"
               src={previewUrl}
               title="销售单打印预览"
@@ -1981,18 +2106,16 @@ function PrintSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
             <SettingsEmpty title="暂无预览" desc="开出销售单后这里会显示最近销售单的打印预览。" />
           )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPreviewOpen(false)}>
-              关闭
-            </Button>
             <Button
               type="button"
               disabled={!canPreview}
               onClick={() => {
-                if (previewUrl) window.open(previewUrl, "_blank", "noopener");
+                previewFrameRef.current?.contentWindow?.focus();
+                previewFrameRef.current?.contentWindow?.print();
               }}
             >
               <Printer data-icon="inline-start" />
-              新窗口打开
+              打印
             </Button>
           </DialogFooter>
         </DialogContent>

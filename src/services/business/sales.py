@@ -97,8 +97,20 @@ class SalesService(BusinessService):
     def print_data(self, sales_id: int) -> dict:
         return self.db.sales_print_data(sales_id)
 
-    def sales_print_html(self, sales_id: int, *, template_id: int | None = None, auto_print: bool = True) -> str:
-        return self.db.sales_print_html(sales_id, template_id=template_id, auto_print=auto_print)
+    def sales_print_html(
+        self,
+        sales_id: int,
+        *,
+        template_id: int | None = None,
+        auto_print: bool = True,
+        show_actions: bool = True,
+    ) -> str:
+        return self.db.sales_print_html(
+            sales_id,
+            template_id=template_id,
+            auto_print=auto_print,
+            show_actions=show_actions,
+        )
 
     def create_print_task(
         self,
@@ -139,10 +151,10 @@ class SalesService(BusinessService):
             (int(task_id),),
         )
         self.db.execute(
-            "UPDATE sales_order SET print_status='failed', note=CONCAT(COALESCE(note, ''), %s), updated_at=NOW() WHERE id=%s",
-            (f"\n打印失败：{clean_reason}", int(sales_id or 0)),
+            "UPDATE sales_order SET print_status='failed', updated_at=NOW() WHERE id=%s",
+            (int(sales_id or 0),),
         )
-        return {"code": 0, "data": {"id": int(task_id), "status": "failed"}}
+        return {"code": 0, "data": {"id": int(task_id), "status": "failed", "reason": clean_reason}}
 
 
 def get_sales_service() -> SalesService:

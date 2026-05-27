@@ -21,6 +21,41 @@ class MiniappProductListingContractTest(unittest.TestCase):
         self.assertIn("listed_only=True", detail_source)
         self.assertIn("info(product_id, listed_only=True)", detail_source)
 
+    def test_generic_product_endpoints_can_opt_into_listed_only_reads(self):
+        source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        service_source = (ROOT / "src" / "services" / "business" / "products.py").read_text(encoding="utf-8")
+        native_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+
+        search_start = source.index("def product_search")
+        list_start = source.index("def product_list", search_start)
+        next_route = source.index("@app.route", list_start + 1)
+        search_source = source[search_start:list_start]
+        list_source = source[list_start:next_route]
+
+        self.assertIn('listed_only = _request_truthy_arg("listed_only", "only_listed", "is_listed")', search_source)
+        self.assertIn("search(keyword, limit=100, listed_only=listed_only)", search_source)
+        self.assertIn('listed_only = _request_truthy_arg("listed_only", "only_listed", "is_listed")', list_source)
+        self.assertIn("listed_only=listed_only", list_source)
+        self.assertIn("def search(self, keyword: str, *, limit: int = 80, listed_only: bool = False)", service_source)
+        self.assertIn("product_search(keyword, limit=limit, listed_only=listed_only)", service_source)
+        self.assertIn("def product_search(self, keyword: str, limit: int = 80, *, listed_only: bool = False)", native_source)
+        self.assertIn("_sku_where(keyword, active_only=True, listed_only=listed_only)", native_source)
+
+    def test_grouped_admin_products_use_spu_level_listing_state(self):
+        native_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+        admin_source = (ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx").read_text(encoding="utf-8")
+
+        product_list_start = native_source.index("def product_list")
+        categories_start = native_source.index("def product_categories")
+        product_list_source = native_source[product_list_start:categories_start]
+
+        self.assertIn("group_listed_filter", product_list_source)
+        self.assertIn("HAVING listed_sku_count > 0", product_list_source)
+        self.assertIn("HAVING listed_sku_count = 0", product_list_source)
+        self.assertIn('primary["is_listed"] = 1 if listed_variants else 0', product_list_source)
+        self.assertIn("product.system_goods_is_shelves ?? product.is_listed", admin_source)
+        self.assertIn("skuIds: productSkuIds(product)", admin_source)
+
     def test_miniapp_product_list_accepts_latest_price_and_sales_sort_modes(self):
         source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
         service_source = (ROOT / "src" / "services" / "business" / "products.py").read_text(encoding="utf-8")

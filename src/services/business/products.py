@@ -8,8 +8,8 @@ from .base import BusinessService
 
 
 class ProductService(BusinessService):
-    def search(self, keyword: str, *, limit: int = 80) -> list[dict]:
-        return self.db.product_search(keyword, limit=limit)
+    def search(self, keyword: str, *, limit: int = 80, listed_only: bool = False) -> list[dict]:
+        return self.db.product_search(keyword, limit=limit, listed_only=listed_only)
 
     def list(
         self,
@@ -77,8 +77,15 @@ class ProductService(BusinessService):
     def delete(self, ids: str | list[int]) -> dict:
         return self.db.delete_product(ids)
 
-    def update_shelves(self, product_id: int, state: int) -> dict:
-        return self.db.update_product_shelves(product_id, state)
+    def update_shelves(
+        self,
+        product_id: int,
+        state: int,
+        *,
+        spu_id: Any | None = None,
+        sku_ids: Iterable[Any] | None = None,
+    ) -> dict:
+        return self.db.update_product_shelves(product_id, state, spu_id=spu_id, sku_ids=sku_ids)
 
     def price(self, product_id: int) -> float | None:
         return self.db.get_product_price(product_id)

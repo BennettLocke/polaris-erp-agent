@@ -1184,8 +1184,8 @@ class NativeDBClient:
             }],
         }
 
-    def product_search(self, keyword: str, limit: int = 80) -> list[dict]:
-        where_sql, params = self._sku_where(keyword, active_only=True)
+    def product_search(self, keyword: str, limit: int = 80, *, listed_only: bool = False) -> list[dict]:
+        where_sql, params = self._sku_where(keyword, active_only=True, listed_only=listed_only)
         rows = self.query(
             f"""
             {self._product_select_sql()}
@@ -1300,6 +1300,8 @@ class NativeDBClient:
         offset = (page - 1) * page_size
         sort_mode = self._product_sort_mode(sort)
         price_sql = "COALESCE(NULLIF(s.retail_price, 0), NULLIF(s.min_price, 0), NULLIF(s.max_price, 0))"
+        listed_value = str(listed_state or "").strip().lower()
+        group_listed_filter = group and listed_value in {"listed", "1", "true", "yes", "unlisted", "0", "false", "no"}
         where_sql, params = self._sku_where(
             keyword,
             status=status,
@@ -1307,7 +1309,7 @@ class NativeDBClient:
             category_ids=category_ids,
             product_type=product_type,
             listed_only=listed_only,
-            listed_state=listed_state,
+            listed_state="" if group_listed_filter else listed_state,
             stock_mode=stock_mode,
             quality=quality,
         )
@@ -1340,12 +1342,25 @@ class NativeDBClient:
             )
             return [self._row_to_product(row) for row in rows], total
 
+        listed_having_sql = ""
+        if group_listed_filter:
+            if listed_value in {"listed", "1", "true", "yes"}:
+                listed_having_sql = "HAVING listed_sku_count > 0"
+            else:
+                listed_having_sql = "HAVING listed_sku_count = 0"
+
         total_rows = self.query(
             f"""
-            SELECT COUNT(DISTINCT sp.id) AS total
-            FROM product_sku s
-            JOIN product_spu sp ON sp.id = s.spu_id
-            WHERE {where_sql}
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT sp.id AS spu_id,
+                       SUM(CASE WHEN s.status = 'active' AND s.is_listed = 1 THEN 1 ELSE 0 END) AS listed_sku_count
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id = s.spu_id
+                WHERE {where_sql}
+                GROUP BY sp.id
+                {listed_having_sql}
+            ) grouped_product
             """,
             params,
         )
@@ -1375,12 +1390,14 @@ class NativeDBClient:
                    MAX(s.updated_at) AS latest_time,
                    MAX(s.id) AS latest_id,
                    MIN({price_sql}) AS min_price,
+                   SUM(CASE WHEN s.status = 'active' AND s.is_listed = 1 THEN 1 ELSE 0 END) AS listed_sku_count,
                    {sales_rank_select_sql}
             FROM product_sku s
             JOIN product_spu sp ON sp.id = s.spu_id
             {sales_rank_join_sql}
             WHERE {where_sql}
             GROUP BY sp.id
+            {listed_having_sql}
             ORDER BY {group_order_sql}
             LIMIT %s OFFSET %s
             """,
@@ -1435,7 +1452,14 @@ class NativeDBClient:
             primary["product_category_ids"] = categories
             primary["product_category_text"] = " / ".join(category_texts[:3])
             primary["is_stock_item"] = 1 if any(int(v.get("is_stock_item") or 0) for v in variants) else 0
-            primary["system_goods_is_shelves"] = 1 if any(int(v.get("system_goods_is_shelves") or 0) for v in variants) else 0
+            listed_variants = [
+                v for v in variants
+                if int(v.get("system_goods_is_shelves") or 0) == 1 and str(v.get("native_status") or "active") == "active"
+            ]
+            primary["listed_sku_count"] = len(listed_variants)
+            primary["unlisted_sku_count"] = max(0, len(variants) - len(listed_variants))
+            primary["is_listed"] = 1 if listed_variants else 0
+            primary["system_goods_is_shelves"] = primary["is_listed"]
             items.append(primary)
         return items, total
 
@@ -2369,28 +2393,83 @@ class NativeDBClient:
             },
         }
 
-    def update_product_shelves(self, product_id: int, state: int) -> dict:
+    def update_product_shelves(
+        self,
+        product_id: int,
+        state: int,
+        *,
+        spu_id: Any | None = None,
+        sku_ids: Iterable[Any] | None = None,
+    ) -> dict:
         now = _now()
+        target_state = 1 if state else 0
         with self.transaction() as cursor:
-            spu_ids, seed_sku_ids = self._product_spu_ids_from_inputs([product_id], cursor)
+            spu_ids: list[int] = []
+            seed_sku_ids: list[int] = []
+
+            def add_spu_id(value: Any) -> None:
+                try:
+                    clean_id = int(value or 0)
+                except (TypeError, ValueError):
+                    return
+                if clean_id <= 0:
+                    return
+                cursor.execute("SELECT id FROM product_spu WHERE id=%s AND deleted_at IS NULL LIMIT 1", (clean_id,))
+                row = cursor.fetchone()
+                if row and int(row["id"]) not in spu_ids:
+                    spu_ids.append(int(row["id"]))
+
+            add_spu_id(spu_id)
+            explicit_sku_ids = [item for item in (sku_ids or []) if str(item or "").strip()]
+            if explicit_sku_ids:
+                explicit_spu_ids, explicit_seed_sku_ids = self._product_spu_ids_from_inputs(explicit_sku_ids, cursor)
+                for explicit_spu_id in explicit_spu_ids:
+                    if explicit_spu_id not in spu_ids:
+                        spu_ids.append(explicit_spu_id)
+                seed_sku_ids.extend([item for item in explicit_seed_sku_ids if item not in seed_sku_ids])
+            if not spu_ids:
+                spu_ids, seed_sku_ids = self._product_spu_ids_from_inputs([product_id], cursor)
             if not spu_ids:
                 return {"code": 404, "msg": "商品不存在"}
-            spu_id = spu_ids[0]
-            cursor.execute("SELECT id FROM product_sku WHERE spu_id=%s AND deleted_at IS NULL", (spu_id,))
+            placeholders = ",".join(["%s"] * len(spu_ids))
+            cursor.execute(
+                f"SELECT id FROM product_sku WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL ORDER BY spu_id ASC, id ASC",
+                spu_ids,
+            )
             sku_ids = [int(row["id"]) for row in cursor.fetchall()] or seed_sku_ids
             cursor.execute(
-                "UPDATE product_sku SET is_listed=%s, updated_at=%s WHERE spu_id=%s AND deleted_at IS NULL",
-                (1 if state else 0, now, spu_id),
+                f"UPDATE product_sku SET is_listed=%s, updated_at=%s WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL",
+                [target_state, now] + spu_ids,
             )
             affected = int(cursor.rowcount or 0)
+            cursor.execute(
+                f"UPDATE product_spu SET updated_at=%s WHERE id IN ({placeholders}) AND deleted_at IS NULL",
+                [now] + spu_ids,
+            )
+            cursor.execute(
+                f"""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN is_listed=%s THEN 1 ELSE 0 END) AS matching
+                FROM product_sku
+                WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL
+                """,
+                [target_state] + spu_ids,
+            )
+            verify_row = cursor.fetchone() or {}
+            total_sku_count = int(verify_row.get("total") or 0)
+            matching_sku_count = int(verify_row.get("matching") or 0)
         return {
             "code": 0,
             "data": {
                 "id": sku_ids[0] if sku_ids else product_id,
-                "spu_id": spu_id,
+                "spu_id": spu_ids[0],
+                "spu_ids": spu_ids,
                 "sku_ids": sku_ids,
-                "is_listed": 1 if state else 0,
+                "is_listed": target_state,
                 "affected": affected,
+                "total_sku_count": total_sku_count,
+                "matching_sku_count": matching_sku_count,
+                "all_sku_matched": matching_sku_count == total_sku_count,
             },
         }
 
@@ -5301,7 +5380,13 @@ class NativeDBClient:
             },
         }
 
-    def sales_print_html(self, sales_id: int, template_id: int | None = None, auto_print: bool = True) -> str:
+    def sales_print_html(
+        self,
+        sales_id: int,
+        template_id: int | None = None,
+        auto_print: bool = True,
+        show_actions: bool = True,
+    ) -> str:
         self._ensure_print_tables()
         payload = self.sales_print_data(sales_id)
         if payload.get("code") not in (None, 0):
@@ -5312,6 +5397,19 @@ class NativeDBClient:
 
         def esc(value: Any) -> str:
             return html_lib.escape(str(value or ""), quote=True)
+
+        def clean_print_note(value: Any) -> str:
+            lines = []
+            for line in str(value or "").splitlines():
+                clean = line.strip()
+                if not clean:
+                    continue
+                if clean.startswith(("打印失败：", "打印失败:", "自动打印失败：", "自动打印失败:")):
+                    continue
+                if clean in {"PDF 渲染失败", "print failed"}:
+                    continue
+                lines.append(clean)
+            return "\n".join(lines)
 
         paper_size = template.get("paper_size") or "A5"
         orientation = template.get("orientation") or "landscape"
@@ -5331,7 +5429,7 @@ class NativeDBClient:
             qty = item.get("quantity") or item.get("buy_number") or "0"
             rows.append(
                 "<tr>"
-                f"<td>{index}</td>"
+                f"<td class=\"center\">{index}</td>"
                 f"<td><strong>{esc(item.get('title') or '商品')}</strong><small>{esc(item.get('spec') or '')}</small></td>"
                 f"<td class=\"num\">{esc(qty)}</td>"
                 f"<td class=\"num\">¥{esc(_money(item.get('price')))}</td>"
@@ -5355,13 +5453,23 @@ class NativeDBClient:
         phone_line = ""
         if int(template.get("show_customer_phone") or 0) and order.get("customer_phone"):
             phone_line = f"<span>电话：{esc(order.get('customer_phone'))}</span>"
+        print_note = clean_print_note(order.get("note"))
         note_line = ""
-        if int(template.get("show_note") or 0) and order.get("note"):
-            note_line = f"<div class=\"print-note\"><b>备注</b><span>{esc(order.get('note'))}</span></div>"
+        if int(template.get("show_note") or 0) and print_note:
+            note_line = f"<div class=\"print-note\"><b>备注</b><span>{esc(print_note)}</span></div>"
         custom_css = str(template.get("custom_css") or "")
         auto_script = (
             "<script>window.addEventListener('load',function(){setTimeout(function(){window.print();},500);});</script>"
             if auto_print
+            else ""
+        )
+        action_bar = (
+            """
+  <div class="print-actions">
+    <button type="button" onclick="window.close()">关闭</button>
+    <button class="primary" type="button" onclick="window.print()">打印</button>
+  </div>"""
+            if show_actions
             else ""
         )
         html = f"""<!doctype html>
@@ -5373,7 +5481,7 @@ class NativeDBClient:
   <style>
     @page {{ size: {page_rule}; margin: {page_margin}; }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; background: #f5f6f8; color: #1f2429; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: {font_size}px; }}
+    body {{ margin: 0; background: #f5f6f8; color: #111827; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: {font_size}px; }}
     .print-actions {{ position: sticky; top: 0; z-index: 3; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; background: rgba(255,255,255,.92); border-bottom: 1px solid #e5e7eb; }}
     .print-actions button {{ height: 36px; padding: 0 14px; border: 1px solid #d9dee6; border-radius: 6px; background: #fff; cursor: pointer; }}
     .print-actions .primary {{ background: #1f8a70; border-color: #1f8a70; color: #fff; font-weight: 700; }}
@@ -5381,37 +5489,44 @@ class NativeDBClient:
     .sheet.thermal {{ width: 80mm; padding: 5mm; margin: 0 auto; box-shadow: none; }}
     .print-head {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; padding-bottom: 10px; }}
     h1 {{ margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: 0; }}
-    .doc-no {{ text-align: right; color: #66707c; line-height: 1.6; }}
-    .meta {{ display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 12px 0; color: #3f4750; border-bottom: 1px solid #e6e9ee; }}
+    .doc-no {{ text-align: right; color: #111827; line-height: 1.6; }}
+    .meta {{ display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 12px 0; color: #111827; border-bottom: 1px solid #e6e9ee; }}
     .meta span {{ white-space: nowrap; }}
-    table {{ width: 100%; border-collapse: collapse; margin-top: 14px; }}
-    th, td {{ padding: 8px 7px; border-bottom: 1px solid #e6e9ee; text-align: left; vertical-align: top; }}
-    th {{ color: #66707c; font-weight: 700; background: #f8fafc; }}
-    td small {{ display: block; margin-top: 3px; color: #6f7884; }}
-    .num {{ text-align: right; white-space: nowrap; }}
+    .print-table {{ width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 14px; border: 1px solid #111827; }}
+    .print-table th, .print-table td {{ padding: 8px 9px; border: 1px solid #111827; text-align: left; vertical-align: top; color: #111827; background: #fff; }}
+    .print-table th {{ font-weight: 700; }}
+    .print-table th:first-child, .print-table td:first-child {{ width: 42px; }}
+    .print-table th:nth-child(3), .print-table td:nth-child(3),
+    .print-table th:nth-child(4), .print-table td:nth-child(4),
+    .print-table th:nth-child(5), .print-table td:nth-child(5) {{ width: 112px; }}
+    .print-table strong {{ font-weight: 700; }}
+    .print-table td small {{ display: block; margin-top: 3px; color: #111827; }}
     .summary {{ display: grid; justify-content: end; gap: 6px; margin-top: 14px; }}
     .summary div {{ display: grid; grid-template-columns: 96px 130px; gap: 12px; }}
-    .summary span {{ color: #66707c; text-align: right; }}
-    .summary strong {{ text-align: right; font-size: 16px; }}
-    .print-note, .footer {{ margin-top: 16px; padding: 10px 0 0; border-top: 1px solid #e6e9ee; color: #3f4750; line-height: 1.7; }}
+    .summary span {{ color: #111827; text-align: right; }}
+    .summary strong {{ color: #111827; text-align: right; font-size: 16px; }}
+    .print-note, .footer {{ margin-top: 16px; padding: 10px 0 0; border-top: 1px solid #e6e9ee; color: #111827; line-height: 1.7; }}
     .print-note b {{ margin-right: 8px; }}
+    .print-note span {{ white-space: pre-wrap; }}
+    .center {{ text-align: center; }}
+    .num {{ text-align: right; white-space: nowrap; }}
     .thermal h1 {{ font-size: 18px; }}
     .thermal .print-head {{ grid-template-columns: 1fr; }}
     .thermal .doc-no {{ text-align: left; }}
-    .thermal th, .thermal td {{ padding: 5px 3px; }}
+    .thermal .print-table th, .thermal .print-table td {{ padding: 5px 3px; }}
+    .thermal .print-table th:nth-child(4), .thermal .print-table td:nth-child(4),
+    .thermal .print-table th:nth-child(5), .thermal .print-table td:nth-child(5) {{ width: auto; }}
     {custom_css}
     @media print {{
-      body {{ background: #fff; }}
+      body {{ background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
       .print-actions {{ display: none; }}
       .sheet {{ width: auto; margin: 0; padding: 0; box-shadow: none; }}
+      .print-table, .print-table th, .print-table td {{ border-color: #111827 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     }}
   </style>
 </head>
 <body>
-  <div class="print-actions">
-    <button type="button" onclick="window.close()">关闭</button>
-    <button class="primary" type="button" onclick="window.print()">打印</button>
-  </div>
+{action_bar}
   <main class="sheet{thermal_class}">
     <header class="print-head">
       <div>
@@ -5428,11 +5543,11 @@ class NativeDBClient:
         <div>日期：{esc(_date_text(order.get('sales_at') or order.get('created_at')))}</div>
       </div>
     </header>
-    <table>
+    <table class="print-table">
       <thead>
         <tr><th>#</th><th>商品</th><th class="num">数量</th><th class="num">单价</th><th class="num">金额</th></tr>
       </thead>
-      <tbody>{''.join(rows) or '<tr><td colspan="6">暂无商品明细</td></tr>'}</tbody>
+      <tbody>{''.join(rows) or '<tr><td colspan="5">暂无商品明细</td></tr>'}</tbody>
     </table>
     <section class="summary">
       <div><span>总数量</span><strong>{esc(_qty_text(order.get('total_quantity') or order.get('buy_number_count') or 0))}</strong></div>

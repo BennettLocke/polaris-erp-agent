@@ -281,6 +281,15 @@ function productActionId(product: ProductItem) {
   return Number(product.id || product.product_id || product.spu_id || 0);
 }
 
+function productSkuIds(product: ProductItem) {
+  const rows = Array.isArray(product.product_group_data) && product.product_group_data.length
+    ? product.product_group_data
+    : [product];
+  return rows
+    .map((row) => Number(row.id || row.product_id || 0))
+    .filter((id) => id > 0);
+}
+
 function productColorsText(product: ProductItem) {
   const names = product.color_names || product.available_colors || [];
   if (product.color_text) return product.color_text;
@@ -1763,7 +1772,7 @@ type ProductCardProps = {
 function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onDelete }: ProductCardProps) {
   const image = productImageUrl(product);
   const colors = productColorNames(product);
-  const isListed = Number(product.is_listed || 0) === 1;
+  const isListed = Number(product.system_goods_is_shelves ?? product.is_listed ?? 0) === 1;
   const nextShelfState = isListed ? 0 : 1;
   const productName = product.title || product.name || "商品";
   const colorText = productColorsInline(colors);
@@ -2095,7 +2104,10 @@ export function ProductsPage() {
     setError("");
     setNotice("");
     try {
-      await api.updateProductShelves(id, state);
+      await api.updateProductShelves(id, state, {
+        spuId: Number(product.spu_id || 0) || undefined,
+        skuIds: productSkuIds(product)
+      });
       setNotice(`${product.title || product.name || "商品"} 已${state ? "上架" : "下架"}`);
       await loadProducts(page, keyword, categoryId, productType, listedState, stockMode, quality);
     } catch (err) {

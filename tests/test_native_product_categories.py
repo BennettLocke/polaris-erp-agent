@@ -69,6 +69,42 @@ class CategorySaveTransaction:
         return False
 
 
+class ShelfUpdateCursor:
+    def __init__(self):
+        self.statements: list[tuple[str, list]] = []
+        self.rows: list[dict] = []
+        self.rowcount = 0
+
+    def execute(self, sql: str, params=None):
+        clean_sql = " ".join(sql.split())
+        clean_params = list(params or [])
+        self.statements.append((clean_sql, clean_params))
+        self.rowcount = 0
+        if "SELECT id FROM product_spu WHERE id=%s" in clean_sql:
+            self.rows = [{"id": clean_params[0]}]
+        elif "SELECT id, spu_id FROM product_sku WHERE id=%s" in clean_sql:
+            self.rows = [{"id": clean_params[0], "spu_id": 500}]
+        elif "SELECT id FROM product_sku WHERE spu_id IN" in clean_sql:
+            self.rows = [{"id": 10}, {"id": 11}, {"id": 12}]
+        elif "UPDATE product_sku SET is_listed=%s" in clean_sql:
+            self.rowcount = 3
+            self.rows = []
+        elif "UPDATE product_spu SET updated_at=%s" in clean_sql:
+            self.rowcount = 1
+            self.rows = []
+        elif "SELECT COUNT(*) AS total" in clean_sql and "SUM(CASE WHEN is_listed=%s" in clean_sql:
+            self.rows = [{"total": 3, "matching": 3}]
+        else:
+            self.rows = []
+        return self.rowcount
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return list(self.rows)
+
+
 class NativeProductCategoriesTest(unittest.TestCase):
     def test_product_categories_returns_shopxo_icon_fields(self):
         client = ProductCategoryIconClient()
@@ -179,4 +215,21 @@ class NativeProductCategoriesTest(unittest.TestCase):
         self.assertIn("UPDATE product_spu", source)
         self.assertIn("SET deleted_at=%s", source)
         self.assertIn("UPDATE product_sku SET is_listed=%s", source)
-        self.assertIn("WHERE spu_id=%s", source)
+        self.assertIn("WHERE spu_id IN", source)
+
+    def test_product_shelves_update_uses_explicit_spu_and_verifies_all_skus(self):
+        client = object.__new__(NativeDBClient)
+        cursor = ShelfUpdateCursor()
+        client.transaction = lambda: CategorySaveTransaction(cursor)
+
+        result = client.update_product_shelves(10, 0, spu_id=500, sku_ids=[10, 11])
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["data"]["spu_ids"], [500])
+        self.assertEqual(result["data"]["sku_ids"], [10, 11, 12])
+        self.assertEqual(result["data"]["matching_sku_count"], 3)
+        self.assertTrue(result["data"]["all_sku_matched"])
+        sql_text = "\n".join(statement for statement, _params in cursor.statements)
+        self.assertIn("UPDATE product_sku SET is_listed=%s", sql_text)
+        self.assertIn("WHERE spu_id IN", sql_text)
+        self.assertIn("UPDATE product_spu SET updated_at=%s", sql_text)

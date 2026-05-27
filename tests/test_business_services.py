@@ -137,8 +137,8 @@ class FakeDB:
             return rows.get(scene, [])
         return [item for scene_rows in rows.values() for item in scene_rows]
 
-    def product_search(self, keyword: str, limit: int = 80) -> list[dict]:
-        self.calls.append(("product_search", {"keyword": keyword, "limit": limit}))
+    def product_search(self, keyword: str, limit: int = 80, listed_only: bool = False) -> list[dict]:
+        self.calls.append(("product_search", {"keyword": keyword, "limit": limit, "listed_only": listed_only}))
         return [{"id": 88, "title": keyword}]
 
     def product_list(self, **kwargs):
@@ -208,8 +208,8 @@ class FakeDB:
         self.calls.append(("delete_product", {"ids": ids}))
         return {"code": 0, "data": {"ids": ids}}
 
-    def update_product_shelves(self, product_id: int, state: int) -> dict:
-        self.calls.append(("update_product_shelves", {"product_id": product_id, "state": state}))
+    def update_product_shelves(self, product_id: int, state: int, **kwargs) -> dict:
+        self.calls.append(("update_product_shelves", {"product_id": product_id, "state": state, **kwargs}))
         return {"code": 0, "data": {"id": product_id, "is_listed": state}}
 
     def get_product_price(self, product_id: int) -> float:
@@ -883,6 +883,8 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual([call[0] for call in db.calls], ["execute", "execute"])
         self.assertIn("UPDATE print_job", db.calls[0][1]["sql"])
         self.assertIn("UPDATE sales_order", db.calls[1][1]["sql"])
+        self.assertIn("print_status='failed'", db.calls[1][1]["sql"])
+        self.assertNotIn("note=CONCAT", db.calls[1][1]["sql"])
 
     def test_sales_service_reads_print_task_row(self):
         db = FakeDB()
