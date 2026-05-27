@@ -476,6 +476,31 @@ class BusinessServiceTests(unittest.TestCase):
             for call in db.calls
         ))
 
+    def test_auth_service_native_register_keeps_plain_account_out_of_phone(self):
+        db = FakeDB()
+        service = AuthService(db=db)
+
+        result = service.native_register(
+            account="b945582097",
+            password="secret123",
+            display_name="Account User",
+            client_type="miniapp",
+        )
+
+        new_user = db.auth_users[max(db.auth_users)]
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(new_user["username"], "b945582097")
+        self.assertIsNone(new_user["phone"])
+        self.assertIsNone(new_user["linked_party_id"])
+        self.assertFalse(any(
+            call[0] == "query" and "FROM party" in call[1]["sql"]
+            for call in db.calls
+        ))
+        self.assertFalse(any(
+            call[0] == "execute" and "INSERT INTO auth_identity" in call[1]["sql"]
+            for call in db.calls
+        ))
+
     def test_auth_service_token_verification(self):
         db = FakeDB()
         service = AuthService(db=db)

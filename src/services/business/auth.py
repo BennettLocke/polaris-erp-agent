@@ -49,6 +49,11 @@ def phone_digits(value: Any) -> str:
     return re.sub(r"\D+", "", str(value or ""))
 
 
+def normalized_phone(value: Any) -> str:
+    digits = phone_digits(value)
+    return digits if re.fullmatch(r"1\d{10}", digits or "") else ""
+
+
 def token_hash(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
@@ -176,7 +181,7 @@ class AuthService(BusinessService):
         account = str(account or "").strip()
         if not account:
             return None
-        phone = phone_digits(account)
+        phone = normalized_phone(account)
         rows = self.db.query(
             """
             SELECT u.*, p.name AS linked_party_name
@@ -215,7 +220,7 @@ class AuthService(BusinessService):
         return rows[0] if rows else None
 
     def find_party_id_by_phone(self, phone: str) -> int | None:
-        digits = phone_digits(phone)
+        digits = normalized_phone(phone)
         if not digits:
             return None
         rows = self.db.query(
@@ -256,7 +261,7 @@ class AuthService(BusinessService):
         profile = profile if isinstance(profile, dict) else {}
         for key in ("phone", "mobile", "purePhoneNumber", "phoneNumber", "customer_phone"):
             value = profile.get(key)
-            digits = phone_digits(value)
+            digits = normalized_phone(value)
             if digits:
                 return digits
         return ""
@@ -291,7 +296,7 @@ class AuthService(BusinessService):
         is_active = 1 if is_first_user else 0
         is_admin = 1 if is_first_user else 0
         role = "admin" if is_first_user else "staff"
-        phone = phone_digits(username)
+        phone = normalized_phone(username)
         linked_party_id = self.find_party_id_by_phone(phone) if phone else None
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         affected = self.db.execute(
@@ -506,7 +511,7 @@ class AuthService(BusinessService):
         if self.user_by_account(account):
             return {"code": 409, "msg": "账号已存在，请直接登录", "_http_status": 409}
 
-        phone = phone_digits(account)
+        phone = normalized_phone(account)
         linked_party_id = self.find_party_id_by_phone(phone) if phone else None
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         affected = self.db.execute(
