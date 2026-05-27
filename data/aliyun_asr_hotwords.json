@@ -1,28 +1,32 @@
 {
   "vocab_id": "149e5b9124704792abec894f3e466cec",
-  "md5": "7ab100b7add7a65f70e89d860f741f20",
-  "word_count": 443,
+  "md5": "ca6d5544ddd0f3fd3940f67feceded09",
+  "word_count": 439,
   "source_counts": {
     "business": 25,
-    "products": 245,
-    "recent_sales": 86,
+    "products": 237,
+    "recent_sales": 90,
     "colors": 23,
     "warehouses": 2,
     "customers": 62
   },
-  "synced_at": 1779768001,
-  "synced_at_text": "2026-05-26 12:00:01",
+  "synced_at": 1779854402,
+  "synced_at_text": "2026-05-27 12:00:02",
   "last_action": "UpdateAsrVocab",
-  "request_id": "D2CBF9E2-FFC2-5BB7-AC69-9F82F8A4419D",
+  "request_id": "1B51960D-C563-5118-A6C2-5364E0492531",
   "sample_words": [
     "三小盒",
     "多韵小盒子2泡盒",
+    "提袋",
+    "七彩4泡2泡",
+    "大红袍长泡袋",
+    "肉桂长泡袋",
+    "水仙长泡袋",
     "见喜半斤",
     "茶派二三两",
     "岩味三小盒",
     "岩味二三两",
     "厂里烫金泡袋",
-    "提袋",
     "墨香二三两",
     "喜悦二三两",
     "山川两大盒",
@@ -40,10 +44,6 @@
     "内衬",
     "颜序六小盒",
     "岩彩一两",
-    "喜悦三小盒",
-    "云峰三小盒",
-    "闲庭雅旭一两",
-    "大吉二三两",
-    "黑檀木盒18泡短泡袋"
+    "喜悦三小盒"
   ]
 }

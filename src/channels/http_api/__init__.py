@@ -4,12 +4,13 @@ HTTP API 渠道（预留 WebUI 和外部调用）
 """
 import json
 import hmac
+import io
 import os
 import re
 import uuid
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, urljoin
 from flask import Flask, request, jsonify, Response, send_from_directory, session, redirect
 from werkzeug.utils import secure_filename
 from src.core.agent import Agent
@@ -243,10 +244,12 @@ API_PERMISSION_RULES = [
     ({"POST", "PATCH"}, re.compile(r"^/api/customers/\d+$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customers/\d+/balance$"), "调余额"),
     ({"POST"}, re.compile(r"^/api/product/upload$"), "图片上传"),
+    ({"POST"}, re.compile(r"^/api/product/crop-square$"), "图片上传"),
     ({"POST"}, re.compile(r"^/api/miniapp/image-config/upload$"), "图片上传"),
     ({"GET", "POST", "PATCH"}, re.compile(r"^/api/miniapp/image-config$"), "设置"),
     ({"POST"}, re.compile(r"^/api/workflow/images/upload$"), "图片上传"),
     ({"POST", "DELETE"}, re.compile(r"^/api/product/media/\d+$"), "图片绑定"),
+    ({"POST", "PATCH"}, re.compile(r"^/api/product/categories$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/(save|delete)$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/\d+/shelves$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customer/create$"), "开单"),
@@ -2778,6 +2781,20 @@ def product_color_options():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+def _inventory_action_response(result):
+    """Normalize InventoryService action results for React admin."""
+    if isinstance(result, dict):
+        if result.get("error"):
+            return jsonify({"code": 500, "msg": str(result.get("error"))}), 500
+        code = int(result.get("code") or 0)
+        if code != 0:
+            status = 400 if code < 500 else 500
+            return jsonify({"code": code, "msg": result.get("msg") or "库存操作失败"}), status
+        data = result.get("data") if "data" in result else result
+        return jsonify({"code": 0, "data": _safe_json(data)})
+    return jsonify({"code": 0, "data": _safe_json(result)})
+
+
 @app.route("/api/inventory/transfer", methods=["POST"])
 def inventory_transfer_api():
     """Transfer inventory between warehouses for the UniApp inventory page."""
@@ -2811,9 +2828,7 @@ def inventory_transfer_api():
             note=(body.get("note") or f"小程序调货{f'（{color}）' if color else ''}").strip(),
             operator_user_id=operator_user_id,
         )
-        if isinstance(result, dict) and result.get("error"):
-            return jsonify({"code": 500, "msg": result.get("error")}), 500
-        return jsonify({"code": 0, "data": result})
+        return _inventory_action_response(result)
     except Exception as e:
         logger.error(f"库存调货失败: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -2848,9 +2863,7 @@ def inventory_purchase_api():
             note=(body.get("note") or f"小程序进货{f'（{color}）' if color else ''}").strip(),
             operator_user_id=operator_user_id,
         )
-        if isinstance(result, dict) and result.get("error"):
-            return jsonify({"code": 500, "msg": result.get("error")}), 500
-        return jsonify({"code": 0, "data": result})
+        return _inventory_action_response(result)
     except Exception as e:
         logger.error(f"库存进货失败: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -2885,9 +2898,7 @@ def inventory_stocktaking_api():
             note=(body.get("note") or f"WebUI盘点{f'（{color}）' if color else ''}").strip(),
             operator_user_id=operator_user_id,
         )
-        if isinstance(result, dict) and result.get("error"):
-            return jsonify({"code": 500, "msg": result.get("error")}), 500
-        return jsonify({"code": 0, "data": result})
+        return _inventory_action_response(result)
     except Exception as e:
         logger.error(f"库存盘点失败: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
@@ -3107,10 +3118,18 @@ def product_list():
         return _api_exception_response(e)
 
 
-@app.route("/api/product/categories", methods=["GET"])
+@app.route("/api/product/categories", methods=["GET", "POST", "PATCH"])
 def product_categories():
     """商品分类。"""
     try:
+        if request.method in {"POST", "PATCH"}:
+            body = request.get_json(silent=True) or {}
+            user = _current_web_user() or {}
+            operator_user_id = user.get("native_user_id") or user.get("id")
+            result = get_product_service().save_category(body, operator_user_id=operator_user_id)
+            if isinstance(result, dict) and result.get("code") not in (None, 0):
+                return jsonify(result), 400
+            return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
         categories = _db_product_categories()
         _, total = get_product_service().list(page=1, page_size=1, group=True)
         return jsonify({
@@ -3680,6 +3699,47 @@ def product_delete_api():
         return _api_exception_response(e)
 
 
+def _product_crop_number(body: dict, snake_key: str, camel_key: str, default: float = 0) -> float:
+    raw = body.get(snake_key)
+    if raw is None:
+        raw = body.get(camel_key, default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _open_product_crop_image(source_url: str):
+    """Open a crop source image from OSS/http or local preview URLs."""
+    source_url = str(source_url or "").strip()
+    if not source_url:
+        raise ValueError("缺少图片地址")
+    if source_url.startswith("/api/images/file/"):
+        safe_name = secure_filename(source_url.rsplit("/", 1)[-1])
+        if not safe_name:
+            raise ValueError("图片地址无效")
+        local_path = UPLOAD_DIR / safe_name
+        if not local_path.exists():
+            raise ValueError("本地图片不存在")
+        from PIL import Image
+
+        return Image.open(local_path)
+    if source_url.startswith("/"):
+        source_url = urljoin(request.host_url, source_url.lstrip("/"))
+    parsed = urlparse(source_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("只支持 http/https 图片地址")
+
+    import requests
+    from PIL import Image
+
+    response = requests.get(source_url, timeout=20, headers={"User-Agent": "sjagent-admin/1.0"})
+    response.raise_for_status()
+    if len(response.content) > 25 * 1024 * 1024:
+        raise ValueError("图片文件过大")
+    return Image.open(io.BytesIO(response.content))
+
+
 @app.route("/api/product/upload", methods=["POST"])
 def product_upload_api():
     """上传商品图片到 OSS。"""
@@ -3717,6 +3777,68 @@ def product_upload_api():
         return jsonify({"code": 0, "data": result})
     except Exception as e:
         logger.error(f"商品图片上传异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/crop-square", methods=["POST"])
+def product_crop_square_api():
+    """Crop an existing product image to a square and upload it to OSS."""
+    try:
+        body = request.get_json(silent=True)
+        if body is None:
+            body = request.form.to_dict(flat=True)
+        body = body or {}
+        source_url = body.get("url") or body.get("source_url") or body.get("sourceUrl") or ""
+        source_x = _product_crop_number(body, "source_x", "sourceX", 0)
+        source_y = _product_crop_number(body, "source_y", "sourceY", 0)
+        source_size = _product_crop_number(body, "source_size", "sourceSize", 0)
+        output_size = int(_product_crop_number(body, "output_size", "outputSize", 1200) or 1200)
+        output_size = max(256, min(output_size, 2000))
+
+        image = _open_product_crop_image(source_url)
+        image.load()
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            return jsonify({"code": 400, "msg": "图片尺寸无效"}), 400
+        if source_size <= 0:
+            source_size = min(width, height)
+        left = int(round(max(0, min(source_x, max(0, width - 1)))))
+        top = int(round(max(0, min(source_y, max(0, height - 1)))))
+        size = int(round(max(1, min(source_size, width - left, height - top))))
+        if size <= 0:
+            return jsonify({"code": 400, "msg": "裁切区域无效"}), 400
+
+        from PIL import Image
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        save_name = f"product_crop_{int(time.time())}_{uuid.uuid4().hex[:10]}.jpg"
+        save_path = UPLOAD_DIR / save_name
+        cropped = image.crop((left, top, left + size, top + size)).convert("RGB")
+        cropped = cropped.resize((output_size, output_size), Image.Resampling.LANCZOS)
+        cropped.save(save_path, "JPEG", quality=92, optimize=True)
+        if not save_path.exists() or save_path.stat().st_size <= 0:
+            return jsonify({"code": 400, "msg": "裁切图片生成失败"}), 400
+
+        from scripts.oss_uploader import OSSUploader
+        from src.core.config import get_config
+
+        result = OSSUploader(get_config().oss_config).upload(str(save_path))
+        if not isinstance(result, dict):
+            return jsonify({"code": 500, "msg": "OSS 上传返回异常", "data": result}), 500
+        if result.get("error"):
+            return jsonify({"code": 500, "msg": result.get("error"), "data": result}), 500
+        url = result.get("url") or result.get("full_url") or result.get("images") or result.get("path") or ""
+        if url:
+            try:
+                get_product_service().record_upload(str(url), storage="oss")
+            except Exception as asset_error:
+                logger.warning(f"商品裁切图片待绑定资产记录失败: {asset_error}")
+        _delete_local_upload(save_path, "商品裁切图片")
+        return jsonify({"code": 0, "data": result})
+    except ValueError as e:
+        return jsonify({"code": 400, "msg": str(e)}), 400
+    except Exception as e:
+        logger.error(f"商品图片裁切异常: {e}")
         return _api_exception_response(e)
 
 
@@ -4431,6 +4553,30 @@ def auth_wechat_quick_login():
         return jsonify({"code": 500, "msg": f"微信快捷登录异常: {e}"}), 500
 
 
+@app.route("/api/auth/change-password", methods=["POST"])
+def auth_change_password():
+    """Change or set the password for the current native mini-program account."""
+    token = _auth_token_from_request()
+    if not token:
+        return jsonify({"code": 401, "msg": "请先登录账号"}), 401
+    body = request.get_json(silent=True) or request.form.to_dict() or {}
+    old_password = body.get("old_password") or body.get("current_password") or body.get("oldPassword") or ""
+    new_password = body.get("new_password") or body.get("password") or body.get("newPassword") or ""
+    try:
+        user = get_auth_service().verify_token(token, force=True)
+        if not user:
+            return jsonify({"code": 401, "msg": "登录已失效，请重新登录"}), 401
+        result = get_auth_service().change_native_password(
+            user_id=int(user.get("id") or user.get("user_id") or 0),
+            old_password=old_password,
+            new_password=new_password,
+        )
+        return _json_service_result(result)
+    except Exception as e:
+        logger.error(f"账号密码设置异常: {e}")
+        return jsonify({"code": 500, "msg": f"账号密码设置异常: {e}"}), 500
+
+
 @app.route("/api/auth/captcha", methods=["GET"])
 def auth_captcha():
     """Native login does not need image captcha; keep the endpoint compatible."""
@@ -4455,6 +4601,21 @@ def auth_me():
         user = get_auth_service().verify_token(token, force=request.args.get("force") in ("1", "true", "True"))
         if not user:
             return jsonify({"code": 401, "msg": "登录已失效，请重新登录"}), 401
+        if request.method == "POST":
+            body = request.get_json(silent=True) or request.form.to_dict() or {}
+            display_name = (
+                body.get("display_name")
+                or body.get("displayName")
+                or body.get("nickname")
+                or body.get("name")
+                or ""
+            )
+            result = get_auth_service().update_native_profile(
+                user_id=int(user.get("id") or user.get("user_id") or 0),
+                display_name=display_name,
+                token=token,
+            )
+            return _json_service_result(result)
         return jsonify({"code": 0, "data": {"token": token, "user": user}})
     except Exception as e:
         logger.error(f"北极星用户信息校验异常: {e}")

@@ -3,21 +3,21 @@ import * as Tabs from "@radix-ui/react-tabs";
 import {
   Boxes,
   ClipboardList,
-  GalleryVerticalEnd,
   Home,
   Package,
   ReceiptText,
   Settings,
   ShoppingCart,
-  Smartphone,
   Users
 } from "lucide-react";
 import { ApiError, api } from "./api";
 import {
   CustomersPage,
 } from "./components/business/customers";
-import { MiniappImagesPage } from "./components/business/miniapp-images";
-import { MediaPage, ProductsPage } from "./components/business/products";
+import { InventoryPage } from "./components/business/inventory";
+import { OrdersPage } from "./components/business/orders";
+import { ProductsPage } from "./components/business/products";
+import { SettingsPage } from "./components/business/settings";
 import {
   CreateCustomerDialog,
   SalesCustomerField,
@@ -78,7 +78,6 @@ import {
   SelectTrigger,
   SelectValue
 } from "./components/ui/select";
-import { SettingsPage } from "./SettingsPage";
 import type {
   AuthUser,
   CustomerItem,
@@ -92,7 +91,7 @@ import type {
   Warehouse
 } from "./types";
 
-type RouteKey = "dashboard" | "sales-new" | "sales" | "customers" | "products" | "media" | "miniapp-images" | "inventory" | "workflow" | "settings";
+type RouteKey = "dashboard" | "sales-new" | "sales" | "customers" | "products" | "media" | "miniapp-images" | "inventory" | "orders" | "settings";
 
 const navItems: Array<{ key: RouteKey; label: string; icon: typeof Home; badge?: string }> = [
   { key: "dashboard", label: "工作台", icon: Home },
@@ -100,21 +99,19 @@ const navItems: Array<{ key: RouteKey; label: string; icon: typeof Home; badge?:
   { key: "sales", label: "销售单", icon: ReceiptText },
   { key: "customers", label: "客户", icon: Users },
   { key: "products", label: "商品", icon: Package },
-  { key: "media", label: "图片资产", icon: GalleryVerticalEnd },
-  { key: "miniapp-images", label: "小程序图片", icon: Smartphone },
   { key: "inventory", label: "库存", icon: Boxes },
-  { key: "workflow", label: "工作流", icon: ClipboardList },
+  { key: "orders", label: "订单", icon: ClipboardList },
   { key: "settings", label: "设置", icon: Settings }
 ];
 
 const navGroups: Array<AppNavGroup<RouteKey>> = [
   { label: "主业务", items: navItems.filter((item) => ["dashboard", "sales-new", "sales", "customers"].includes(item.key)) },
-  { label: "资产", items: navItems.filter((item) => ["products", "media", "miniapp-images", "inventory", "workflow"].includes(item.key)) },
+  { label: "资产", items: navItems.filter((item) => ["products", "inventory", "orders"].includes(item.key)) },
   { label: "系统", items: navItems.filter((item) => ["settings"].includes(item.key)) }
 ];
 
 const pageMap: Record<RouteKey, { title: string; desc: string; status: string }> = {
-  dashboard: { title: "工作台", desc: "查看今日业务、最近销售单和工作流订单。", status: "已接入" },
+  dashboard: { title: "工作台", desc: "查看今日业务、最近销售单和过程订单。", status: "已接入" },
   "sales-new": { title: "开单", desc: "选择客户、商品、结款状态并创建销售单。", status: "已接入基础版" },
   sales: { title: "销售单", desc: "查看销售单卡片和账单详情。", status: "已接入基础版" },
   customers: { title: "客户", desc: "查看客户卡片、最近消费和余额。", status: "已接入基础版" },
@@ -122,7 +119,7 @@ const pageMap: Record<RouteKey, { title: string; desc: string; status: string }>
   media: { title: "图片资产", desc: "后续迁移图片分页、上传、删除和绑定弹窗。", status: "待迁移页面" },
   "miniapp-images": { title: "小程序图片", desc: "维护首页、分类和底部导航使用的图片地址。", status: "已接入" },
   inventory: { title: "库存", desc: "后续迁移库存明细、日志、出入库、盘点、调拨。", status: "待迁移页面" },
-  workflow: { title: "工作流", desc: "后续迁移工作流订单和状态更新。", status: "待迁移页面" },
+  orders: { title: "订单", desc: "跟进客户订单、制作、发货和完成状态。", status: "已接入基础版" },
   settings: { title: "设置", desc: "编号、商品基础、库存规则、收款结款、图片、用户和打印。", status: "已接入" }
 };
 
@@ -130,6 +127,9 @@ function routeFromLocation(): RouteKey {
   const segment = window.location.pathname.replace(/^\/admin\/?/, "").split("/")[0];
   const route = segment || "dashboard";
   if (route === "sales-new") return "sales-new";
+  if (route === "workflow") return "orders";
+  if (route === "media") return "media";
+  if (route === "miniapp-images") return "miniapp-images";
   return navItems.some((item) => item.key === route) ? (route as RouteKey) : "dashboard";
 }
 
@@ -188,7 +188,7 @@ function DashboardCards({ summary }: { summary: DashboardSummary | null }) {
   const cards = [
     ["今日销售单", summary?.today_sales_count ?? "-"],
     ["今日销售额", summary ? `¥${summary.today_sales_amount}` : "-"],
-    ["待处理工作流", summary?.pending_workflow_count ?? "-"]
+    ["待处理订单", summary?.pending_workflow_count ?? "-"]
   ];
   return (
     <div className="metric-grid">
@@ -224,7 +224,7 @@ function RecentList({ sales, workflows }: { sales: RecentSale[]; workflows: Rece
       </section>
       <section className="panel">
         <header className="panel-head">
-          <h2>最近工作流</h2>
+          <h2>最近订单</h2>
           <span>{workflows.length} 条</span>
         </header>
         <div className="record-list">
@@ -232,7 +232,7 @@ function RecentList({ sales, workflows }: { sales: RecentSale[]; workflows: Rece
             <div className="record-row" key={item.id || index}>
               <div>
                 <strong>{item.customer_name || "未记录客户"}</strong>
-                <span>{[item.goods_name, item.goods_color].filter(Boolean).join(" ") || "工作流订单"}</span>
+                <span>{[item.goods_name, item.goods_color].filter(Boolean).join(" ") || "过程订单"}</span>
               </div>
               <b>{item.order_quantity || ""}</b>
             </div>
@@ -1023,6 +1023,17 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
       .catch((err) => setError(err instanceof Error ? err.message : "工作台加载失败"));
   }, [route]);
 
+  useEffect(() => {
+    if (route === "media") {
+      window.history.replaceState({}, "", "/admin/settings?section=media");
+      setRoute("settings");
+    }
+    if (route === "miniapp-images") {
+      window.history.replaceState({}, "", "/admin/settings?section=miniapp");
+      setRoute("settings");
+    }
+  }, [route]);
+
   const activePage = useMemo(() => pageMap[route], [route]);
 
   function navigate(next: RouteKey) {
@@ -1045,7 +1056,7 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
           <DashboardCards summary={summary} />
           <RecentList sales={sales} workflows={workflows} />
         </>
-      ) : route === "settings" ? (
+      ) : route === "settings" || route === "media" || route === "miniapp-images" ? (
         <SettingsPage />
       ) : route === "customers" ? (
         <CustomersPage />
@@ -1055,10 +1066,10 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
         <SalesPage />
       ) : route === "products" ? (
         <ProductsPage />
-      ) : route === "media" ? (
-        <MediaPage />
-      ) : route === "miniapp-images" ? (
-        <MiniappImagesPage />
+      ) : route === "inventory" ? (
+        <InventoryPage />
+      ) : route === "orders" ? (
+        <OrdersPage />
       ) : (
         <PlaceholderPage route={route} />
       )}

@@ -8,12 +8,21 @@ import type {
   CustomerSalesResult,
   CustomerStatement,
   DashboardSummary,
+  InventoryActionPayload,
+  InventoryActionResult,
+  InventoryBalanceResult,
+  InventoryLedgerItem,
   ListResult,
   MiniappImageConfig,
   MiniappImageUpdatePayload,
   NumberSequenceSettings,
   PrintSettings,
+  ProcessOrderListResult,
+  ProcessOrderPayload,
+  ProcessOrderRaw,
+  ProcessOrderStatusPayload,
   ProductCategory,
+  ProductCategorySavePayload,
   ProductItem,
   ProductMediaAsset,
   ProductOptions,
@@ -27,7 +36,10 @@ import type {
   SalesOrderResult,
   SalesPrintTask,
   SalesProduct,
+  StockDocumentItem,
+  StocktakeItem,
   SystemSetting,
+  TransferItem,
   UserListItem,
   Warehouse
 } from "./types";
@@ -53,6 +65,28 @@ export type CustomerStatementQuery = {
   month?: string;
   dateFrom?: string;
   dateTo?: string;
+};
+
+export type InventoryListQuery = {
+  keyword?: string;
+  warehouseId?: number | string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type ProcessOrderListQuery = {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+  filter?: "active" | "all" | "pending" | "unmade";
+};
+
+export type SquareCropPayload = {
+  sourceUrl: string;
+  sourceX: number;
+  sourceY: number;
+  sourceSize: number;
+  outputSize?: number;
 };
 
 export class ApiError extends Error {
@@ -103,6 +137,17 @@ function customerStatementParams(options: CustomerStatementQuery = {}) {
   return params.toString();
 }
 
+function listParams(options: InventoryListQuery = {}) {
+  const params = new URLSearchParams();
+  params.set("keyword", options.keyword || "");
+  params.set("page", String(options.page || 1));
+  params.set("page_size", String(options.pageSize || 50));
+  if (options.warehouseId && options.warehouseId !== "all") {
+    params.set("warehouse_id", String(options.warehouseId));
+  }
+  return params.toString();
+}
+
 export const api = {
   me: () => request<{ user: AuthUser }>("/api/web-auth/me"),
   login: (username: string, password: string) =>
@@ -114,6 +159,28 @@ export const api = {
   dashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
   recentOrders: (limit = 6) =>
     request<{ sales: RecentSale[]; workflows: RecentWorkflow[] }>(`/api/orders/recent?limit=${limit}`),
+  workflowOrders: (query: ProcessOrderListQuery = {}) => {
+    const params = new URLSearchParams();
+    params.set("keyword", query.keyword || "");
+    params.set("page", String(query.page || 1));
+    params.set("page_size", String(query.pageSize || 30));
+    params.set("filter", query.filter || "active");
+    return request<ProcessOrderListResult>(`/api/workflow/orders?${params.toString()}`);
+  },
+  saveWorkflowOrder: (payload: ProcessOrderPayload) =>
+    request<ProcessOrderRaw>("/api/workflow/orders", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateWorkflowOrderStatus: (id: number, payload: ProcessOrderStatusPayload) =>
+    request<ProcessOrderRaw>(`/api/workflow/orders/${id}/status`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  deleteWorkflowOrder: (id: number) =>
+    request<{ id: number; affected?: number }>(`/api/workflow/orders/${id}`, {
+      method: "DELETE"
+    }),
   customers: (query: CustomerListQuery | string = "", limit = 80) => {
     if (typeof query === "string") {
       return request<CustomerListResult>(
@@ -234,6 +301,17 @@ export const api = {
     form.append("image", file, file.name || `product_${Date.now()}.jpg`);
     return requestForm<ProductUploadResult>("/api/product/upload", form);
   },
+  cropProductImageSquare: (payload: SquareCropPayload) =>
+    request<ProductUploadResult>("/api/product/crop-square", {
+      method: "POST",
+      body: JSON.stringify({
+        url: payload.sourceUrl,
+        source_x: payload.sourceX,
+        source_y: payload.sourceY,
+        source_size: payload.sourceSize,
+        output_size: payload.outputSize || 1200
+      })
+    }),
   miniappImageConfig: () => request<MiniappImageConfig>("/api/miniapp/image-config"),
   uploadMiniappImage: (file: File) => {
     const form = new FormData();
@@ -289,6 +367,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  saveProductCategory: (payload: ProductCategorySavePayload) =>
+    request<{ category: ProductCategory; synced?: { sku?: number; spu?: number } }>("/api/product/categories", {
+      method: payload.id ? "PATCH" : "POST",
+      body: JSON.stringify(payload)
+    }),
   salesPrintSettings: () => request<PrintSettings>("/api/settings/print/sales"),
   saveSalesPrintSettings: (payload: Partial<PrintSettings>) =>
     request<PrintSettings>("/api/settings/print/sales", {
@@ -304,5 +387,30 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
-  warehouses: () => request<ListResult<Warehouse>>("/api/warehouses")
+  warehouses: () => request<ListResult<Warehouse>>("/api/warehouses"),
+  inventoryBalances: (query: InventoryListQuery = {}) =>
+    request<InventoryBalanceResult>(`/api/inventory/balances?${listParams(query)}`),
+  inventoryLedger: (query: InventoryListQuery = {}) =>
+    request<ListResult<InventoryLedgerItem>>(`/api/inventory/ledger?${listParams(query)}`),
+  stockDocuments: (query: InventoryListQuery = {}) =>
+    request<ListResult<StockDocumentItem>>(`/api/stock-documents?${listParams(query)}`),
+  stocktakes: (query: InventoryListQuery = {}) =>
+    request<ListResult<StocktakeItem>>(`/api/stocktakes?${listParams(query)}`),
+  transfers: (query: InventoryListQuery = {}) =>
+    request<ListResult<TransferItem>>(`/api/transfers?${listParams(query)}`),
+  createInventoryPurchase: (payload: InventoryActionPayload) =>
+    request<InventoryActionResult>("/api/inventory/purchase", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  createInventoryTransfer: (payload: InventoryActionPayload) =>
+    request<InventoryActionResult>("/api/inventory/transfer", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  createInventoryStocktake: (payload: InventoryActionPayload) =>
+    request<InventoryActionResult>("/api/inventory/stocktaking", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    })
 };

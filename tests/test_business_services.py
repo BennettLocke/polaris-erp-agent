@@ -10,13 +10,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from src.engine.exceptions import DBError
 from src.services.business.auth import AuthService
 from src.services.business.customers import CustomerBalanceService, CustomerService
 from src.services.business.dashboard import DashboardService
 from src.services.business.identity import IdentityLinkService
+from src.services.business.analytics import AnalyticsService
 from src.services.business.inventory import InventoryService
 from src.services.business.miniapp import MiniAppService
 from src.services.business.products import ProductService
@@ -191,6 +192,10 @@ class FakeDB:
             }
         ]
 
+    def save_product_category(self, payload: dict, *, operator_user_id=None) -> dict:
+        self.calls.append(("save_product_category", {"payload": payload, "operator_user_id": operator_user_id}))
+        return {"code": 0, "data": {"id": payload.get("id") or 31, "name": payload.get("name")}}
+
     def product_options(self, product_id: int | None = None) -> dict:
         self.calls.append(("product_options", {"product_id": product_id}))
         return {"code": 0, "data": {"id": product_id}}
@@ -256,6 +261,22 @@ class FakeDB:
 
     def query(self, sql: str, params=()):
         self.calls.append(("query", {"sql": sql, "params": params}))
+        if "FROM sales_order_item i" in sql and "SUM(i.quantity)" in sql:
+            return [
+                {
+                    "product_id": 7,
+                    "sku_id": 88,
+                    "sku_no": "SJ1088",
+                    "title": "【锦程】半斤",
+                    "color": "绿色",
+                    "image": "https://img.example.test/jincheng-green.jpg",
+                    "sold_qty": "12.000",
+                    "amount": "348.00",
+                    "order_count": 5,
+                    "customer_count": 4,
+                    "last_sold_at": "2026-05-25 10:30:00",
+                }
+            ]
         if "FROM auth_session s" in sql:
             return [self.auth_users[1]]
         if "FROM auth_user u" in sql and "WHERE u.id=%s" in sql:
@@ -320,6 +341,9 @@ class FakeDB:
         if "SET approval_status='rejected'" in sql:
             self.auth_users[int(params[0])]["approval_status"] = "rejected"
             self.auth_users[int(params[0])]["is_active"] = 0
+            return 1
+        if "UPDATE auth_user SET password_hash" in sql:
+            self.auth_users[int(params[1])]["password_hash"] = params[0]
             return 1
         return 1
 
@@ -397,6 +421,25 @@ class BusinessServiceTests(unittest.TestCase):
 
         self.assertEqual(user["id"], 1)
         self.assertEqual(user["role"], "admin")
+
+    def test_auth_service_changes_native_password(self):
+        db = FakeDB()
+        service = AuthService(db=db)
+
+        result = service.change_native_password(
+            user_id=1,
+            old_password="secret123",
+            new_password="new-secret",
+        )
+        rejected = service.change_native_password(
+            user_id=1,
+            old_password="secret123",
+            new_password="another-secret",
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertTrue(check_password_hash(db.auth_users[1]["password_hash"], "new-secret"))
+        self.assertEqual(rejected["code"], 401)
 
     def test_auth_service_wechat_quick_login_exchanges_phone_code_before_binding(self):
         class PhoneCodeAuthService(AuthService):
@@ -637,6 +680,18 @@ class BusinessServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_product_service_can_save_product_categories(self):
+        db = FakeDB()
+        service = ProductService(db=db)
+
+        result = service.save_category({"name": "PVC礼盒", "inventory_policy": "none"}, operator_user_id=7)
+
+        self.assertEqual(result["data"]["name"], "PVC礼盒")
+        self.assertEqual(db.calls[0], (
+            "save_product_category",
+            {"payload": {"name": "PVC礼盒", "inventory_policy": "none"}, "operator_user_id": 7},
+        ))
+
     def test_product_service_can_restrict_frontend_reads_to_listed_products(self):
         db = FakeDB()
         service = ProductService(db=db)
@@ -763,6 +818,29 @@ class BusinessServiceTests(unittest.TestCase):
             [call[0] for call in db.calls],
             ["dashboard_summary", "query", "sales_cards", "workflow_orders"],
         )
+
+    def test_analytics_service_returns_hot_products_from_sales_items(self):
+        db = FakeDB()
+        service = AnalyticsService(db=db)
+
+        result = service.hot_products(period="7d", limit=5, dimension="product")
+
+        self.assertEqual(result["period"], "7d")
+        self.assertEqual(result["dimension"], "product")
+        self.assertEqual(result["limit"], 5)
+        self.assertEqual(result["items"][0]["rank"], 1)
+        self.assertEqual(result["items"][0]["product_id"], 7)
+        self.assertEqual(result["items"][0]["title"], "【锦程】半斤")
+        self.assertEqual(result["items"][0]["sold_qty"], 12)
+        self.assertEqual(result["items"][0]["amount"], "348.00")
+        self.assertEqual(result["items"][0]["order_count"], 5)
+        self.assertEqual(result["items"][0]["customer_count"], 4)
+        sql = db.calls[0][1]["sql"]
+        params = db.calls[0][1]["params"]
+        self.assertIn("FROM sales_order_item i", sql)
+        self.assertIn("JOIN sales_order s", sql)
+        self.assertIn("status NOT IN ('canceled', 'deleted')", sql)
+        self.assertEqual(params[-1], 5)
 
     def test_miniapp_service_collects_home_and_user_center(self):
         db = FakeDB()

@@ -62,6 +62,9 @@ class ProductService(BusinessService):
     def categories(self, *, listed_only: bool = False, exclude_names: Iterable[str] | None = None) -> list[dict]:
         return self.db.product_categories(listed_only=listed_only, exclude_names=exclude_names)
 
+    def save_category(self, payload: dict, *, operator_user_id: Any = None) -> dict:
+        return self.db.save_product_category(payload, operator_user_id=operator_user_id)
+
     def info(self, product_id: int, *, listed_only: bool = False) -> dict | None:
         return self.db.product_info(product_id, listed_only=listed_only)
 

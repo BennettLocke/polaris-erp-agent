@@ -18,7 +18,7 @@
 - 哪些业务逻辑只展示结果，不能在前端重写。
 - 空状态、加载态、错误态、成功反馈怎么处理。
 
-执行顺序先从“开单”开始，然后依次补：销售单、客户、商品、图片资产、库存、工作流、设置。
+执行顺序先从“开单”开始，然后依次补：销售单、客户、商品、图片资产、库存、订单、设置。
 
 ## 2. 官方组件依据
 
@@ -84,7 +84,7 @@ PageFooter
 - `ProductCard`
 - `MediaAssetCard`
 - `InventoryTable`
-- `WorkflowOrderCard`
+- `ProcessOrderCard`
 
 ## 4. 弹层使用规则
 
@@ -119,7 +119,7 @@ PageFooter
 - 客户详情。
 - 商品详情/复杂编辑。
 - 库存单据详情。
-- 工作流订单详情。
+- 订单详情。
 
 原则：
 
@@ -610,12 +610,13 @@ npm.cmd run build
 | 4 | 商品 | SPU 列表、颜色、件规、1 件起、中间编辑弹窗、图片选择 |
 | 5 | 图片资产 | SPU 聚合、分类、绑定、上传、删除、分页和懒加载 |
 | 6 | 库存 | 明细、日志、出入库、盘点、调拨、仓库设置 |
-| 7 | 工作流 | 设计稿/制作/配送/丝印状态、操作人、订单关联 |
+| 7 | 订单 | 设计稿/制作/发货/丝印状态、操作人、销售单关联 |
 | 8 | 设置 | 编号、商品基础、库存规则、收款结款、图片/OSS、用户权限、打印 |
 
 销售单页详细执行标准见：`docs/react_admin_sales_page_development_handbook.md`。  
 客户页详细执行标准见：`docs/react_admin_customers_page_development_handbook.md`。  
 商品页详细执行标准见：`docs/react_admin_products_page_development_handbook.md`。
+订单页详细执行标准见：`docs/react_admin_order_page_development_handbook.md`。
 
 商品页专项标准：
 

@@ -34,6 +34,41 @@ class ProductCategoryIconClient(NativeDBClient):
         ]
 
 
+class CategorySaveCursor:
+    def __init__(self):
+        self.statements: list[tuple[str, list]] = []
+        self.rows: list[dict] = []
+
+    def execute(self, sql: str, params=None):
+        clean_sql = " ".join(sql.split())
+        clean_params = list(params or [])
+        self.statements.append((clean_sql, clean_params))
+        if "SELECT id FROM product_category WHERE name=%s" in clean_sql:
+            self.rows = []
+        elif "SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM product_category" in clean_sql:
+            self.rows = [{"next_id": 31}]
+        else:
+            self.rows = []
+        return 1
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return list(self.rows)
+
+
+class CategorySaveTransaction:
+    def __init__(self, cursor: CategorySaveCursor):
+        self.cursor = cursor
+
+    def __enter__(self):
+        return self.cursor
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class NativeProductCategoriesTest(unittest.TestCase):
     def test_product_categories_returns_shopxo_icon_fields(self):
         client = ProductCategoryIconClient()
@@ -72,6 +107,68 @@ class NativeProductCategoriesTest(unittest.TestCase):
 
         self.assertIn("sp.product_type IN (%s,%s)", where_sql)
         self.assertEqual(params, ["bag", "bubble_bag"])
+
+    def test_fixed_packaging_categories_are_non_stock(self):
+        client = object.__new__(NativeDBClient)
+
+        self.assertFalse(client._sku_tracks_inventory({
+            "is_stock_item": 1,
+            "inventory_policy": "",
+            "product_category_text": "PVC礼盒",
+        }))
+        self.assertFalse(client._sku_tracks_inventory({
+            "is_stock_item": 1,
+            "inventory_policy": "",
+            "product_category_text": "快递纸箱",
+        }))
+        self.assertTrue(client._sku_tracks_inventory({
+            "is_stock_item": 1,
+            "inventory_policy": "strict",
+            "product_category_text": "PVC礼盒",
+        }))
+
+    def test_inventory_rule_defaults_include_fixed_packaging_categories(self):
+        client = object.__new__(NativeDBClient)
+
+        rules = client._default_system_setting("inventory_rules")
+
+        self.assertIn("PVC礼盒", rules["non_stock_category_keywords"])
+        self.assertIn("快递纸箱", rules["non_stock_category_keywords"])
+        self.assertNotIn("纸箱", rules["stock_category_keywords"])
+
+    def test_save_product_category_creates_category_and_syncs_inventory_policy(self):
+        client = object.__new__(NativeDBClient)
+        cursor = CategorySaveCursor()
+        client.transaction = lambda: CategorySaveTransaction(cursor)
+        client._table_exists = lambda _cursor, table_name: table_name in {"product_category", "product_sku", "product_spu"}
+
+        result = client.save_product_category(
+            {"name": "PVC礼盒", "product_type": "other", "inventory_policy": "none"},
+            operator_user_id=7,
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["data"]["category"]["name"], "PVC礼盒")
+        self.assertEqual(result["data"]["category"]["inventory_policy"], "none")
+        sql_text = "\n".join(statement for statement, _params in cursor.statements)
+        self.assertIn("INSERT INTO product_category", sql_text)
+        self.assertIn("UPDATE product_sku", sql_text)
+        self.assertIn("inventory_policy='none'", sql_text)
+
+    def test_inventory_keyword_rules_update_matching_category_policies(self):
+        client = object.__new__(NativeDBClient)
+        cursor = CategorySaveCursor()
+        client._table_exists = lambda _cursor, table_name: table_name == "product_category"
+
+        client._apply_inventory_rule_keywords_to_categories(
+            cursor,
+            {"stock_category_keywords": ["礼盒"], "non_stock_category_keywords": ["PVC"]},
+        )
+
+        sql_text = "\n".join(statement for statement, _params in cursor.statements)
+        self.assertIn("UPDATE product_category", sql_text)
+        self.assertIn("inventory_policy='strict'", sql_text)
+        self.assertIn("inventory_policy='none'", sql_text)
 
     def test_product_delete_and_shelves_are_spu_level(self):
         source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")

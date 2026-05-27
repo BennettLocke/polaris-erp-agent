@@ -106,7 +106,7 @@ SidebarProvider
     SidebarHeader      品牌：肆计包装 / 北极星
     SidebarContent
       SidebarGroup     主业务：工作台、开单、销售单、客户
-      SidebarGroup     资产：商品、图片资产、库存、工作流
+      SidebarGroup     资产：商品、图片资产、库存、订单
       SidebarGroup     系统：设置
     SidebarFooter      当前账号、登录状态、退出
     SidebarRail        折叠侧边栏
@@ -149,7 +149,7 @@ PageFooter
 | --- | --- |
 | 今日指标 | `Card size="sm"` + `Badge` |
 | 最近销售单 | `Card` 或 `Table`，根据数量决定 |
-| 最近工作流 | `Card` + `Badge` |
+| 最近订单 | `Card` + `Badge` |
 | AI 对话入口 | `Command` 或独立 Agent Panel |
 | 加载 | `Skeleton` |
 
@@ -275,18 +275,19 @@ PageFooter
 
 目标：设置页不能是 textarea 手动输入规则，必须结构化。
 
-### 5.9 工作流
+### 5.9 订单
 
 | 功能 | 目标组件 |
 | --- | --- |
-| 工作流订单列表 | `Card size="sm"` 或 `Table` |
-| 制作/配送/丝印状态 | `Badge` |
+| 订单看板 | `Card size="sm"` + `Badge` |
+| 订单明细 | `Table` |
+| 制作/发货/丝印状态 | `Badge` |
 | 状态更新 | `Button Group` |
 | 图片/设计稿 | `Aspect Ratio` + `Dialog` |
 | 删除 | `Alert Dialog` |
 | 分页 | `Pagination` |
 
-目标：工作流订单要能快速看到待制作、待配送、丝印状态。
+目标：订单页要能快速看到待制作、待发货、丝印状态；后端仍复用 `workflow_order` 过程订单接口，不和正式销售单混用。
 
 ### 5.10 Agent 工作台
 

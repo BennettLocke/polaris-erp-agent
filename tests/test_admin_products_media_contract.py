@@ -59,7 +59,10 @@ class AdminProductsMediaContractTest(unittest.TestCase):
         self.assertNotIn("function ProductsPage", app_source)
         self.assertNotIn("function MediaPage", app_source)
         self.assertIn("ProductsPage", app_source)
-        self.assertIn("MediaPage", app_source)
+        self.assertIn("SettingsPage", app_source)
+        self.assertIn('route === "media"', app_source)
+        self.assertIn("section=media", app_source)
+        self.assertNotIn("MediaPage", app_source)
 
 
 if __name__ == "__main__":

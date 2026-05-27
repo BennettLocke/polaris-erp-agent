@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 
-import { api } from "@/api";
+import { ApiError, api } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -359,6 +359,15 @@ type ImagePickerTarget = {
 type ImageCropTarget = {
   url: string;
   target: ImagePickerTarget;
+};
+
+type SquareCropResult = {
+  file?: File;
+  sourceUrl: string;
+  sourceX: number;
+  sourceY: number;
+  sourceSize: number;
+  outputSize: number;
 };
 
 type CropOffset = {
@@ -783,29 +792,60 @@ function SquareImageCropDialog({
   saving: boolean;
   error: string;
   onCancel: () => void;
-  onConfirm: (file: File) => void;
+  onConfirm: (crop: SquareCropResult) => void;
 }) {
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef<{ x: number; y: number; offset: CropOffset } | null>(null);
+  const imageSizeRef = useRef({ width: 0, height: 0 });
+  const zoomRef = useRef(1);
+  const offsetRef = useRef<CropOffset>({ x: 0, y: 0 });
+  const stageSizeRef = useRef(SQUARE_CROP_STAGE_SIZE);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState<CropOffset>({ x: 0, y: 0 });
+  const [stageSize, setStageSize] = useState(SQUARE_CROP_STAGE_SIZE);
   const [localError, setLocalError] = useState("");
 
   const imageUrl = cropTarget?.url || "";
   const baseScale = imageSize.width && imageSize.height
-    ? Math.max(SQUARE_CROP_STAGE_SIZE / imageSize.width, SQUARE_CROP_STAGE_SIZE / imageSize.height)
+    ? Math.max(stageSize / imageSize.width, stageSize / imageSize.height)
     : 1;
   const cropScale = baseScale * zoom;
   const displayWidth = imageSize.width * cropScale;
   const displayHeight = imageSize.height * cropScale;
 
-  function clampOffset(nextOffset: CropOffset, nextZoom = zoom, nextSize = imageSize) {
+  function setCropZoom(nextZoom: number) {
+    zoomRef.current = nextZoom;
+    setZoom(nextZoom);
+  }
+
+  function setCropOffset(nextOffset: CropOffset) {
+    offsetRef.current = nextOffset;
+    setOffset(nextOffset);
+  }
+
+  function setCropImageSize(nextSize: { width: number; height: number }) {
+    imageSizeRef.current = nextSize;
+    setImageSize(nextSize);
+  }
+
+  function setCropStageSize(nextSize: number) {
+    stageSizeRef.current = nextSize;
+    setStageSize(nextSize);
+  }
+
+  function clampOffset(
+    nextOffset: CropOffset,
+    nextZoom = zoomRef.current,
+    nextSize = imageSizeRef.current,
+    nextStageSize = stageSizeRef.current
+  ) {
     if (!nextSize.width || !nextSize.height) return { x: 0, y: 0 };
-    const nextBaseScale = Math.max(SQUARE_CROP_STAGE_SIZE / nextSize.width, SQUARE_CROP_STAGE_SIZE / nextSize.height);
+    const nextBaseScale = Math.max(nextStageSize / nextSize.width, nextStageSize / nextSize.height);
     const nextScale = nextBaseScale * nextZoom;
-    const maxX = Math.max(0, (nextSize.width * nextScale - SQUARE_CROP_STAGE_SIZE) / 2);
-    const maxY = Math.max(0, (nextSize.height * nextScale - SQUARE_CROP_STAGE_SIZE) / 2);
+    const maxX = Math.max(0, (nextSize.width * nextScale - nextStageSize) / 2);
+    const maxY = Math.max(0, (nextSize.height * nextScale - nextStageSize) / 2);
     return {
       x: clampValue(nextOffset.x, -maxX, maxX),
       y: clampValue(nextOffset.y, -maxY, maxY)
@@ -813,41 +853,109 @@ function SquareImageCropDialog({
   }
 
   useEffect(() => {
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
-    setImageSize({ width: 0, height: 0 });
+    setCropZoom(1);
+    setCropOffset({ x: 0, y: 0 });
+    setCropImageSize({ width: 0, height: 0 });
     setLocalError("");
   }, [imageUrl]);
 
   useEffect(() => {
-    setOffset((current) => clampOffset(current));
-  }, [zoom, imageSize.width, imageSize.height]);
+    const stage = stageRef.current;
+    if (!stage || !cropTarget) return;
+    const updateStageSize = () => {
+      const rect = stage.getBoundingClientRect();
+      const nextSize = Math.max(1, Math.round(Math.min(rect.width || SQUARE_CROP_STAGE_SIZE, rect.height || SQUARE_CROP_STAGE_SIZE)));
+      setCropStageSize(nextSize);
+    };
+    updateStageSize();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateStageSize);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [cropTarget]);
+
+  useEffect(() => {
+    setCropOffset(clampOffset(offsetRef.current));
+  }, [zoom, imageSize.width, imageSize.height, stageSize]);
 
   function startDrag(event: PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
     if (!imageSize.width || saving) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { x: event.clientX, y: event.clientY, offset };
+    dragRef.current = { x: event.clientX, y: event.clientY, offset: offsetRef.current };
   }
 
   function moveDrag(event: PointerEvent<HTMLDivElement>) {
     if (!dragRef.current || saving) return;
+    event.preventDefault();
     const nextOffset = {
       x: dragRef.current.offset.x + event.clientX - dragRef.current.x,
       y: dragRef.current.offset.y + event.clientY - dragRef.current.y
     };
-    setOffset(clampOffset(nextOffset));
+    setCropOffset(clampOffset(nextOffset, zoomRef.current));
   }
 
   function stopDrag(event: PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   }
 
+  function zoomCropWithWheel(event: WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (!imageSizeRef.current.width || saving || event.deltaY === 0) return;
+    const currentZoom = zoomRef.current;
+    const nextZoom = clampValue(currentZoom * Math.exp(-event.deltaY * 0.0015), 1, SQUARE_CROP_MAX_ZOOM);
+    if (Math.abs(nextZoom - currentZoom) < 0.001) return;
+
+    const rect = stageRef.current?.getBoundingClientRect();
+    const point = rect
+      ? { x: event.clientX - rect.left - rect.width / 2, y: event.clientY - rect.top - rect.height / 2 }
+      : { x: 0, y: 0 };
+    const size = imageSizeRef.current;
+    const side = stageSizeRef.current;
+    const nextBaseScale = Math.max(side / size.width, side / size.height);
+    const currentScale = nextBaseScale * currentZoom;
+    const nextScale = nextBaseScale * nextZoom;
+    const currentOffset = offsetRef.current;
+    const sourceFromCenter = {
+      x: (point.x - currentOffset.x) / currentScale,
+      y: (point.y - currentOffset.y) / currentScale
+    };
+    const nextOffset = clampOffset({
+      x: point.x - sourceFromCenter.x * nextScale,
+      y: point.y - sourceFromCenter.y * nextScale
+    }, nextZoom, size, side);
+
+    setCropZoom(nextZoom);
+    setCropOffset(nextOffset);
+  }
+
+  function currentCropResult(): SquareCropResult | null {
+    if (!imageUrl || !imageSize.width || !imageSize.height) {
+      return null;
+    }
+    const imageLeft = stageSize / 2 + offset.x - displayWidth / 2;
+    const imageTop = stageSize / 2 + offset.y - displayHeight / 2;
+    const rawSourceSize = stageSize / cropScale;
+    const sourceX = clampValue(-imageLeft / cropScale, 0, Math.max(0, imageSize.width - rawSourceSize));
+    const sourceY = clampValue(-imageTop / cropScale, 0, Math.max(0, imageSize.height - rawSourceSize));
+    const sourceSize = Math.min(rawSourceSize, imageSize.width - sourceX, imageSize.height - sourceY);
+    return {
+      sourceUrl: imageUrl,
+      sourceX,
+      sourceY,
+      sourceSize,
+      outputSize: SQUARE_CROP_OUTPUT_SIZE
+    };
+  }
+
   async function createCropFile() {
     const image = imageRef.current;
-    if (!image || !imageSize.width || !imageSize.height) {
+    const crop = currentCropResult();
+    if (!image || !crop) {
       setLocalError("图片还没有加载完成");
       return;
     }
@@ -859,34 +967,29 @@ function SquareImageCropDialog({
       setLocalError("浏览器无法创建裁剪画布");
       return;
     }
-    const imageLeft = SQUARE_CROP_STAGE_SIZE / 2 + offset.x - displayWidth / 2;
-    const imageTop = SQUARE_CROP_STAGE_SIZE / 2 + offset.y - displayHeight / 2;
-    const sourceX = -imageLeft / cropScale;
-    const sourceY = -imageTop / cropScale;
-    const sourceSize = SQUARE_CROP_STAGE_SIZE / cropScale;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(
-      image,
-      sourceX,
-      sourceY,
-      sourceSize,
-      sourceSize,
-      0,
-      0,
-      SQUARE_CROP_OUTPUT_SIZE,
-      SQUARE_CROP_OUTPUT_SIZE
-    );
     try {
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(
+        image,
+        crop.sourceX,
+        crop.sourceY,
+        crop.sourceSize,
+        crop.sourceSize,
+        0,
+        0,
+        crop.outputSize,
+        crop.outputSize
+      );
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((nextBlob) => {
           if (nextBlob) resolve(nextBlob);
           else reject(new Error("图片裁剪失败"));
         }, "image/jpeg", 0.92);
       });
-      onConfirm(new File([blob], squareCropFileName(imageUrl), { type: "image/jpeg" }));
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : "图片裁剪失败");
+      onConfirm({ ...crop, file: new File([blob], squareCropFileName(imageUrl), { type: "image/jpeg" }) });
+    } catch {
+      onConfirm(crop);
     }
   }
 
@@ -903,18 +1006,21 @@ function SquareImageCropDialog({
         </DialogHeader>
         {(error || localError) ? <div className="form-error">{error || localError}</div> : null}
         <div
+          ref={stageRef}
           className="square-crop-stage"
+          data-disabled={saving || !imageSize.width ? "true" : undefined}
           onPointerDown={startDrag}
           onPointerMove={moveDrag}
           onPointerUp={stopDrag}
           onPointerCancel={stopDrag}
+          onWheel={zoomCropWithWheel}
         >
           {imageUrl ? (
             <div
               className="square-crop-image-layer"
               style={{
-                width: displayWidth || SQUARE_CROP_STAGE_SIZE,
-                height: displayHeight || SQUARE_CROP_STAGE_SIZE,
+                width: displayWidth || stageSize,
+                height: displayHeight || stageSize,
                 transform: `translate(${offset.x}px, ${offset.y}px)`
               }}
             >
@@ -922,11 +1028,10 @@ function SquareImageCropDialog({
                 ref={imageRef}
                 src={imageUrl}
                 alt="待裁剪图片"
-                crossOrigin="anonymous"
                 draggable={false}
                 onLoad={(event) => {
                   const image = event.currentTarget;
-                  setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+                  setCropImageSize({ width: image.naturalWidth, height: image.naturalHeight });
                 }}
                 onError={() => setLocalError("图片加载失败")}
               />
@@ -934,30 +1039,13 @@ function SquareImageCropDialog({
           ) : null}
           <div className="square-crop-frame" aria-hidden="true" />
         </div>
-        <div className="square-crop-controls">
-          <Field>
-            <FieldLabel htmlFor="square-crop-zoom">缩放</FieldLabel>
-            <Input
-              id="square-crop-zoom"
-              type="range"
-              min="1"
-              max={String(SQUARE_CROP_MAX_ZOOM)}
-              step="0.01"
-              value={zoom}
-              disabled={saving || !imageSize.width}
-              onChange={(event) => setZoom(Number(event.target.value) || 1)}
-            />
-          </Field>
-          <div className="square-crop-actions">
-            <Button type="button" variant="outline" disabled={saving} onClick={() => {
-              setZoom(1);
-              setOffset({ x: 0, y: 0 });
-            }}>
-              重置
-            </Button>
-          </div>
-        </div>
         <DialogFooter>
+          <Button type="button" variant="outline" disabled={saving} onClick={() => {
+            setCropZoom(1);
+            setCropOffset({ x: 0, y: 0 });
+          }}>
+            重置
+          </Button>
           <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>取消</Button>
           <Button type="button" disabled={saving || !imageSize.width} onClick={createCropFile}>
             {saving ? "生成中" : "确认使用 1:1 图"}
@@ -1088,18 +1176,24 @@ function ProductEditorDialog({
     applySelectedImage(pickerTarget, url);
   }
 
-  async function confirmSquareCrop(file: File) {
+  async function confirmSquareCrop(crop: SquareCropResult) {
     if (!pendingSquareCrop) return;
     setCropSaving(true);
     setCropError("");
     try {
-      const result = await api.uploadProductImage(file);
+      const result = crop.file ? await api.uploadProductImage(crop.file) : await api.cropProductImageSquare(crop);
       const url = uploadedImageUrl(result);
       if (!url) throw new Error("裁剪图上传成功但没有返回图片地址");
       applySelectedImage(pendingSquareCrop.target, url);
       setPendingSquareCrop(null);
     } catch (err) {
-      setCropError(err instanceof Error ? err.message : "1:1 图片生成失败");
+      setCropError(
+        err instanceof ApiError && err.status === 404
+          ? "后台裁切接口还没生效，请重启后台服务后再试"
+          : err instanceof Error
+            ? err.message
+            : "1:1 图片生成失败"
+      );
     } finally {
       setCropSaving(false);
     }

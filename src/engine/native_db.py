@@ -73,6 +73,19 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _clean_number_sequence_note(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.count("?") >= 4 and not re.search(r"[\u4e00-\u9fff]", text):
+        code_match = re.search(r"([A-Za-z]{1,20}\d{1,10})", text)
+        if code_match:
+            code = code_match.group(1).upper()
+            return f"礼盒和泡袋统一从 {code} 往后自动编号"
+        return ""
+    return text
+
+
 def _json_loads(value: Any, default: Any = None) -> Any:
     if value in (None, ""):
         return default
@@ -235,6 +248,24 @@ def _source_text(value: Any) -> str:
         "erp": "ERP迁移",
         "sku_image": "SKU颜色图",
     }.get(source, source or "-")
+
+
+FIXED_NON_STOCK_CATEGORY_NAMES = ("快递纸箱", "PVC礼盒")
+FIXED_NON_STOCK_CATEGORY_KEYWORDS = (
+    "泡袋",
+    "茶袋",
+    "标签",
+    "服务",
+    "设计",
+    "制版",
+    "辅料",
+    "包茶",
+    "烫金",
+    "快递纸箱",
+    "纸箱",
+    "PVC礼盒",
+    "PVC",
+)
 
 
 def _gift_box_label(value: Any) -> str:
@@ -924,8 +955,9 @@ class NativeDBClient:
         stock_value = str(stock_mode or "").strip().lower()
         if stock_value in {"stock", "stock_item", "1", "true", "yes"}:
             where.append("s.is_stock_item = 1")
+            where.append("COALESCE(s.inventory_policy, '') <> 'none'")
         elif stock_value in {"non_stock", "no_stock", "0", "false", "no"}:
-            where.append("s.is_stock_item = 0")
+            where.append("(s.is_stock_item = 0 OR COALESCE(s.inventory_policy, '') = 'none')")
         quality_value = str(quality or "").strip().lower()
         if quality_value == "missing_image":
             where.append(
@@ -2095,10 +2127,13 @@ class NativeDBClient:
                 cost_price = unit_payload.get("cost_price") or spec_payload.get("cost_price") or 0
                 image = str(spec_payload.get("images") or "").strip()
                 spec_purchase_policy = _normalize_purchase_policy(spec_payload.get("purchase_policy") or purchase_policy)
-                if "is_stock_item" in spec_payload:
+                default_is_stock_item = self._default_is_stock_item_for_product(cursor, category_ids, product_type)
+                if default_is_stock_item == 0:
+                    is_stock_item = 0
+                elif "is_stock_item" in spec_payload:
                     is_stock_item = 0 if str(spec_payload.get("is_stock_item", 1)).lower() in ("0", "false", "no", "off") else 1
                 else:
-                    is_stock_item = self._default_is_stock_item_for_product(cursor, category_ids, product_type)
+                    is_stock_item = default_is_stock_item
                 if existing_id:
                     cursor.execute(
                         """
@@ -2894,13 +2929,18 @@ class NativeDBClient:
     def _sku_tracks_inventory(self, sku: dict | None) -> bool:
         if not sku:
             return True
+        explicit_policy = str(sku.get("inventory_policy") or "").strip().lower()
+        if explicit_policy == "none":
+            return False
+        if explicit_policy in {"strict", "weak"}:
+            return True
         if str(sku.get("product_type") or "").strip().lower() in {"bag", "bubble_bag"}:
             return False
         stock_text = " ".join(
             str(sku.get(key) or "")
-            for key in ("title", "size_label", "primary_category_name")
+            for key in ("title", "size_label", "primary_category_name", "product_category_text", "category_name")
         )
-        if any(keyword in stock_text for keyword in ("泡袋", "茶袋", "标签", "服务", "设计", "制版", "辅料", "包茶", "烫金")):
+        if any(keyword in stock_text for keyword in FIXED_NON_STOCK_CATEGORY_KEYWORDS):
             return False
         value = sku.get("is_stock_item")
         if value in (None, ""):
@@ -2928,6 +2968,239 @@ class NativeDBClient:
     def _allow_negative_stock(self, cursor) -> bool:
         rules = self._inventory_rules(cursor)
         return int(rules.get("allow_negative_stock") or 0) == 1
+
+    def _normalize_category_inventory_policy(self, value: Any, default: str = "strict") -> str:
+        clean = str(value or "").strip().lower()
+        if clean in {"none", "no_stock", "non_stock", "0", "false", "不扣库存"}:
+            return "none"
+        if clean in {"weak", "loose", "弱库存"}:
+            return "weak"
+        if clean in {"strict", "stock", "stock_item", "1", "true", "扣库存"}:
+            return "strict"
+        return default
+
+    def _sku_category_match_sql(self, alias: str, category_ids: list[int]) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for category_id in category_ids:
+            clauses.append(
+                f"({alias}.primary_category_id=%s OR JSON_CONTAINS(COALESCE({alias}.category_ids, '[]'), CAST(%s AS CHAR)))"
+            )
+            params.extend([category_id, category_id])
+        return " OR ".join(clauses), params
+
+    def _inventory_policy_category_ids(self, cursor, policy: str) -> list[int]:
+        cursor.execute(
+            "SELECT id FROM product_category WHERE is_enabled=1 AND inventory_policy=%s",
+            (policy,),
+        )
+        return [int(row.get("id") or 0) for row in cursor.fetchall() if row.get("id")]
+
+    def _sync_category_inventory_policy(self, cursor, category_ids: list[int], policy: str) -> dict:
+        clean_id_set: set[int] = set()
+        for item in category_ids:
+            try:
+                category_id = int(item or 0)
+            except (TypeError, ValueError):
+                continue
+            if category_id > 0:
+                clean_id_set.add(category_id)
+        clean_ids = sorted(clean_id_set)
+        if not clean_ids:
+            return {"sku": 0, "spu": 0}
+        clean_policy = self._normalize_category_inventory_policy(policy)
+        now = _now()
+        sku_affected = 0
+        spu_affected = 0
+        if self._table_exists(cursor, "product_sku"):
+            match_sql, match_params = self._sku_category_match_sql("s", clean_ids)
+            if clean_policy == "none":
+                sku_affected = cursor.execute(
+                    f"""
+                    UPDATE product_sku s
+                    SET s.is_stock_item=0, s.inventory_policy='none', s.updated_at=%s
+                    WHERE s.deleted_at IS NULL
+                      AND ({match_sql})
+                      AND (s.is_stock_item <> 0 OR COALESCE(s.inventory_policy, '') <> 'none')
+                    """,
+                    [now, *match_params],
+                )
+            else:
+                non_stock_ids = self._inventory_policy_category_ids(cursor, "none")
+                non_stock_filter = ""
+                non_stock_params: list[Any] = []
+                if non_stock_ids:
+                    non_stock_sql, non_stock_params = self._sku_category_match_sql("s", non_stock_ids)
+                    non_stock_filter = f" AND NOT ({non_stock_sql})"
+                sku_affected = cursor.execute(
+                    f"""
+                    UPDATE product_sku s
+                    SET s.is_stock_item=1, s.inventory_policy=%s, s.updated_at=%s
+                    WHERE s.deleted_at IS NULL
+                      AND ({match_sql})
+                      {non_stock_filter}
+                      AND (s.is_stock_item <> 1 OR COALESCE(s.inventory_policy, '') <> %s)
+                    """,
+                    [clean_policy, now, *match_params, *non_stock_params, clean_policy],
+                )
+        if self._table_exists(cursor, "product_spu"):
+            placeholders = ",".join(["%s"] * len(clean_ids))
+            if clean_policy == "none":
+                spu_affected = cursor.execute(
+                    f"""
+                    UPDATE product_spu
+                    SET inventory_policy='none', updated_at=%s
+                    WHERE default_category_id IN ({placeholders})
+                      AND COALESCE(inventory_policy, '') <> 'none'
+                    """,
+                    [now, *clean_ids],
+                )
+            else:
+                non_stock_ids = self._inventory_policy_category_ids(cursor, "none")
+                non_stock_filter = ""
+                non_stock_params = []
+                if non_stock_ids:
+                    non_stock_placeholders = ",".join(["%s"] * len(non_stock_ids))
+                    non_stock_filter = f" AND default_category_id NOT IN ({non_stock_placeholders})"
+                    non_stock_params = non_stock_ids
+                spu_affected = cursor.execute(
+                    f"""
+                    UPDATE product_spu
+                    SET inventory_policy=%s, updated_at=%s
+                    WHERE default_category_id IN ({placeholders})
+                      {non_stock_filter}
+                      AND COALESCE(inventory_policy, '') <> %s
+                    """,
+                    [clean_policy, now, *clean_ids, *non_stock_params, clean_policy],
+                )
+        return {"sku": int(sku_affected or 0), "spu": int(spu_affected or 0)}
+
+    def _sync_inventory_policy_categories(self, cursor=None) -> dict:
+        if cursor is None:
+            with self.transaction() as local_cursor:
+                return self._sync_inventory_policy_categories(local_cursor)
+        if not self._table_exists(cursor, "product_category"):
+            return {"sku": 0, "spu": 0}
+        placeholders = ",".join(["%s"] * len(FIXED_NON_STOCK_CATEGORY_NAMES))
+        cursor.execute(
+            f"""
+            UPDATE product_category
+            SET inventory_policy='none', updated_at=%s
+            WHERE name IN ({placeholders})
+              AND COALESCE(inventory_policy, '') = ''
+            """,
+            [_now(), *FIXED_NON_STOCK_CATEGORY_NAMES],
+        )
+        cursor.execute(
+            """
+            SELECT id, inventory_policy
+            FROM product_category
+            WHERE is_enabled=1 AND inventory_policy IN ('none', 'strict', 'weak')
+            ORDER BY FIELD(inventory_policy, 'none', 'strict', 'weak'), id ASC
+            """,
+        )
+        synced = {"sku": 0, "spu": 0}
+        for row in cursor.fetchall():
+            result = self._sync_category_inventory_policy(
+                cursor,
+                [int(row.get("id") or 0)],
+                str(row.get("inventory_policy") or "strict"),
+            )
+            synced["sku"] += result.get("sku", 0)
+            synced["spu"] += result.get("spu", 0)
+        return synced
+
+    def _apply_inventory_rule_keywords_to_categories(self, cursor, rules: dict) -> None:
+        if not self._table_exists(cursor, "product_category"):
+            return
+        now = _now()
+        stock_keywords = [str(item).strip() for item in rules.get("stock_category_keywords") or [] if str(item or "").strip()]
+        non_stock_keywords = [str(item).strip() for item in rules.get("non_stock_category_keywords") or [] if str(item or "").strip()]
+        for policy, keywords in (("strict", stock_keywords), ("none", non_stock_keywords)):
+            for keyword in keywords:
+                cursor.execute(
+                    f"""
+                    UPDATE product_category
+                    SET inventory_policy='{policy}', updated_at=%s
+                    WHERE is_enabled=1 AND name LIKE %s
+                    """,
+                    (now, f"%{keyword}%"),
+                )
+
+    def save_product_category(self, payload: dict, *, operator_user_id: Any = None) -> dict:
+        payload = payload or {}
+        category_id = int(payload.get("id") or 0)
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise DBError("分类名称不能为空")
+        product_type = re.sub(r"[^0-9A-Za-z_]", "", str(payload.get("product_type") or "other").strip().lower())[:30] or "other"
+        inventory_policy = self._normalize_category_inventory_policy(payload.get("inventory_policy"))
+        try:
+            parent_id = int(payload.get("parent_id") or payload.get("pid") or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
+        try:
+            sort_order = int(payload.get("sort_order") or 0)
+        except (TypeError, ValueError):
+            sort_order = 0
+        is_enabled = 1 if int(payload.get("is_enabled", 1) or 0) else 0
+        code = re.sub(r"[^0-9A-Za-z_-]", "", str(payload.get("code") or "").strip())[:80]
+        now = _now()
+        operator_user_id = self._operator_user_id(operator_user_id)
+        synced = {"sku": 0, "spu": 0}
+        with self.transaction() as cursor:
+            if category_id:
+                cursor.execute("SELECT id, code FROM product_category WHERE id=%s LIMIT 1 FOR UPDATE", (category_id,))
+                row = cursor.fetchone()
+                if not row:
+                    raise DBError("商品分类不存在")
+                cursor.execute("SELECT id FROM product_category WHERE name=%s AND id<>%s LIMIT 1", (name, category_id))
+                if cursor.fetchone():
+                    raise DBError("商品分类名称已存在")
+                cursor.execute(
+                    """
+                    UPDATE product_category
+                    SET parent_id=%s, name=%s, product_type=%s, inventory_policy=%s,
+                        sort_order=%s, is_enabled=%s, updated_at=%s
+                    WHERE id=%s
+                    """,
+                    (parent_id or None, name, product_type, inventory_policy, sort_order, is_enabled, now, category_id),
+                )
+            else:
+                cursor.execute("SELECT id FROM product_category WHERE name=%s LIMIT 1", (name,))
+                if cursor.fetchone():
+                    raise DBError("商品分类名称已存在")
+                cursor.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM product_category")
+                row = cursor.fetchone() or {}
+                category_id = max(int(row.get("next_id") or 1), 1)
+                code = code or f"cat_{category_id}"
+                cursor.execute(
+                    """
+                    INSERT INTO product_category
+                        (id, parent_id, code, name, product_type, inventory_policy, sort_order, is_enabled, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (category_id, parent_id or None, code, name, product_type, inventory_policy, sort_order, is_enabled, now, now),
+                )
+            synced = self._sync_category_inventory_policy(cursor, [category_id], inventory_policy)
+        return {
+            "code": 0,
+            "data": {
+                "category": {
+                    "id": category_id,
+                    "pid": parent_id,
+                    "parent_id": parent_id,
+                    "name": name,
+                    "product_type": product_type,
+                    "inventory_policy": inventory_policy,
+                    "sort_order": sort_order,
+                    "is_enabled": is_enabled,
+                    "total": int(payload.get("total") or 0),
+                },
+                "synced": synced,
+                "operator_user_id": operator_user_id,
+            },
+        }
 
     def _default_is_stock_item_for_product(self, cursor, category_ids: list[int], product_type: str = "") -> int:
         rules = self._inventory_rules(cursor)
@@ -2958,12 +3231,22 @@ class NativeDBClient:
             return 0
         if clean_category_ids & stock_ids:
             return 1
-        if clean_category_ids and keywords:
+        if clean_category_ids:
             sorted_ids = sorted(clean_category_ids)
             placeholders = ",".join(["%s"] * len(sorted_ids))
-            cursor.execute(f"SELECT name FROM product_category WHERE id IN ({placeholders})", sorted_ids)
-            names = " ".join(str(row.get("name") or "") for row in cursor.fetchall())
-            if any(keyword and keyword in names for keyword in keywords):
+            cursor.execute(f"SELECT name, inventory_policy FROM product_category WHERE id IN ({placeholders})", sorted_ids)
+            category_rows = cursor.fetchall()
+            category_policy = [
+                self._normalize_category_inventory_policy(row.get("inventory_policy"), default="")
+                for row in category_rows
+                if str(row.get("inventory_policy") or "").strip()
+            ]
+            if "none" in category_policy:
+                return 0
+            if any(policy in {"strict", "weak"} for policy in category_policy):
+                return 1
+            names = " ".join(str(row.get("name") or "") for row in category_rows)
+            if keywords and any(keyword and keyword in names for keyword in keywords):
                 return 0
         return 1
 
@@ -3723,7 +4006,9 @@ class NativeDBClient:
             f"""
             SELECT
                 b.sku_id AS product_id,
+                sp.id AS spu_id,
                 s.sku_no,
+                s.is_stock_item,
                 sp.title,
                 s.color,
                 sp.case_pack_qty,
@@ -3751,7 +4036,9 @@ class NativeDBClient:
             result.append({
                 "product_id": row.get("product_id"),
                 "id": row.get("product_id"),
+                "spu_id": row.get("spu_id"),
                 "sku_no": row.get("sku_no") or "",
+                "is_stock_item": int(row.get("is_stock_item") if row.get("is_stock_item") not in (None, "") else 1),
                 "产品名称": row.get("title") or "商品",
                 "title": row.get("title") or "商品",
                 "name": row.get("title") or "商品",
@@ -3804,26 +4091,88 @@ class NativeDBClient:
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[dict], int]:
-        where_sql, params = self._sku_where(keyword, active_only=False)
-        where = [where_sql]
+        self._sync_inventory_policy_categories()
+        where_sql, params = self._sku_where(keyword, active_only=False, stock_mode="stock")
+        warehouse_where = ["w.is_enabled=1"]
+        warehouse_params: list[Any] = []
         if warehouse_id:
-            where.append("b.warehouse_id=%s")
-            params.append(int(warehouse_id))
-        final_where = " AND ".join(where)
+            warehouse_where.append("w.id=%s")
+            warehouse_params.append(int(warehouse_id))
+        warehouse_where_sql = " AND ".join(warehouse_where)
         count_rows = self.query(
             f"""
             SELECT COUNT(*) AS total
-            FROM inventory_balance b
-            JOIN product_sku s ON s.id=b.sku_id
+            FROM product_sku s
             JOIN product_spu sp ON sp.id=s.spu_id
-            WHERE {final_where}
+            WHERE {where_sql}
             """,
             params,
         )
         total = int(count_rows[0].get("total") or 0) if count_rows else 0
-        rows = self._inventory_rows(final_where, params, limit=max(page * page_size, page_size))
-        start = (max(1, page) - 1) * page_size
-        return rows[start:start + page_size], total
+        rows = self.query(
+            f"""
+            SELECT
+                s.id AS product_id,
+                sp.id AS spu_id,
+                s.sku_no,
+                s.is_stock_item,
+                sp.title,
+                s.color,
+                sp.case_pack_qty,
+                w.id AS warehouse_id,
+                w.name AS warehouse_name,
+                COALESCE(b.unit_id, s.unit_id) AS unit_id,
+                u.name AS unit_name,
+                COALESCE(b.quantity, 0) AS quantity,
+                COALESCE(b.available_qty, b.quantity, 0) AS available_qty,
+                COALESCE(b.reserved_qty, 0) AS reserved_qty
+            FROM (
+                SELECT s.id
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id=s.spu_id
+                WHERE {where_sql}
+                ORDER BY sp.title ASC, s.color ASC, s.id ASC
+                LIMIT %s OFFSET %s
+            ) page_sku
+            JOIN product_sku s ON s.id=page_sku.id
+            JOIN product_spu sp ON sp.id=s.spu_id
+            CROSS JOIN warehouse w
+            LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+            LEFT JOIN product_unit u ON u.id=COALESCE(b.unit_id, s.unit_id)
+            WHERE {warehouse_where_sql}
+            ORDER BY sp.title ASC, s.color ASC, w.id ASC
+            """,
+            params + [page_size, (max(1, page) - 1) * page_size] + warehouse_params,
+        )
+        result = []
+        for row in rows:
+            piece = f"1件{_qty_text(row.get('case_pack_qty'))}套" if row.get("case_pack_qty") not in (None, "") else ""
+            result.append({
+                "product_id": row.get("product_id"),
+                "id": row.get("product_id"),
+                "spu_id": row.get("spu_id"),
+                "sku_no": row.get("sku_no") or "",
+                "is_stock_item": int(row.get("is_stock_item") if row.get("is_stock_item") not in (None, "") else 1),
+                "产品名称": row.get("title") or "商品",
+                "title": row.get("title") or "商品",
+                "name": row.get("title") or "商品",
+                "【颜色】": row.get("color") or "",
+                "spec": row.get("color") or "",
+                "color": row.get("color") or "",
+                "simple_desc": piece,
+                "warehouse_id": row.get("warehouse_id"),
+                "【仓库】": row.get("warehouse_name") or "",
+                "warehouse_name": row.get("warehouse_name") or "",
+                "unit_id": row.get("unit_id"),
+                "unit_name": row.get("unit_name") or "",
+                "库存数量": _qty_text(row.get("quantity")),
+                "inventory": _qty_text(row.get("quantity")),
+                "stock": _qty_text(row.get("quantity")),
+                "quantity": _qty_text(row.get("quantity")),
+                "available_qty": _qty_text(row.get("available_qty")),
+                "reserved_qty": _qty_text(row.get("reserved_qty")),
+            })
+        return result, total
 
     def inventory_ledger(self, keyword: str = "", page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
         where = ["1=1"]
@@ -4195,7 +4544,8 @@ class NativeDBClient:
                     {"key": "gift_box", "name": "礼盒", "is_stock_item": 1},
                     {"key": "bag", "name": "泡袋", "is_stock_item": 0},
                     {"key": "accessory", "name": "辅料", "is_stock_item": 0},
-                    {"key": "carton", "name": "纸箱", "is_stock_item": 1},
+                    {"key": "carton", "name": "快递纸箱", "is_stock_item": 0},
+                    {"key": "pvc_gift_box", "name": "PVC礼盒", "is_stock_item": 0},
                     {"key": "other", "name": "其他", "is_stock_item": 1},
                 ],
                 "units": ["套", "捆", "个", "张", "斤"],
@@ -4205,8 +4555,8 @@ class NativeDBClient:
                 "default_is_stock_item": 1,
             },
             "inventory_rules": {
-                "stock_category_keywords": ["礼盒", "纸箱"],
-                "non_stock_category_keywords": ["泡袋", "茶袋", "标签", "服务", "设计", "制版", "辅料"],
+                "stock_category_keywords": ["礼盒"],
+                "non_stock_category_keywords": list(FIXED_NON_STOCK_CATEGORY_KEYWORDS),
                 "default_out_warehouse_id": 1,
                 "allow_negative_stock": 0,
             },
@@ -4510,6 +4860,8 @@ class NativeDBClient:
         if key not in allowed:
             return {"code": 400, "msg": "设置项不存在"}
         with self.cursor() as cursor:
+            if key == "inventory_rules":
+                self._sync_inventory_policy_categories(cursor)
             data = self._system_setting_value(cursor, key)
             extras: dict[str, Any] = {}
             if key in {"product_basic", "inventory_rules"}:
@@ -4557,10 +4909,14 @@ class NativeDBClient:
             keywords = clean_value.get("non_stock_category_keywords")
             if not isinstance(keywords, list):
                 keywords = []
-            for keyword in ("泡袋", "茶袋", "标签", "服务", "设计", "制版", "辅料"):
-                if keyword not in keywords:
-                    keywords.append(keyword)
-            clean_value["non_stock_category_keywords"] = keywords
+            clean_value["non_stock_category_keywords"] = [
+                str(item).strip() for item in keywords if str(item or "").strip()
+            ]
+            stock_keywords = clean_value.get("stock_category_keywords")
+            if isinstance(stock_keywords, list):
+                clean_value["stock_category_keywords"] = [
+                    str(item).strip() for item in stock_keywords if str(item or "").strip()
+                ]
         now = _now()
         with self.transaction() as cursor:
             cursor.execute("SELECT setting_value FROM system_setting WHERE setting_key=%s LIMIT 1 FOR UPDATE", (key,))
@@ -4593,6 +4949,9 @@ class NativeDBClient:
                 """,
                 (key, old_value, encoded, operator_user_id, now),
             )
+            if key == "inventory_rules":
+                self._apply_inventory_rule_keywords_to_categories(cursor, clean_value)
+                self._sync_inventory_policy_categories(cursor)
         return self.system_setting(key)
 
     def _sku_sequence_usage(self, cursor, row: dict) -> dict:
@@ -4659,7 +5018,7 @@ class NativeDBClient:
                     "id": int(log.get("id") or 0),
                     "old_code": self._sequence_code(log.get("old_prefix") or "SJ", log.get("old_next_number") or 1, log.get("old_pad_width") or 4),
                     "new_code": self._sequence_code(log.get("new_prefix") or "SJ", log.get("new_next_number") or 1, log.get("new_pad_width") or 4),
-                    "note": log.get("note") or "",
+                    "note": _clean_number_sequence_note(log.get("note")),
                     "operator_user_id": log.get("changed_by_user_id"),
                     "created_at": str(log.get("created_at") or ""),
                 })
@@ -4705,7 +5064,7 @@ class NativeDBClient:
             "used_min_code": usage["used_min_code"],
             "used_max_code": usage["used_max_code"],
             "total_sku_count": int(total_row.get("total") or 0),
-            "note": row.get("note") or "",
+            "note": _clean_number_sequence_note(row.get("note")),
             "updated_at": str(row.get("updated_at") or ""),
             "change_logs": change_logs,
             "recode_batches": recode_batches,
@@ -4754,7 +5113,7 @@ class NativeDBClient:
                 pad_width = max(1, min(int(raw_pad_width), 10))
             except (TypeError, ValueError):
                 pass
-        note = str(payload.get("note") or "").strip()[:255]
+        note = _clean_number_sequence_note(payload.get("note"))[:255]
         skipped_numbers = sorted(self._sequence_skip_numbers(payload.get("skipped_numbers") or payload.get("skip_numbers") or ""))
         skipped_json = _json_dumps(skipped_numbers)
         operator_user_id = self._operator_user_id(operator_user_id)

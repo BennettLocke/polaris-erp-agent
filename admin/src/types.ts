@@ -41,6 +41,73 @@ export type RecentWorkflow = {
   status_text?: string;
 };
 
+export type ProcessOrderRaw = {
+  id: number;
+  order_id?: number;
+  workflow_no?: string;
+  customer_name?: string;
+  customer_phone?: string;
+  goods_name?: string;
+  goods_color?: string;
+  color?: string;
+  order_quantity?: string | number;
+  is_screen_print?: number | boolean;
+  is_screen_print_text?: string;
+  is_made?: number | boolean;
+  is_delivered?: number | boolean;
+  order_type?: number | string;
+  status?: string;
+  status_text?: string;
+  order_time_text?: string;
+  complete_time_text?: string;
+  order_images?: string[] | string | null;
+  remark?: string;
+  created_by_user_id?: number | null;
+  created_by_name?: string;
+};
+
+export type ProcessOrder = {
+  id: number;
+  raw: ProcessOrderRaw;
+  customerName: string;
+  customerPhone: string;
+  goodsName: string;
+  color: string;
+  quantity: number;
+  screenPrint: boolean;
+  made: boolean;
+  delivered: boolean;
+  completed: boolean;
+  statusText: string;
+  orderTimeText: string;
+  completeTimeText: string;
+  imageUrls: string[];
+  creatorName: string;
+  remark: string;
+};
+
+export type ProcessOrderListResult = ListResult<ProcessOrderRaw> & {
+  filter?: string;
+};
+
+export type ProcessOrderPayload = {
+  order_id?: number;
+  customer_name: string;
+  customer_phone?: string;
+  goods_name: string;
+  color?: string;
+  order_quantity?: number | string;
+  is_screen_print?: number | boolean;
+  order_type?: number;
+  order_images?: string[];
+  remark?: string;
+};
+
+export type ProcessOrderStatusPayload = {
+  field: "is_made" | "is_delivered" | "order_type";
+  value: number;
+};
+
 export type CustomerItem = {
   id: number;
   customer_id?: number;
@@ -408,12 +475,29 @@ export type SalesOrderResult = {
 
 export type ProductCategory = {
   id?: number;
+  pid?: number;
+  parent_id?: number;
+  code?: string;
   name: string;
   product_type?: string;
   inventory_policy?: string;
   icon?: string;
   icon_active?: string;
+  sort_order?: number;
+  is_enabled?: number;
   total?: number;
+};
+
+export type ProductCategorySavePayload = {
+  id?: number;
+  parent_id?: number;
+  pid?: number;
+  code?: string;
+  name: string;
+  product_type?: string;
+  inventory_policy?: string;
+  sort_order?: number;
+  is_enabled?: number;
 };
 
 export type ProductUnit = {
@@ -431,6 +515,130 @@ export type Warehouse = {
   type?: string;
   is_default_sales?: number;
   is_default_inbound?: number;
+};
+
+export type InventoryBalance = {
+  id?: number;
+  sku_id?: number;
+  product_id?: number;
+  spu_id?: number;
+  sku_no?: string;
+  title?: string;
+  name?: string;
+  color?: string;
+  spec?: string;
+  warehouse_id?: number;
+  warehouse_name?: string;
+  unit_id?: number;
+  unit_name?: string;
+  quantity?: string | number;
+  inventory?: string | number;
+  stock?: string | number;
+  available_qty?: string | number;
+  reserved_qty?: string | number;
+  is_stock_item?: number;
+  last_ledger_at?: string;
+  last_biz_type?: string;
+  simple_desc?: string;
+};
+
+export type InventorySummary = {
+  total_sku?: number;
+  in_stock?: number;
+  zero_stock?: number;
+  negative_stock?: number;
+  warehouse_id?: number;
+};
+
+export type InventoryBalanceResult = ListResult<InventoryBalance> & {
+  summary?: InventorySummary;
+};
+
+export type InventoryLedgerItem = {
+  id: number;
+  ledger_no?: string;
+  sku_id?: number;
+  sku_no_snapshot?: string;
+  title?: string;
+  color?: string;
+  warehouse_id?: number;
+  warehouse_name?: string;
+  unit_id?: number;
+  unit_name?: string;
+  change_qty?: string | number;
+  before_qty?: string | number;
+  after_qty?: string | number;
+  biz_type?: string;
+  biz_id?: number;
+  counterparty_warehouse_id?: number;
+  operator_name?: string;
+  operator_username?: string;
+  note?: string;
+  occurred_at?: string;
+};
+
+export type StockDocumentItem = {
+  id: number;
+  doc_no?: string;
+  doc_type?: string;
+  direction?: string;
+  warehouse_id?: number;
+  warehouse_name?: string;
+  status?: string;
+  total_quantity?: string | number;
+  note?: string;
+  created_by_name?: string;
+  created_by_username?: string;
+  created_at?: string;
+  confirmed_at?: string;
+};
+
+export type StocktakeItem = {
+  id: number;
+  stocktake_no?: string;
+  warehouse_id?: number;
+  warehouse_name?: string;
+  status?: string;
+  total_diff_qty?: string | number;
+  note?: string;
+  created_by_name?: string;
+  created_by_username?: string;
+  created_at?: string;
+  confirmed_at?: string;
+};
+
+export type TransferItem = {
+  id: number;
+  transfer_no?: string;
+  from_warehouse_id?: number;
+  from_warehouse_name?: string;
+  to_warehouse_id?: number;
+  to_warehouse_name?: string;
+  status?: string;
+  total_quantity?: string | number;
+  note?: string;
+  created_by_name?: string;
+  created_by_username?: string;
+  created_at?: string;
+  confirmed_at?: string;
+};
+
+export type InventoryActionPayload = {
+  product_id: number;
+  sku_id?: number;
+  unit_id?: number;
+  warehouse_id?: number;
+  out_warehouse_id?: number;
+  enter_warehouse_id?: number;
+  quantity: string | number;
+  note?: string;
+};
+
+export type InventoryActionResult = {
+  id?: number;
+  doc_no?: string;
+  transfer_no?: string;
+  stocktake_no?: string;
 };
 
 export type MediaSummary = {

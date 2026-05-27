@@ -475,6 +475,52 @@ class AuthService(BusinessService):
         _TOKEN_CACHE[token] = (time.time() + _TOKEN_CACHE_TTL, user)
         return {"code": 0, "data": {"token": token, "user": user}}
 
+    def change_native_password(self, *, user_id: int, old_password: str = "", new_password: str = "") -> dict:
+        user_id = int(user_id or 0)
+        old_password = str(old_password or "")
+        new_password = str(new_password or "")
+        if not user_id:
+            return {"code": 401, "msg": "请先登录账号", "_http_status": 401}
+        if len(new_password) < 6:
+            return {"code": 400, "msg": "新密码至少 6 位", "_http_status": 400}
+        user_row = self.user_by_id(user_id)
+        if not user_row:
+            return {"code": 401, "msg": "登录已失效，请重新登录", "_http_status": 401}
+        password_hash = user_row.get("password_hash") or ""
+        if password_hash and not check_password_hash(password_hash, old_password):
+            return {"code": 401, "msg": "当前密码不正确", "_http_status": 401}
+        affected = self.db.execute(
+            "UPDATE auth_user SET password_hash=%s, updated_at=NOW() WHERE id=%s",
+            (generate_password_hash(new_password), user_id),
+        )
+        _TOKEN_CACHE.clear()
+        return {"code": 0, "data": {"affected": affected}}
+
+    def update_native_profile(self, *, user_id: int, display_name: str = "", token: str = "") -> dict:
+        user_id = int(user_id or 0)
+        display_name = str(display_name or "").strip()
+        if not user_id:
+            return {"code": 401, "msg": "Please login first", "_http_status": 401}
+        if not display_name:
+            return {"code": 400, "msg": "Username cannot be empty", "_http_status": 400}
+        if len(display_name) > 80:
+            display_name = display_name[:80]
+
+        result = self.db.update_user(user_id, display_name=display_name)
+        if int(result.get("code") or 0) != 0:
+            return {**result, "_http_status": 400}
+
+        row = self.user_by_id(user_id)
+        if not row:
+            _TOKEN_CACHE.pop(token, None)
+            return {"code": 401, "msg": "Login expired, please login again", "_http_status": 401}
+        user = self.user_public(row, token=token)
+        if token:
+            _TOKEN_CACHE[token] = (time.time() + _TOKEN_CACHE_TTL, user)
+        else:
+            _TOKEN_CACHE.clear()
+        return {"code": 0, "data": {"user": user, "affected": (result.get("data") or {}).get("affected", 0)}}
+
     def wechat_session_from_code(self, authcode: str, appid: str) -> dict:
         secret = os.environ.get("WECHAT_MINIAPP_SECRET") or os.environ.get("WX_MINIAPP_SECRET") or ""
         if not appid or not secret:

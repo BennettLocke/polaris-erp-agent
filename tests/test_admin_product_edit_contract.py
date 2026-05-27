@@ -12,11 +12,15 @@ class AdminProductEditContractTest(unittest.TestCase):
         product_source = (
             ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
         ).read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
         picker_source = product_source.split("function ImageAssetPickerDialog", 1)[1].split(
             "function ProductEditorDialog", 1
         )[0]
         editor_source = product_source.split("function ProductEditorDialog", 1)[1].split(
             "function ProductToolbar", 1
+        )[0]
+        crop_source = product_source.split("function SquareImageCropDialog", 1)[1].split(
+            "function ProductEditorDialog", 1
         )[0]
         type_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
         style_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
@@ -29,6 +33,8 @@ class AdminProductEditContractTest(unittest.TestCase):
         self.assertIn("/api/product/save", api_source)
         self.assertIn("uploadProductImage", api_source)
         self.assertIn("/api/product/upload", api_source)
+        self.assertIn("cropProductImageSquare", api_source)
+        self.assertIn("/api/product/crop-square", api_source)
 
         self.assertIn("ProductEditorDialog", product_source)
         self.assertIn("ImageAssetPickerDialog", product_source)
@@ -48,15 +54,35 @@ class AdminProductEditContractTest(unittest.TestCase):
         self.assertIn("display: block;", style_source)
         self.assertIn("SquareImageCropDialog", product_source)
         self.assertIn("ImageCropTarget", product_source)
+        self.assertIn("SquareCropResult", product_source)
         self.assertIn("pendingSquareCrop", editor_source)
         self.assertIn('pickerTarget.type !== "detail"', editor_source)
         self.assertIn("confirmSquareCrop", editor_source)
+        self.assertIn("cropProductImageSquare", editor_source)
+        self.assertIn("ApiError", product_source)
+        self.assertIn("后台裁切接口还没生效", editor_source)
+        self.assertIn("err instanceof ApiError && err.status === 404", editor_source)
+        self.assertIn("sourceUrl", product_source)
         self.assertIn("canvas.toBlob", product_source)
         self.assertIn("onPointerDown", product_source)
         self.assertIn("onPointerMove", product_source)
+        self.assertIn("zoomCropWithWheel", crop_source)
+        self.assertIn("onWheel={zoomCropWithWheel}", crop_source)
+        self.assertIn("event.preventDefault()", crop_source)
+        self.assertIn("offsetRef", crop_source)
+        self.assertIn("zoomRef", crop_source)
+        self.assertNotIn('type="range"', crop_source)
+        self.assertNotIn("square-crop-controls", crop_source)
         self.assertIn("square-crop-stage", product_source)
         self.assertIn(".square-crop-dialog", style_source)
         self.assertIn(".square-crop-stage", style_source)
+        self.assertNotIn(".square-crop-controls", style_source)
+        self.assertIn('re.compile(r"^/api/product/crop-square$")', http_source)
+        self.assertIn('@app.route("/api/product/crop-square"', http_source)
+        self.assertIn("def product_crop_square_api", http_source)
+        self.assertIn("Image.open", http_source)
+        self.assertIn("Image.Resampling.LANCZOS", http_source)
+        self.assertIn("source_size", http_source)
         self.assertIn("未绑定", product_source)
         self.assertIn("本产品图片", product_source)
         self.assertIn("全部图片", product_source)

@@ -16,6 +16,18 @@ class AuthApiContractTests(unittest.TestCase):
         self.assertIn('body.get("phoneCode")', HTTP_API_SOURCE)
         self.assertIn("phone_code=phone_code", HTTP_API_SOURCE)
 
+    def test_native_auth_exposes_change_password_route(self):
+        self.assertIn('@app.route("/api/auth/change-password", methods=["POST"])', HTTP_API_SOURCE)
+        self.assertIn("change_native_password", HTTP_API_SOURCE)
+        self.assertIn('body.get("old_password")', HTTP_API_SOURCE)
+        self.assertIn('body.get("new_password")', HTTP_API_SOURCE)
+
+    def test_native_auth_me_post_updates_display_username(self):
+        self.assertIn('@app.route("/api/auth/me", methods=["GET", "POST"])', HTTP_API_SOURCE)
+        self.assertIn('request.method == "POST"', HTTP_API_SOURCE)
+        self.assertIn("update_native_profile", HTTP_API_SOURCE)
+        self.assertIn('body.get("display_name")', HTTP_API_SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()
