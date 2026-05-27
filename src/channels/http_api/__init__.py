@@ -4515,6 +4515,43 @@ def auth_login():
         return jsonify({"code": 500, "msg": f"北极星登录异常: {e}"}), 500
 
 
+@app.route("/api/auth/register", methods=["POST"])
+def auth_register():
+    """Register a native mini-program customer account and return a session token."""
+    body = request.get_json(silent=True) or request.form.to_dict() or {}
+    account = (
+        body.get("account")
+        or body.get("accounts")
+        or body.get("username")
+        or body.get("mobile")
+        or body.get("phone")
+        or body.get("email")
+        or ""
+    ).strip()
+    password = body.get("pwd") or body.get("password") or ""
+    display_name = (
+        body.get("display_name")
+        or body.get("displayName")
+        or body.get("nickname")
+        or body.get("name")
+        or account
+    )
+    try:
+        client_type = (body.get("client_type") or request.headers.get("X-SJ-Client") or "miniapp").strip()
+        result = get_auth_service().native_register(
+            account=account,
+            password=password,
+            display_name=display_name,
+            client_type=client_type,
+            ip=request.headers.get("X-Forwarded-For") or request.remote_addr or "",
+            user_agent=request.headers.get("User-Agent") or "",
+        )
+        return _json_service_result(result)
+    except Exception as e:
+        logger.error(f"北极星注册异常: {e}")
+        return jsonify({"code": 500, "msg": f"北极星注册异常: {e}"}), 500
+
+
 @app.route("/api/auth/wechat-quick-login", methods=["POST"])
 def auth_wechat_quick_login():
     """Login through native WeChat identity binding."""

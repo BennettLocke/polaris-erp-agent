@@ -420,6 +420,30 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(rejected["data"]["affected"], 1)
         self.assertGreaterEqual(len(users["data"]["items"]), 2)
 
+    def test_auth_service_native_register_creates_customer_session(self):
+        db = FakeDB()
+        service = AuthService(db=db)
+
+        result = service.native_register(
+            account="18800138000",
+            password="secret123",
+            display_name="微信昵称",
+            client_type="miniapp",
+        )
+
+        user = result["data"]["user"]
+        self.assertEqual(result["code"], 0)
+        self.assertTrue(result["data"]["token"].startswith("sj_"))
+        self.assertEqual(user["username"], "18800138000")
+        self.assertEqual(user["role"], "customer")
+        self.assertEqual(user["linked_party_id"], 55)
+        self.assertTrue(any(
+            call[0] == "query"
+            and "FROM party" in call[1]["sql"]
+            and call[1]["params"] == ("18800138000", "18800138000")
+            for call in db.calls
+        ))
+
     def test_auth_service_token_verification(self):
         db = FakeDB()
         service = AuthService(db=db)

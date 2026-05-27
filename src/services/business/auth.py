@@ -482,6 +482,81 @@ class AuthService(BusinessService):
         _TOKEN_CACHE[token] = (time.time() + _TOKEN_CACHE_TTL, user)
         return {"code": 0, "data": {"token": token, "user": user}}
 
+    def native_register(
+        self,
+        *,
+        account: str,
+        password: str,
+        display_name: str = "",
+        client_type: str = "miniapp",
+        ip: str = "",
+        user_agent: str = "",
+    ) -> dict:
+        account = str(account or "").strip()
+        password = str(password or "")
+        display_name = str(display_name or account).strip()
+        if not account:
+            return {"code": 400, "msg": "请输入手机号或账号", "_http_status": 400}
+        if len(account) > 80:
+            return {"code": 400, "msg": "账号不能超过 80 位", "_http_status": 400}
+        if len(password) < 6:
+            return {"code": 400, "msg": "密码至少 6 位", "_http_status": 400}
+        if not display_name:
+            display_name = account
+        if self.user_by_account(account):
+            return {"code": 409, "msg": "账号已存在，请直接登录", "_http_status": 409}
+
+        phone = phone_digits(account)
+        linked_party_id = self.find_party_id_by_phone(phone) if phone else None
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        affected = self.db.execute(
+            """
+            INSERT INTO auth_user
+                (username, password_hash, display_name, phone, role, linked_party_id,
+                 approval_status, is_active, is_admin, last_login_at, created_at, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                account,
+                generate_password_hash(password),
+                display_name[:80],
+                phone or None,
+                "customer",
+                linked_party_id,
+                "approved",
+                1,
+                0,
+                now,
+                now,
+                now,
+            ),
+        )
+        if affected != 1:
+            return {"code": 500, "msg": "注册失败，请稍后重试", "_http_status": 500}
+
+        user_row = self.user_by_account(account)
+        user_id = int((user_row or {}).get("id") or 0)
+        if not user_id:
+            return {"code": 500, "msg": "注册后未找到账号，请稍后重试", "_http_status": 500}
+        if phone:
+            self.db.execute(
+                """
+                INSERT INTO auth_identity
+                    (user_id, provider, external_user_id, is_enabled, created_at, updated_at)
+                VALUES (%s,'phone',%s,1,%s,%s)
+                ON DUPLICATE KEY UPDATE
+                    user_id=VALUES(user_id),
+                    is_enabled=1,
+                    updated_at=VALUES(updated_at)
+                """,
+                (user_id, phone, now, now),
+            )
+        token = self.issue_session(user_id, client_type=client_type, ip=ip, user_agent=user_agent)
+        user_row = self.user_by_id(user_id) or user_row
+        user = self.user_public(user_row, token=token)
+        _TOKEN_CACHE[token] = (time.time() + _TOKEN_CACHE_TTL, user)
+        return {"code": 0, "data": {"token": token, "user": user}}
+
     def change_native_password(self, *, user_id: int, old_password: str = "", new_password: str = "") -> dict:
         user_id = int(user_id or 0)
         old_password = str(old_password or "")

@@ -22,6 +22,12 @@ class AuthApiContractTests(unittest.TestCase):
         self.assertIn('body.get("old_password")', HTTP_API_SOURCE)
         self.assertIn('body.get("new_password")', HTTP_API_SOURCE)
 
+    def test_native_auth_exposes_register_route(self):
+        self.assertIn('@app.route("/api/auth/register", methods=["POST"])', HTTP_API_SOURCE)
+        self.assertIn("native_register", HTTP_API_SOURCE)
+        self.assertIn('body.get("display_name")', HTTP_API_SOURCE)
+        self.assertIn('body.get("client_type")', HTTP_API_SOURCE)
+
     def test_native_auth_me_post_updates_display_username(self):
         self.assertIn('@app.route("/api/auth/me", methods=["GET", "POST"])', HTTP_API_SOURCE)
         self.assertIn('request.method == "POST"', HTTP_API_SOURCE)
