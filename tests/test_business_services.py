@@ -313,6 +313,24 @@ class FakeDB:
             return [{"id": int(params[0]), "document_id": 123, "sales_no": "S1"}]
         if "FROM workflow_order" in sql and "COUNT" in sql:
             return [{"count": 5}]
+        if "FROM workflow_order" in sql and "customer_id=%s" in sql:
+            return [
+                {
+                    "id": 456,
+                    "workflow_no": "WF20260527001",
+                    "customer_name_snapshot": "Qiwei Tea",
+                    "goods_name_snapshot": "Jincheng half gift box",
+                    "color_snapshot": "red",
+                    "quantity": "120.000",
+                    "order_image_urls": '["https://img.example.test/design.jpg"]',
+                    "is_screen_print": 1,
+                    "is_made": 1,
+                    "is_delivered": 0,
+                    "status": "pending",
+                    "created_at": "2026-05-27 10:30:00",
+                    "updated_at": "2026-05-27 11:00:00",
+                }
+            ]
         return []
 
     def execute(self, sql: str, params=()) -> int:
@@ -362,6 +380,20 @@ class FakeDB:
     def customer_balance_adjust(self, customer_id: int, **kwargs) -> dict:
         self.calls.append(("customer_balance_adjust", {"customer_id": customer_id, **kwargs}))
         return {"code": 0}
+
+    def customer_balance_ledger(self, customer_id: int, page: int = 1, page_size: int = 100):
+        self.calls.append(("customer_balance_ledger", {"customer_id": customer_id, "page": page, "page_size": page_size}))
+        return (
+            [{"id": 901, "created_at": "2026-05-27 10:00:00", "balance_delta": "-455.00"}],
+            1,
+            {
+                "customer_id": customer_id,
+                "customer_name": "Qiwei Tea",
+                "wallet_amount": "0.00",
+                "debt_amount": "455.00",
+                "balance_amount": "-455.00",
+            },
+        )
 
     def users(self, **kwargs):
         self.calls.append(("users", kwargs))
@@ -918,6 +950,38 @@ class BusinessServiceTests(unittest.TestCase):
             [call[0] for call in db.calls],
             ["system_setting", "product_list", "workflow_orders", "sales_cards"],
         )
+
+    def test_miniapp_service_returns_bound_customer_summary(self):
+        db = FakeDB()
+        db.auth_users[1]["linked_party_id"] = 55
+        db.auth_users[1]["linked_party_name"] = "Qiwei Tea"
+        service = MiniAppService(db=db)
+
+        payload = service.customer_summary(db.auth_users[1])
+
+        self.assertTrue(payload["bound"])
+        self.assertEqual(payload["customer"]["id"], 55)
+        self.assertEqual(payload["customer"]["name"], "Qiwei Tea")
+        self.assertEqual(payload["balance"]["status_key"], "debt")
+        self.assertEqual(payload["balance"]["display_amount"], "¥455.00")
+        self.assertEqual(payload["recent"][0]["order_no"], "WF20260527001")
+        self.assertEqual(payload["recent"][0]["status_key"], "pending_delivery")
+        self.assertEqual(payload["recent"][0]["quantity_text"], "120 套")
+        self.assertEqual(payload["recent"][0]["image"], "https://img.example.test/design.jpg")
+        self.assertEqual(
+            [call[0] for call in db.calls],
+            ["customer_balance_ledger", "query"],
+        )
+
+    def test_miniapp_service_returns_empty_customer_summary_for_unbound_user(self):
+        service = MiniAppService(db=FakeDB())
+
+        payload = service.customer_summary({"id": 1, "linked_party_id": None})
+
+        self.assertFalse(payload["bound"])
+        self.assertIsNone(payload["customer"])
+        self.assertIsNone(payload["balance"])
+        self.assertEqual(payload["recent"], [])
 
     def test_miniapp_service_exposes_database_backed_config(self):
         db = FakeDB()

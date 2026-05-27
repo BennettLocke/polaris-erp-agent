@@ -34,6 +34,12 @@ class AuthApiContractTests(unittest.TestCase):
         self.assertIn("update_native_profile", HTTP_API_SOURCE)
         self.assertIn('body.get("display_name")', HTTP_API_SOURCE)
 
+    def test_miniapp_customer_summary_requires_current_native_user(self):
+        self.assertIn('@app.route("/api/mini/customer/summary", methods=["GET"])', HTTP_API_SOURCE)
+        self.assertIn("mini_customer_summary_api", HTTP_API_SOURCE)
+        self.assertIn("_mini_request_user()", HTTP_API_SOURCE)
+        self.assertIn("customer_summary(user)", HTTP_API_SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

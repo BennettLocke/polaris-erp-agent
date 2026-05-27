@@ -8,10 +8,12 @@ payment side effects.
 from __future__ import annotations
 
 import json
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import quote
 
 from .base import BusinessService
+from .customers import CustomerBalanceService
 from .products import ProductService
 
 DEFAULT_HERO_IMAGE = "https://img.513sjbz.com/static/upload/images/app_nav/2026/04/25/1777104334795209.jpg"
@@ -376,6 +378,154 @@ class MiniAppService(BusinessService):
             listed_only=True,
         )
         return items if isinstance(items, list) else []
+
+    def _decimal(self, value) -> Decimal:
+        try:
+            return Decimal(str(value or "0").replace(",", "").strip() or "0")
+        except (InvalidOperation, ValueError):
+            return Decimal("0")
+
+    def _money_text(self, value: Decimal) -> str:
+        amount = value.copy_abs().quantize(Decimal("0.01"))
+        return f"¥{amount}"
+
+    def _balance_payload(self, summary: dict | None, latest_at: str = "") -> dict:
+        data = summary if isinstance(summary, dict) else {}
+        amount = self._decimal(data.get("balance_amount"))
+        if amount < 0:
+            status_key = "debt"
+            status_text = "欠款"
+        elif amount > 0:
+            status_key = "credit"
+            status_text = "预存"
+        else:
+            status_key = "settled"
+            status_text = "已结清"
+        return {
+            "amount": str(amount.quantize(Decimal("0.01"))),
+            "display_amount": self._money_text(amount),
+            "status_key": status_key,
+            "status_text": status_text,
+            "wallet_amount": str(self._decimal(data.get("wallet_amount")).quantize(Decimal("0.01"))),
+            "debt_amount": str(self._decimal(data.get("debt_amount")).quantize(Decimal("0.01"))),
+            "updated_at": latest_at,
+        }
+
+    def _workflow_order_images(self, value) -> list[str]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item or "").strip()]
+        text = str(value or "").strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item or "").strip()]
+            if isinstance(parsed, str) and parsed.strip():
+                return [parsed.strip()]
+        except Exception:
+            pass
+        return [part.strip() for part in text.split(",") if part.strip()]
+
+    def _workflow_status(self, item: dict) -> tuple[str, str]:
+        if int(item.get("is_delivered") or 0) == 1 or str(item.get("status") or "").strip() == "completed":
+            return "completed", "已完成"
+        if int(item.get("is_made") or 0) == 1:
+            return "pending_delivery", "待配送"
+        return "pending_make", "待制作"
+
+    def _quantity_text(self, value) -> str:
+        amount = self._decimal(value)
+        if amount == amount.to_integral_value():
+            number = str(int(amount))
+        else:
+            number = f"{amount:.2f}".rstrip("0").rstrip(".")
+        return f"{number} 套" if number else ""
+
+    def _date_text(self, value) -> str:
+        text = str(value or "").strip()
+        if len(text) >= 16:
+            return text[:16]
+        return text
+
+    def _recent_workflow_orders(self, customer_id: int, limit: int = 3) -> list[dict]:
+        rows = self.db.query(
+            """
+            SELECT id, workflow_no, customer_name_snapshot, goods_name_snapshot,
+                   color_snapshot, quantity, order_image_urls, is_screen_print,
+                   is_made, is_delivered, status, created_at, updated_at
+            FROM workflow_order
+            WHERE deleted_at IS NULL AND customer_id=%s
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+            """,
+            (int(customer_id), int(limit)),
+        )
+        items: list[dict] = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            images = self._workflow_order_images(row.get("order_image_urls"))
+            status_key, status_text = self._workflow_status(row)
+            items.append({
+                "id": row.get("id"),
+                "order_no": str(row.get("workflow_no") or row.get("id") or "").strip(),
+                "customer_name": str(row.get("customer_name_snapshot") or "").strip(),
+                "product_name": str(row.get("goods_name_snapshot") or "").strip(),
+                "color": str(row.get("color_snapshot") or "").strip(),
+                "quantity": str(row.get("quantity") or "").strip(),
+                "quantity_text": self._quantity_text(row.get("quantity")),
+                "is_screen_print": bool(int(row.get("is_screen_print") or 0)),
+                "status_key": status_key,
+                "status_text": status_text,
+                "time": self._date_text(row.get("created_at")),
+                "updated_at": self._date_text(row.get("updated_at")),
+                "images": images,
+                "image": images[0] if images else "",
+            })
+        return items
+
+    def customer_summary(self, user: dict | None = None) -> dict:
+        user_data = user if isinstance(user, dict) else {}
+        try:
+            customer_id = int(user_data.get("linked_party_id") or 0)
+        except Exception:
+            customer_id = 0
+        if customer_id <= 0:
+            return {
+                "bound": False,
+                "customer": None,
+                "balance": None,
+                "recent": [],
+                "source": "sjagent_core",
+            }
+
+        rows, _total, summary = CustomerBalanceService(db=self.db).ledger(
+            customer_id,
+            page=1,
+            page_size=1,
+        )
+        latest_at = ""
+        if rows and isinstance(rows[0], dict):
+            latest_at = self._date_text(rows[0].get("created_at"))
+        customer_name = str(
+            user_data.get("linked_party_name")
+            or (summary or {}).get("customer_name")
+            or user_data.get("customer_name")
+            or ""
+        ).strip()
+        return {
+            "bound": True,
+            "customer": {
+                "id": customer_id,
+                "name": customer_name,
+            },
+            "balance": self._balance_payload(summary, latest_at=latest_at),
+            "recent": self._recent_workflow_orders(customer_id, limit=3),
+            "source": "sjagent_core",
+        }
 
     def user_center_payload(self, user: dict | None = None) -> dict:
         workflow_total = 0

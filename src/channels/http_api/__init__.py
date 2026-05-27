@@ -3263,6 +3263,19 @@ def mini_user_center_api():
     return jsonify({"code": 0, "data": get_miniapp_service().user_center_payload(user=user)})
 
 
+@app.route("/api/mini/customer/summary", methods=["GET"])
+def mini_customer_summary_api():
+    """Bound customer balance and recent workflow orders for the mini-program My page."""
+    user = _mini_request_user()
+    if not user:
+        return jsonify({"code": 401, "msg": "请先登录账号"}), 401
+    try:
+        return jsonify({"code": 0, "data": _safe_json(get_miniapp_service().customer_summary(user))})
+    except Exception as e:
+        logger.error(f"mini customer summary failed: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/mini/cart/empty", methods=["GET", "POST"])
 def mini_cart_empty_api():
     """Compatibility endpoint for removed cart reads."""
