@@ -5415,7 +5415,7 @@ class NativeDBClient:
         orientation = template.get("orientation") or "landscape"
         font_size = int(template.get("font_size") or 12)
         page_rule = "80mm auto" if paper_size == "80mm" else f"{paper_size} {orientation}"
-        page_margin = "4mm" if paper_size == "80mm" else "12mm"
+        page_margin = "4mm" if paper_size == "80mm" else "6mm"
         thermal_class = " thermal" if paper_size == "80mm" else ""
         sheet_width_map = {
             ("A4", "portrait"): "210mm",
@@ -5520,7 +5520,7 @@ class NativeDBClient:
     @media print {{
       body {{ background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
       .print-actions {{ display: none; }}
-      .sheet {{ width: auto; margin: 0; padding: 0; box-shadow: none; }}
+      .sheet:not(.thermal) {{ width: auto; margin: 0; padding: 6mm 8mm; box-shadow: none; }}
       .print-table, .print-table th, .print-table td {{ border-color: #111827 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     }}
   </style>

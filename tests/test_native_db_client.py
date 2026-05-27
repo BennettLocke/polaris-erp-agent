@@ -127,6 +127,43 @@ class NativeDBClientSmokeTest(unittest.TestCase):
         self.assertNotIn('class="print-actions"', html)
         self.assertNotIn('onclick="window.print()"', html)
 
+    def test_sales_print_html_keeps_inner_print_padding_to_avoid_edge_clipping(self):
+        client = get_native_db_client()
+        original_ensure = client._ensure_print_tables
+        original_sales_print_data = client.sales_print_data
+        client._ensure_print_tables = lambda: None
+        client.sales_print_data = lambda sales_id: {
+            "code": 0,
+            "data": {
+                "order": {
+                    "sales_no": "SO-DEMO",
+                    "customer_name": "测试客户",
+                    "created_at": "2026-05-27 15:30:00",
+                    "total_quantity": 1,
+                    "receivable_amount": 1,
+                    "products": [
+                        {"title": "测试商品", "spec": "蓝色", "quantity": "1", "price": "1.00", "total_price": "1.00"},
+                    ],
+                },
+                "template": {
+                    "paper_size": "A5",
+                    "orientation": "landscape",
+                    "font_size": 12,
+                    "show_note": 0,
+                    "header_text": "肆计包装·设计销售单",
+                },
+            },
+        }
+        try:
+            html = client.sales_print_html(1, auto_print=False, show_actions=False)
+        finally:
+            client._ensure_print_tables = original_ensure
+            client.sales_print_data = original_sales_print_data
+
+        self.assertIn("@page { size: A5 landscape; margin: 6mm; }", html)
+        self.assertIn(".sheet:not(.thermal) { width: auto; margin: 0; padding: 6mm 8mm;", html)
+        self.assertNotIn(".sheet { width: auto; margin: 0; padding: 0;", html)
+
 
 if __name__ == "__main__":
     unittest.main()
