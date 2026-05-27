@@ -34,6 +34,13 @@ class AuthApiContractTests(unittest.TestCase):
         self.assertIn("update_native_profile", HTTP_API_SOURCE)
         self.assertIn('body.get("display_name")', HTTP_API_SOURCE)
 
+    def test_native_auth_exposes_bind_phone_route(self):
+        self.assertIn('@app.route("/api/auth/bind-phone", methods=["POST"])', HTTP_API_SOURCE)
+        self.assertIn('body.get("phone_code")', HTTP_API_SOURCE)
+        self.assertIn('body.get("phoneCode")', HTTP_API_SOURCE)
+        self.assertIn("bind_native_phone", HTTP_API_SOURCE)
+        self.assertIn("verify_token", HTTP_API_SOURCE)
+
     def test_miniapp_customer_summary_requires_current_native_user(self):
         self.assertIn('@app.route("/api/mini/customer/summary", methods=["GET"])', HTTP_API_SOURCE)
         self.assertIn("mini_customer_summary_api", HTTP_API_SOURCE)

@@ -622,6 +622,38 @@ class AuthService(BusinessService):
             _TOKEN_CACHE.clear()
         return {"code": 0, "data": {"user": user, "affected": (result.get("data") or {}).get("affected", 0)}}
 
+    def bind_native_phone(self, *, user_id: int, phone_code: str = "", appid: str = "", token: str = "") -> dict:
+        user_id = int(user_id or 0)
+        phone_code = str(phone_code or "").strip()
+        if not user_id:
+            return {"code": 401, "msg": "Please login first", "_http_status": 401}
+        if not phone_code:
+            return {"code": 400, "msg": "缺少微信手机号 code", "_http_status": 400}
+        phone_result = self.wechat_phone_from_code(phone_code, appid)
+        if int(phone_result.get("code", -1)) != 0:
+            return {**phone_result, "_http_status": int(phone_result.get("_http_status") or 400)}
+        phone = normalized_phone((phone_result.get("data") or {}).get("phone"))
+        if not phone:
+            return {"code": 500, "msg": "微信手机号返回为空", "_http_status": 500}
+
+        from .identity import IdentityLinkService
+
+        link_result = IdentityLinkService(db=self.db).sync_user_phone(user_id, phone, operator_user_id=user_id)
+        if int(link_result.get("code") or 0) != 0:
+            return {**link_result, "_http_status": int(link_result.get("_http_status") or 400)}
+
+        row = self.user_by_id(user_id)
+        if not row:
+            _TOKEN_CACHE.pop(token, None)
+            return {"code": 401, "msg": "Login expired, please login again", "_http_status": 401}
+        row["phone"] = phone
+        user = self.user_public(row, token=token)
+        if token:
+            _TOKEN_CACHE[token] = (time.time() + _TOKEN_CACHE_TTL, user)
+        else:
+            _TOKEN_CACHE.clear()
+        return {"code": 0, "data": {"phone": phone, "bind": link_result.get("data") or {}, "user": user}}
+
     def wechat_session_from_code(self, authcode: str, appid: str) -> dict:
         secret = os.environ.get("WECHAT_MINIAPP_SECRET") or os.environ.get("WX_MINIAPP_SECRET") or ""
         if not appid or not secret:

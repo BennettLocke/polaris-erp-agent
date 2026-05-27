@@ -621,6 +621,41 @@ class BusinessServiceTests(unittest.TestCase):
             db.calls,
         )
 
+    def test_auth_service_bind_native_phone_exchanges_phone_code_for_current_user(self):
+        class PhoneCodeAuthService(AuthService):
+            def __init__(self, db):
+                super().__init__(db=db)
+                self.phone_code_calls = []
+
+            def wechat_phone_from_code(self, phone_code: str, appid: str) -> dict:
+                self.phone_code_calls.append((phone_code, appid))
+                return {
+                    "code": 0,
+                    "data": {
+                        "phone": "13800138000",
+                        "phone_info": {"purePhoneNumber": "13800138000"},
+                    },
+                }
+
+        db = FakeDB()
+        db.auth_users[1]["phone"] = None
+        service = PhoneCodeAuthService(db=db)
+
+        result = service.bind_native_phone(
+            user_id=1,
+            phone_code="phone-code",
+            appid="wx-appid",
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["data"]["phone"], "13800138000")
+        self.assertEqual(result["data"]["user"]["phone"], "13800138000")
+        self.assertEqual(service.phone_code_calls, [("phone-code", "wx-appid")])
+        self.assertIn(
+            ("identity_sync_user_phone", {"user_id": 1, "phone": "13800138000", "operator_user_id": 1}),
+            db.calls,
+        )
+
     def test_sales_service_normalizes_unit_before_create_order(self):
         db = FakeDB()
         service = SalesService(db=db)

@@ -4680,6 +4680,31 @@ def auth_change_password():
         return jsonify({"code": 500, "msg": f"账号密码设置异常: {e}"}), 500
 
 
+@app.route("/api/auth/bind-phone", methods=["POST"])
+def auth_bind_phone():
+    """Bind a WeChat-authorized phone number to the current native account."""
+    token = _auth_token_from_request()
+    if not token:
+        return jsonify({"code": 401, "msg": "请先登录账号"}), 401
+    body = request.get_json(silent=True) or request.form.to_dict() or {}
+    phone_code = (body.get("phone_code") or body.get("phoneCode") or body.get("code") or "").strip()
+    try:
+        user = get_auth_service().verify_token(token, force=True)
+        if not user:
+            return jsonify({"code": 401, "msg": "登录已失效，请重新登录"}), 401
+        miniapp_appid = body.get("appid") or os.environ.get("WECHAT_MINIAPP_APPID") or os.environ.get("WX_MINIAPP_APPID") or ""
+        result = get_auth_service().bind_native_phone(
+            user_id=int(user.get("id") or user.get("user_id") or 0),
+            phone_code=phone_code,
+            appid=miniapp_appid,
+            token=token,
+        )
+        return _json_service_result(result)
+    except Exception as e:
+        logger.error(f"手机号绑定异常: {e}")
+        return jsonify({"code": 500, "msg": f"手机号绑定异常: {e}"}), 500
+
+
 @app.route("/api/auth/captcha", methods=["GET"])
 def auth_captcha():
     """Native login does not need image captcha; keep the endpoint compatible."""
