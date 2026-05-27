@@ -104,6 +104,17 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         self.assertIn('"/api/product/categories"', api_source)
         self.assertIn("ProductCategorySavePayload", types_source)
 
+    def test_print_settings_has_print_preview_dialog(self):
+        settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
+        print_source = settings_source.split("function PrintSettingsPanel", 1)[1].split("function MiniappImageConfigTable", 1)[0]
+
+        self.assertIn("打印预览", print_source)
+        self.assertIn("latest_print_url", print_source)
+        self.assertIn("previewUrl", print_source)
+        self.assertIn("<iframe", print_source)
+        self.assertIn("DialogTitle", print_source)
+        self.assertIn("没有最近销售单时不能预览", print_source)
+
     def test_media_and_miniapp_settings_are_separate_panels(self):
         settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
         media_source = settings_source.split("function MediaSettingsPanel", 1)[1].split("function MiniappSettingsPanel", 1)[0]

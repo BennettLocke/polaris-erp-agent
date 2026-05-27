@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Boxes,
+  Eye,
   Hash,
   Image,
   Images,
@@ -1807,6 +1808,7 @@ function PrintSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
   const [print, setPrint] = useState<PrintSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -1850,12 +1852,32 @@ function PrintSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
   if (loading) return <SettingsLoading rows={3} />;
   if (!print) return <SettingsEmpty title="没有打印设置" desc="后端还没有返回销售单打印模板。" />;
 
+  const previewUrl = print.latest_print_url || (
+    print.latest_sales_id ? `/api/sales/${encodeURIComponent(String(print.latest_sales_id))}/print-html?auto=0` : ""
+  );
+  const canPreview = Boolean(previewUrl);
+
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle>销售单打印模板</CardTitle>
-          <CardDescription>这里控制销售单打印标题、纸张和字段显示。</CardDescription>
+          <div>
+            <CardTitle>销售单打印模板</CardTitle>
+            <CardDescription>这里控制销售单打印标题、纸张和字段显示。</CardDescription>
+          </div>
+          <CardAction>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canPreview}
+              title={canPreview ? "预览最近销售单" : "没有最近销售单时不能预览"}
+              onClick={() => setPreviewOpen(true)}
+            >
+              <Eye data-icon="inline-start" />
+              打印预览
+            </Button>
+          </CardAction>
         </CardHeader>
         <CardContent className="settings-stack">
           <FieldGroup className="settings-form-grid settings-form-grid--two">
@@ -1937,10 +1959,44 @@ function PrintSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
         </CardContent>
       </Card>
       <SettingsSaveBar
-        text={print.latest_sales_no ? `可预览最近销售单：${print.latest_sales_no}` : "还没有可预览的销售单"}
+        text={print.latest_sales_no ? `预览使用最近销售单：${print.latest_sales_no}，修改模板后先保存再预览。` : "还没有可预览的销售单"}
         saving={saving}
         onSave={() => void saveSalesPrintSettings()}
       />
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="settings-print-preview-dialog">
+          <DialogHeader>
+            <DialogTitle>打印预览</DialogTitle>
+            <DialogDescription>
+              {print.latest_sales_no ? `最近销售单：${print.latest_sales_no}` : "没有最近销售单时不能预览"}
+            </DialogDescription>
+          </DialogHeader>
+          {canPreview ? (
+            <iframe
+              className="settings-print-preview-frame"
+              src={previewUrl}
+              title="销售单打印预览"
+            />
+          ) : (
+            <SettingsEmpty title="暂无预览" desc="开出销售单后这里会显示最近销售单的打印预览。" />
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPreviewOpen(false)}>
+              关闭
+            </Button>
+            <Button
+              type="button"
+              disabled={!canPreview}
+              onClick={() => {
+                if (previewUrl) window.open(previewUrl, "_blank", "noopener");
+              }}
+            >
+              <Printer data-icon="inline-start" />
+              新窗口打开
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

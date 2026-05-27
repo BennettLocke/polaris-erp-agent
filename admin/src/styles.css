@@ -6468,6 +6468,18 @@ textarea,
   color: var(--sj-muted);
 }
 
+.settings-print-preview-dialog {
+  width: min(1120px, calc(100vw - 40px));
+}
+
+.settings-print-preview-frame {
+  width: 100%;
+  height: min(72vh, 760px);
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  background: var(--sj-surface);
+}
+
 .settings-miniapp-copy {
   min-width: 0;
   display: grid;
