@@ -501,6 +501,16 @@ class BusinessServiceTests(unittest.TestCase):
             for call in db.calls
         ))
 
+    def test_auth_service_user_public_hides_invalid_saved_phone(self):
+        db = FakeDB()
+        db.auth_users[1]["phone"] = "945582097"
+        service = AuthService(db=db)
+
+        user = service.user_public(db.auth_users[1])
+
+        self.assertEqual(user["phone"], "")
+        self.assertEqual(user["mobile"], "")
+
     def test_auth_service_token_verification(self):
         db = FakeDB()
         service = AuthService(db=db)

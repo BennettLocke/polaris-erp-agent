@@ -110,11 +110,12 @@ class AuthService(BusinessService):
         role = role_code(row.get("role"))
         is_admin = int(row.get("is_admin") or 0) == 1 or role == "admin"
         user_id = row.get("id") or row.get("user_id") or ""
+        public_phone = normalized_phone(row.get("phone"))
         account_display_name = (
             row.get("display_name")
             or row.get("nickname")
             or row.get("username")
-            or row.get("phone")
+            or public_phone
             or (f"用户{user_id}" if user_id else "北极星用户")
         )
         linked_party_id = row.get("linked_party_id")
@@ -131,8 +132,8 @@ class AuthService(BusinessService):
             "can_edit_display_name": not has_customer_binding,
             "nickname": row.get("nickname") or display_name,
             "username": row.get("username") or "",
-            "mobile": row.get("phone") or "",
-            "phone": row.get("phone") or "",
+            "mobile": public_phone,
+            "phone": public_phone,
             "email": row.get("email") or "",
             "avatar": row.get("avatar") or "",
             "role": role,
