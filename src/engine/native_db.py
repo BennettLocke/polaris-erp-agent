@@ -5680,6 +5680,7 @@ class NativeDBClient:
         page: int = 1,
         page_size: int = 20,
         status_filter: str = "active",
+        customer_id: int | None = None,
     ) -> tuple[list[dict], int]:
         where = ["wo.deleted_at IS NULL"]
         params: list[Any] = []
@@ -5689,6 +5690,9 @@ class NativeDBClient:
             where.append("(wo.is_made <> 1 OR wo.is_delivered <> 1 OR wo.status <> 'completed')")
         elif status_filter != "all":
             where.append("(wo.is_made <> 1 OR wo.is_delivered <> 1 OR wo.status <> 'completed' OR wo.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))")
+        if customer_id:
+            where.append("wo.customer_id=%s")
+            params.append(int(customer_id))
         if keyword:
             like = f"%{keyword}%"
             where.append("(wo.customer_name_snapshot LIKE %s OR wo.customer_phone_snapshot LIKE %s OR wo.goods_name_snapshot LIKE %s OR wo.color_snapshot LIKE %s)")

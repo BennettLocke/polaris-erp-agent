@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.channels.http_api.__init__ import (
     _miniapp_path_is_public,
+    _mini_order_customer_id,
     _mini_order_user_can_edit,
     _mini_orderflow_empty_payload,
     _mini_orderflow_should_query,
@@ -26,9 +27,13 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
         self.assertTrue(_mini_order_user_can_edit({"role": "admin", "is_admin": 0}))
         self.assertTrue(_mini_order_user_can_edit({"role": "customer", "is_admin": 1}))
 
-    def test_guests_and_customers_need_keyword_to_query_orders(self):
+    def test_linked_customers_can_query_their_own_orders_without_keyword(self):
+        self.assertIsNone(_mini_order_customer_id(None))
+        self.assertIsNone(_mini_order_customer_id({"role": "customer"}))
+        self.assertEqual(_mini_order_customer_id({"role": "customer", "linked_party_id": 55}), 55)
         self.assertFalse(_mini_orderflow_should_query("", None))
         self.assertFalse(_mini_orderflow_should_query("   ", {"role": "customer"}))
+        self.assertTrue(_mini_orderflow_should_query("", {"role": "customer", "linked_party_id": 55}))
         self.assertTrue(_mini_orderflow_should_query("岩韵", None))
         self.assertTrue(_mini_orderflow_should_query("", {"role": "staff"}))
 

@@ -33,8 +33,16 @@ class WorkflowService(BusinessService):
             remark=remark,
         )
 
-    def list_orders(self, *, keyword: str = "", page: int = 1, page_size: int = 20, status_filter: str = "all") -> tuple[list[dict], int]:
-        return self.db.workflow_orders(keyword=keyword, page=page, page_size=page_size, status_filter=status_filter)
+    def list_orders(
+        self,
+        *,
+        keyword: str = "",
+        page: int = 1,
+        page_size: int = 20,
+        status_filter: str = "all",
+        customer_id: int | None = None,
+    ) -> tuple[list[dict], int]:
+        return self.db.workflow_orders(keyword=keyword, page=page, page_size=page_size, status_filter=status_filter, customer_id=customer_id)
 
     def detail(self, order_id: int) -> dict:
         rows = self.db.query(

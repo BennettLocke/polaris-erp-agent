@@ -174,8 +174,21 @@ def _mini_order_user_can_edit(user: dict | None) -> bool:
     return role in {"admin", "staff", "employee", "warehouse", "designer"}
 
 
+def _mini_order_customer_id(user: dict | None) -> int | None:
+    if not isinstance(user, dict) or _mini_order_user_can_edit(user):
+        return None
+    for key in ("linked_party_id", "linkedPartyId", "customer_id", "customerId"):
+        try:
+            value = int(user.get(key) or 0)
+        except Exception:
+            value = 0
+        if value > 0:
+            return value
+    return None
+
+
 def _mini_orderflow_should_query(keyword: str, user: dict | None) -> bool:
-    return bool(str(keyword or "").strip()) or _mini_order_user_can_edit(user)
+    return bool(str(keyword or "").strip()) or _mini_order_user_can_edit(user) or bool(_mini_order_customer_id(user))
 
 
 def _mini_orderflow_empty_payload(page: int = 1, page_size: int = 20) -> dict:
@@ -734,6 +747,7 @@ def _db_sales_cards(
     pay_status: str = "",
     date_from: str = "",
     date_to: str = "",
+    customer_id: int | None = None,
 ) -> tuple[list[dict], int]:
     return get_sales_service().cards(
         keyword=keyword,
@@ -744,10 +758,11 @@ def _db_sales_cards(
         pay_status=pay_status,
         date_from=date_from,
         date_to=date_to,
+        customer_id=customer_id,
     )
 
-def _db_workflow_orders(keyword: str, page: int, page_size: int, status_filter: str = "active") -> tuple[list[dict], int]:
-    return get_workflow_service().list_orders(keyword=keyword, page=page, page_size=page_size, status_filter=status_filter)
+def _db_workflow_orders(keyword: str, page: int, page_size: int, status_filter: str = "active", customer_id: int | None = None) -> tuple[list[dict], int]:
+    return get_workflow_service().list_orders(keyword=keyword, page=page, page_size=page_size, status_filter=status_filter, customer_id=customer_id)
 
 def _db_product_list(
     keyword: str,
@@ -3471,6 +3486,7 @@ def mini_orderflow_list_api():
     keyword = str(_mini_value(payload, "keyword", "wd", "q", default="")).strip()
     page, page_size = _mini_page_payload(payload)
     user = _mini_request_user()
+    customer_id = _mini_order_customer_id(user)
 
     if not _mini_orderflow_should_query(keyword, user):
         return jsonify({"code": 0, "data": _mini_orderflow_empty_payload(page, page_size)})
@@ -3481,12 +3497,12 @@ def mini_orderflow_list_api():
     sales_total = 0
 
     try:
-        workflows, workflow_total = _db_workflow_orders(keyword, page, page_size, "active")
+        workflows, workflow_total = _db_workflow_orders(keyword, page, page_size, "active", customer_id=customer_id if not keyword else None)
     except Exception as e:
         logger.warning(f"mini orderflow workflow query failed: {e}")
 
     try:
-        sales, sales_total = _db_sales_cards(keyword, page, page_size, None)
+        sales, sales_total = _db_sales_cards(keyword, page, page_size, None, customer_id=customer_id if not keyword else None)
     except Exception as e:
         logger.warning(f"mini orderflow sales query failed: {e}")
 
