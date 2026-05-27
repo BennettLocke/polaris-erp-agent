@@ -3326,6 +3326,59 @@ def mini_customer_summary_api():
         return _api_exception_response(e)
 
 
+@app.route("/api/mini/sales-orders", methods=["GET", "POST"])
+def mini_sales_orders_api():
+    """Mini-program customer sales orders for the My page order entry."""
+    user = _mini_request_user()
+    if not user:
+        return jsonify({"code": 401, "msg": "请先登录账号"}), 401
+
+    payload = _mini_request_payload()
+    keyword = str(_mini_value(payload, "keyword", "wd", "q", default="")).strip()
+    page, page_size = _mini_page_payload(payload)
+    customer_id = _mini_order_customer_id(user)
+    internal = _mini_order_user_can_edit(user)
+
+    if not internal and not customer_id:
+        return jsonify({
+            "code": 0,
+            "data": {
+                "page": page,
+                "page_size": page_size,
+                "list": [],
+                "sales": [],
+                "total": 0,
+                "bound_customer_id": None,
+                "source": "sjagent_core",
+                "reason": "unbound_customer",
+            },
+        })
+
+    try:
+        cards, total = _db_sales_cards(
+            keyword,
+            page,
+            page_size,
+            None,
+            customer_id=customer_id,
+        )
+        return jsonify({
+            "code": 0,
+            "data": {
+                "page": page,
+                "page_size": page_size,
+                "list": _safe_json(cards),
+                "sales": _safe_json(cards),
+                "total": int(total or 0),
+                "bound_customer_id": customer_id,
+                "source": "sjagent_core",
+            },
+        })
+    except Exception as e:
+        logger.error(f"mini sales orders failed: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/mini/cart/empty", methods=["GET", "POST"])
 def mini_cart_empty_api():
     """Compatibility endpoint for removed cart reads."""
