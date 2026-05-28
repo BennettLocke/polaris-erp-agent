@@ -172,6 +172,10 @@ class AnalyticsService(BusinessService):
             LEFT JOIN product_spu sp ON sp.id = sku.spu_id
             WHERE s.deleted_at IS NULL
               AND s.status NOT IN ('canceled', 'deleted')
+              AND sku.deleted_at IS NULL
+              AND sp.deleted_at IS NULL
+              AND sku.status = 'active'
+              AND sku.is_listed = 1
               AND {period_sql}
               AND s.sales_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
               {category_filter_sql}

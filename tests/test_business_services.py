@@ -1004,6 +1004,10 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertIn("FROM sales_order_item i", sql)
         self.assertIn("JOIN sales_order s", sql)
         self.assertIn("status NOT IN ('canceled', 'deleted')", sql)
+        self.assertIn("sku.deleted_at IS NULL", sql)
+        self.assertIn("sp.deleted_at IS NULL", sql)
+        self.assertIn("sku.status = 'active'", sql)
+        self.assertIn("sku.is_listed = 1", sql)
         self.assertEqual(params[-1], 5)
 
     def test_miniapp_service_collects_home_and_user_center(self):
