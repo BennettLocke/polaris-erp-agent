@@ -566,6 +566,8 @@ def _open_webrtc_vad(args):
 
 
 class LocalWakeDetector:
+    continuous = False
+
     def process(self, pcm16: bytes, *, force: bool = False) -> bool:
         return False
 
@@ -610,6 +612,8 @@ class PorcupineWakeDetector(LocalWakeDetector):
 
 
 class OpenWakeWordDetector(LocalWakeDetector):
+    continuous = True
+
     def __init__(self, args) -> None:
         from openwakeword.model import Model
 
@@ -627,6 +631,9 @@ class OpenWakeWordDetector(LocalWakeDetector):
             }
         self.model = Model(wakeword_models=model_paths, inference_framework="onnx", **feature_kwargs)
         self.threshold = args.openwakeword_threshold
+        self.debug = args.wake_debug
+        self._debug_count = 0
+        self._debug_best = 0.0
         self.buffer = array("h")
         print(f"local_wake=openwakeword threshold={self.threshold}", flush=True)
 
@@ -642,13 +649,23 @@ class OpenWakeWordDetector(LocalWakeDetector):
             frame = self.buffer[:1280]
             del self.buffer[:1280]
             prediction = self.model.predict(np.array(frame, dtype=np.int16))
-            if prediction and max(float(v) for v in prediction.values()) >= self.threshold:
+            score = max((float(v) for v in prediction.values()), default=0.0) if prediction else 0.0
+            if self.debug:
+                self._debug_count += 1
+                self._debug_best = max(self._debug_best, score)
+                if self._debug_count >= 12:
+                    print(f"LOCAL_WAKE_BEST best={self._debug_best:.4f} last={score:.4f}", flush=True)
+                    self._debug_count = 0
+                    self._debug_best = 0.0
+            if prediction and score >= self.threshold:
                 print(f"LOCAL_WAKE_SCORE {prediction}", flush=True)
                 detected = True
         return detected
 
     def reset(self) -> None:
         self.buffer = array("h")
+        self._debug_count = 0
+        self._debug_best = 0.0
         try:
             self.model.reset()
         except Exception:
@@ -1072,7 +1089,33 @@ def run_stream(args) -> None:
                 flush=True,
             )
 
-        if local_wake and not waiting_command_until:
+        if local_wake and getattr(local_wake, "continuous", False) and not waiting_command_until:
+            if local_wake.process(pcm, force=True):
+                print("LOCAL_WAKE detected", flush=True)
+                local_wake.reset()
+                if args.wake_only:
+                    screen_notify(args, "listen", role="assistant", text="listening")
+                    if not args.no_wake_prompt:
+                        play_prompt_async("wake", device=args.output_device)
+                    ignore_audio_until = time.monotonic() + max(args.wake_reply_ignore_seconds, args.cooldown)
+                    time.sleep(args.cooldown)
+                    continue
+                waiting_command_until = time.monotonic() + args.command_window_seconds
+                print("command_window=opened", flush=True)
+                screen_notify(args, "listen", role="assistant", text="listening")
+                if not args.no_wake_prompt:
+                    play_prompt_async("wake", device=args.output_device)
+                ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
+                pre_roll.clear()
+                speaking = False
+                speech_frames = []
+                silence_frames = 0
+                speech_frames_count = 0
+                active_streak = 0
+                expecting_command_utterance = False
+                continue
+
+        if local_wake and not waiting_command_until and not getattr(local_wake, "continuous", False):
             if active:
                 if not local_wake_segment_active and args.wake_debug:
                     print(
