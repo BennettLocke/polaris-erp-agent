@@ -19,21 +19,21 @@
 
 | 链路 | 旧来源 | 新来源 | 说明 |
 |---|---|---|---|
-| 商品搜索 | ERP API / 旧 ERP 商品表 | `product_spu`、`product_sku`、`product_alias` | 智能体 `product_search`、WebUI `/api/product/search`、开单商品搜索已走自有库 |
-| 商品详情/列表 | ERP API / 旧 ERP 商品表 | `product_sku`、`product_spu`、`product_category`、`product_unit`、`product_media` | WebUI 商品列表、分类、编辑基础数据已走自有库 |
-| 客户搜索 | ERP API 客户 | `party` | 智能体 `customer_query`、WebUI `/api/customer/list`、`/api/customers` 已走自有库 |
-| 用户列表/后台登录 | ShopXO 用户/旧 WebUI 表 | `auth_user` | WebUI 登录、审批和用户管理统一读写 `auth_user`；旧 `sjagent_web_users` 只作为迁移来源 |
+| 商品搜索 | ERP API / 旧 ERP 商品表 | `product_spu`、`product_sku`、`product_alias` | 智能体 `product_search`、React 后台 `/api/product/search`、开单商品搜索已走自有库 |
+| 商品详情/列表 | ERP API / 旧 ERP 商品表 | `product_sku`、`product_spu`、`product_category`、`product_unit`、`product_media` | React 后台商品列表、分类、编辑基础数据已走自有库 |
+| 客户搜索 | ERP API 客户 | `party` | 智能体 `customer_query`、React 后台 `/api/customer/list`、`/api/customers` 已走自有库 |
+| 用户列表/后台登录 | ShopXO 用户/旧后台登录表 | `auth_user` | React 后台登录、审批和用户管理统一读写 `auth_user`；旧 `sjagent_web_users` 只作为迁移来源 |
 | 仓库列表 | ERP API 仓库 | `warehouse` | `/api/warehouse/list`、`/api/warehouses` 已走自有库 |
-| 库存查询 | 旧 ERP 库存表 | `inventory_balance` | 智能体查库存、WebUI 库存卡片/库存明细已走自有库 |
+| 库存查询 | 旧 ERP 库存表 | `inventory_balance` | 智能体查库存、React 后台库存卡片/库存明细已走自有库 |
 | 库存日志 | 无统一页面 | `inventory_ledger` | 新增 `/api/inventory/ledger` |
-| 进货入库 | ERP `OtherEnterAdd` | `stock_document`、`stock_document_item`、`inventory_balance`、`inventory_ledger` | 智能体和 WebUI 进货会直接写自有库 |
-| 调拨 | ERP `InventoryTransfer` | `transfer_order`、`transfer_order_item`、`inventory_balance`、`inventory_ledger` | 智能体和 WebUI 调拨会直接写自有库 |
+| 进货入库 | ERP `OtherEnterAdd` | `stock_document`、`stock_document_item`、`inventory_balance`、`inventory_ledger` | 智能体和 React 后台进货会直接写自有库 |
+| 调拨 | ERP `InventoryTransfer` | `transfer_order`、`transfer_order_item`、`inventory_balance`、`inventory_ledger` | 智能体和 React 后台调拨会直接写自有库 |
 | 盘点同步 | ERP `InventorySync` | `stocktake_order`、`stocktake_item`、`inventory_balance`、`inventory_ledger` | 智能体盘点会直接写自有库 |
-| 销售开单 | ERP `SalesAdd` | `sales_order`、`sales_order_item`、`inventory_balance`、`inventory_ledger` | WebUI 开单/智能体开单会扣自有库存 |
-| 工作流订单 | ERP 工作流 API | `workflow_order`、`workflow_order_log` | WebUI 工作流列表、保存、状态、删除已走自有库 |
-| 商品自动编号 | 旧系统散乱编号/脚本内固定起点 | `number_sequence_setting`、`number_sequence_log` | WebUI 设置里可调整后续 SKU 起点；当前统一从 `SJ1570` 往后找空号 |
+| 销售开单 | ERP `SalesAdd` | `sales_order`、`sales_order_item`、`inventory_balance`、`inventory_ledger` | React 后台开单/智能体开单会扣自有库存 |
+| 工作流订单 | ERP 工作流 API | `workflow_order`、`workflow_order_log` | React 后台订单列表、保存、状态、删除已走自有库 |
+| 商品自动编号 | 旧系统散乱编号/脚本内固定起点 | `number_sequence_setting`、`number_sequence_log` | React 后台设置里可调整后续 SKU 起点；当前统一从 `SJ1570` 往后找空号 |
 
-## 新增 WebUI 页面
+## React 后台页面
 
 | 主导航 | 子页面/功能 | API |
 |---|---|---|

@@ -509,7 +509,7 @@ def get_screen_html() -> str:
           <article class="panel">
             <div class="panel-head"><h2><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>系统状态</h2><span class="tag ok">OK</span></div>
             <div class="list">
-              <div class="row"><div><strong>本机服务</strong><span>WebUI / 小屏页面</span></div><span class="tag ok">OK</span></div>
+              <div class="row"><div><strong>本机服务</strong><span>React 后台 / 小屏页面</span></div><span class="tag ok">OK</span></div>
               <div class="row"><div><strong>语音助手</strong><span>唤醒 / 播报 / Agent</span></div><span class="tag ok">OK</span></div>
               <div class="row"><div><strong>刷新</strong><span>状态 0.5s / 业务 2s</span></div><span class="tag">LIVE</span></div>
             </div>

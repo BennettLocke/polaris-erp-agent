@@ -1,5 +1,5 @@
 """
-HTTP API 渠道（预留 WebUI 和外部调用）
+HTTP API 渠道（React 后台、小程序和外部调用）
 提供 RESTful API 供前端或外部系统调用 Agent
 """
 import json
@@ -336,10 +336,6 @@ def _web_auth_user_payload(user: dict | None) -> dict:
     return get_auth_service().web_user_payload(user)
 
 
-def _web_user_can_access_webui(user: dict | None) -> bool:
-    return get_auth_service().web_user_can_access_webui(user)
-
-
 def _request_user_for_permission() -> dict | None:
     native_user = getattr(request, "native_user", None)
     if isinstance(native_user, dict) and native_user.get("id"):
@@ -390,8 +386,8 @@ API_PERMISSION_RULES = [
 ]
 
 def _web_auth_required_response():
-    if request.path == "/web" or request.accept_mimetypes.accept_html:
-        return redirect("/login")
+    if request.accept_mimetypes.accept_html:
+        return redirect("/admin/login")
     return jsonify({"code": 401, "msg": "请先登录北极星"}), 401
 
 
@@ -449,14 +445,13 @@ def _miniapp_auth_guard():
 
 
 @app.before_request
-def _webui_auth_guard():
+def _admin_auth_guard():
     if request.method == "OPTIONS":
         return None
     path = request.path or ""
     if request.headers.get("X-SJ-Client") == "miniapp":
         return None
     public_paths = {
-        "/login",
         "/screen",
         "/api/web-auth/login",
         "/api/web-auth/register",
@@ -473,7 +468,7 @@ def _webui_auth_guard():
         or path.startswith("/api/print-agent/")
     ):
         return None
-    if path == "/web" or path.startswith("/api/"):
+    if path.startswith("/api/"):
         if not _current_web_user():
             return _web_auth_required_response()
     return None
@@ -500,7 +495,7 @@ def _native_operator_context():
     if path.startswith("/api/miniapp-design/assets/"):
         return None
     user_id = None
-    if path == "/web" or path.startswith("/api/"):
+    if path.startswith("/api/"):
         native_user = getattr(request, "native_user", None)
         if isinstance(native_user, dict) and native_user.get("id"):
             user_id = native_user.get("id")
@@ -538,7 +533,7 @@ def _request_user_id(default: str = "http_user") -> str:
 
 
 def _session_snapshot(session_id: str) -> dict:
-    """Return lightweight session state for the WebUI."""
+    """Return lightweight session state for the React admin."""
     from src.core.session import SessionManager
     session = SessionManager(session_id)
     state = session.get_state() if session.has_pending() else None
@@ -1928,15 +1923,7 @@ def init_api(agent: Agent):
 
 @app.route("/", methods=["GET"])
 def index():
-    return redirect("/web" if _current_web_user() else "/login")
-
-
-@app.route("/login", methods=["GET"])
-def web_login_page():
-    if _current_web_user():
-        return redirect("/web")
-    from src.channels.http_api.webui import get_login_html
-    return Response(get_login_html(), content_type="text/html; charset=utf-8")
+    return redirect("/admin")
 
 
 @app.route("/api/web-auth/register", methods=["POST"])
@@ -1962,7 +1949,7 @@ def web_auth_register():
             data.pop("auto_login", None)
         return _json_service_result(result)
     except Exception as e:
-        logger.error(f"WebUI 注册异常: {e}")
+        logger.error(f"后台注册异常: {e}")
         return jsonify({"code": 500, "msg": f"注册异常: {e}"}), 500
 
 
@@ -1982,7 +1969,7 @@ def web_auth_login():
             data.pop("session_user_id", None)
         return _json_service_result(result)
     except Exception as e:
-        logger.error(f"WebUI 登录异常: {e}")
+        logger.error(f"后台登录异常: {e}")
         return jsonify({"code": 500, "msg": f"登录异常: {e}"}), 500
 
 
@@ -1992,7 +1979,7 @@ def web_auth_logout():
     session.pop("web_user_id", None)
     session.pop("native_user_id", None)
     if request.method == "GET":
-        return redirect("/login")
+        return redirect("/admin/login")
     return jsonify({"code": 0, "data": {}})
 
 
@@ -2029,22 +2016,11 @@ def web_auth_user_reject(user_id: int):
     return _json_service_result(result)
 
 
-@app.route("/web", methods=["GET"])
-def webui():
-    """WebUI 聊天界面"""
-    from src.channels.http_api.webui import get_webui_html
-    response = Response(get_webui_html(), content_type="text/html; charset=utf-8")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
-
-
 @app.route("/admin", methods=["GET"])
 @app.route("/admin/", methods=["GET"])
 @app.route("/admin/<path:subpath>", methods=["GET"])
 def admin_app(subpath: str = ""):
-    """React admin shell. The legacy /web entry remains unchanged."""
+    """React admin shell."""
     if subpath.startswith("assets/"):
         return send_from_directory(ADMIN_DIST_DIR / "assets", subpath.removeprefix("assets/"))
     index_file = ADMIN_DIST_DIR / "index.html"
@@ -2174,7 +2150,7 @@ def screen_dashboard_api():
 
 @app.route("/api/images/file/<path:filename>", methods=["GET"])
 def image_file(filename: str):
-    """Serve locally uploaded images for WebUI preview."""
+    """Serve locally uploaded images for admin preview."""
     safe_name = secure_filename(filename)
     if not safe_name:
         return jsonify({"code": 400, "msg": "invalid filename"}), 400
@@ -2497,7 +2473,7 @@ def history():
 @app.route("/api/orders/recent", methods=["GET"])
 def recent_orders():
     """
-    Recent sales and workflow orders for the WebUI side panel.
+    Recent sales and workflow orders for the React admin workbench.
     GET /api/orders/recent?limit=6
     """
     limit = request.args.get("limit", 6, type=int)
@@ -2517,7 +2493,7 @@ def recent_orders():
 
 @app.route("/api/dashboard/summary", methods=["GET"])
 def dashboard_summary():
-    """Live dashboard numbers for the WebUI workbench."""
+    """Live dashboard numbers for the React admin workbench."""
     try:
         return jsonify({"code": 0, "data": get_dashboard_service().summary()})
     except Exception as e:
@@ -2542,7 +2518,7 @@ def _analytics_hot_products_payload(payload: dict) -> dict:
 
 @app.route("/api/analytics/hot-products", methods=["GET"])
 def analytics_hot_products_api():
-    """Hot product ranking for WebUI dashboards."""
+    """Hot product ranking for React admin dashboards."""
     try:
         return jsonify({"code": 0, "data": _analytics_hot_products_payload(request.args.to_dict(flat=True))})
     except Exception as e:
@@ -2800,7 +2776,7 @@ def print_agent_sales_task_detail_api(task_id: int):
 
 @app.route("/api/print-agent/sales/tasks/<int:task_id>/html", methods=["GET"])
 def print_agent_sales_task_html_api(task_id: int):
-    """Printable sales HTML for local print helpers without a WebUI session."""
+    """Printable sales HTML for local print helpers without a browser session."""
     if not _print_agent_authorized():
         return Response("print agent token required", status=401, mimetype="text/plain")
     row = _print_job_row(task_id)
@@ -3114,7 +3090,7 @@ def inventory_stocktaking_api():
                 "unit_id": int(body.get("unit_id") or 1),
                 "number": quantity,
             }],
-            note=(body.get("note") or f"WebUI盘点{f'（{color}）' if color else ''}").strip(),
+            note=(body.get("note") or f"后台盘点{f'（{color}）' if color else ''}").strip(),
             operator_user_id=operator_user_id,
         )
         return _inventory_action_response(result)
@@ -3403,7 +3379,7 @@ def miniapp_config_api():
 
 @app.route("/api/miniapp/image-config", methods=["GET"])
 def miniapp_image_config_api():
-    """WebUI editor payload for mini-program images."""
+    """Admin editor payload for mini-program images."""
     try:
         return jsonify({"code": 0, "data": get_miniapp_service().image_config_payload()})
     except Exception as e:
@@ -3413,7 +3389,7 @@ def miniapp_image_config_api():
 
 @app.route("/api/miniapp/image-config", methods=["POST", "PATCH"])
 def miniapp_image_config_update_api():
-    """Update mini-program image URLs from WebUI."""
+    """Update mini-program image URLs from admin settings."""
     try:
         body = request.get_json(silent=True)
         if body is None:
@@ -4373,7 +4349,7 @@ def customer_list():
 
 @app.route("/api/customer/create", methods=["POST"])
 def customer_create_api():
-    """Create a native customer for the WebUI sales form."""
+    """Create a native customer for the React admin sales form."""
     from src.core.customer_name import normalize_customer_name
 
     body = request.get_json(silent=True)

@@ -92,7 +92,7 @@ def notify_screen_state(
     url: str | None = None,
     timeout: float = 0.35,
 ) -> bool:
-    """Best-effort HTTP update for processes outside the WebUI server."""
+    """Best-effort HTTP update for processes outside the HTTP server."""
 
     target = url if url is not None else DEFAULT_SCREEN_STATE_URL
     if not target:

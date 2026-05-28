@@ -2,7 +2,7 @@
 
 Polaris ERP Agent 是一套面向小批量包装业务的自有后台与智能体系统。它把商品、库存、客户、订单、销售单、图片资产、打印和小程序接口统一到 `sjagent_core` 业务库，并提供 React 后台、HTTP API、智能体对话入口和可部署的服务端运行方式。
 
-当前项目已经从旧 WebUI 迁移到 React 后台，旧 `/web` 仅作为迁移期备用入口。日常运营入口为 `/admin`。
+当前项目已经完成旧后台迁移，日常运营入口统一为 `/admin` React 后台。
 
 ## 核心能力
 
@@ -37,7 +37,7 @@ src/core/                       智能体图、节点、工具注册
 src/skills/                     业务技能工作流
 scripts/                        迁移、检查、打印、图片处理脚本
 database/                       数据库建表和迁移 SQL
-docs/                           项目书、迁移记录、检测报告
+docs/                           当前手册、迁移记录、检测报告
 tests/                          单元测试和合同测试
 ```
 
@@ -200,7 +200,6 @@ sudo systemctl status sjagent.service
 | 入口 | 地址 |
 | --- | --- |
 | React 后台 | `http://服务器域名/admin` |
-| 旧 WebUI 备用 | `http://服务器域名/web` |
 | 健康检查 | `http://服务器域名/health` |
 | 小程序 API | `http://服务器域名/api/mini/*` |
 
@@ -267,6 +266,7 @@ sudo systemctl is-active sjagent.service
 
 | 文档 | 内容 |
 | --- | --- |
+| `docs/README.md` | 文档目录说明 |
 | `docs/react_admin_api_contract.md` | React 后台 API 合同 |
 | `docs/react_admin_page_design_blueprint.md` | 页面级设计蓝图 |
 | `docs/sjagent_system_audit_report_2026-05-28.md` | 系统检测和修复进度 |

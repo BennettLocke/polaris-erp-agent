@@ -466,7 +466,7 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(result["code"], 0)
         self.assertEqual(result["data"]["session_user_id"], 1)
         self.assertEqual(result["data"]["user"]["role"], "admin")
-        self.assertTrue(service.web_user_can_access_webui(db.auth_users[1]))
+        self.assertTrue(service.web_user_can_access_admin(db.auth_users[1]))
         self.assertTrue(service.has_permission("设置", db.auth_users[1]))
 
     def test_auth_service_register_and_approval(self):

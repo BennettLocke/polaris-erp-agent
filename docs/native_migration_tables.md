@@ -40,7 +40,7 @@
 | `party` | 客户/供应商 | `id`、`name`、`kind`、`contact_name`、`phone`、`phone_normalized`、`address`、`is_enabled` | `sxo_plugins_erp_company` | `kind` 可为 customer/supplier/both；手机号用于匹配小程序用户 |
 | `auth_user` | 北极星用户 | `id`、`username`、`display_name`、`phone`、`linked_party_id`、`role`、`approval_status`、`is_active` | `sjagent_web_users`、`sxo_user` | 用户账号不等于客户资料，但手机号可同步关联客户 |
 | `auth_identity` | 外部账号绑定 | `user_id`、`provider`、`external_user_id`、`openid`、`unionid` | `sxo_user_platform`、ShopXO token | 绑定手机号、微信、ShopXO、飞书身份 |
-| `auth_session` | 登录会话 | `user_id`、`token_hash`、`client_type`、`expires_at` | ShopXO token/session | WebUI/小程序自有登录 |
+| `auth_session` | 登录会话 | `user_id`、`token_hash`、`client_type`、`expires_at` | ShopXO token/session | React 后台/小程序自有登录 |
 | `sales_order` | 销售单主表 | `id`、`sales_no`、`customer_id`、`status`、`total_price`、`created_at` | `sxo_plugins_erp_sales` | 删除改为软删除，不进入普通对账 |
 | `sales_order_item` | 销售单明细 | `sales_id`、`sku_id`、`title_snapshot`、`spec_snapshot`、`quantity`、`price`、`warehouse_id` | `sxo_plugins_erp_sales_detail` | 必须保存商品快照 |
 | `stock_document` | 普通出入库单 | `doc_no`、`doc_type`、`direction`、`warehouse_id`、`status` | `OtherEnterAdd`、`OtherOutAdd` | 采购入库、其他入库、报损出库等合并 |
@@ -105,12 +105,12 @@
 | P0 盘点 | 只读摸清现状 | 导出旧表结构、统计脏数据、确认商品/分类/库存计数 | 不影响 | 生成迁移校验报告 |
 | P1 建新库 | 建立北极星自有 schema | 新建 `sjagent_core`、建表、迁移脚本骨架、配置 `data_backend.mode` | 不影响 | 空库迁移测试通过 |
 | P2 主数据导入 | 商品中心先独立 | 导入商品、分类、单位、件套换算、图片、仓库、客户 | 不影响 | 商品列表和库存查询可从新库返回 |
-| P3 读链路切换 | WebUI 和智能体读新库 | 商品搜索、库存查询、客户查询、热词生成切新库 | 低风险 | 查询结果和旧库抽样一致 |
+| P3 读链路切换 | React 后台和智能体读新库 | 商品搜索、库存查询、客户查询、热词生成切新库 | 低风险 | 查询结果和旧库抽样一致 |
 | P4 工作流切换 | 设计稿订单独立 | 工作流订单新增、查询、状态更新写新库 | 中低风险 | 新订单不再写 `sxo_workflow_order` |
 | P5 商品写切换 | 商品管理独立 | 商品新增/编辑/上传/上下架写新库，旧库只做可选同步 | 中风险 | 泡袋上传能新建/更新自有商品 |
 | P6 库存流水切换 | 库存变动可审计 | 入库、盘点、调拨全部写自有流水和余额 | 高风险 | 所有库存变化都有 ledger |
 | P7 销售开单切换 | 开单不依赖 ERP | 开销售单、扣库存、删除回滚、历史价都走新库 | 高风险 | 连续一周新旧对账无差异 |
-| P8 登录/打印替换 | 去掉剩余 ShopXO 绑定 | 自有用户、权限、打印任务 | 中风险 | 小程序/WebUI 不再需要 ShopXO token |
+| P8 登录/打印替换 | 去掉剩余 ShopXO 绑定 | 自有用户、权限、打印任务 | 中风险 | 小程序/React 后台不再需要 ShopXO token |
 | P9 下线旧依赖 | ShopXO/ERP 只归档 | 禁止写旧库，保留 external_ref，清理旧 API 调用 | 需要冻结窗口 | `ERPSystemClient` 不再发外部请求 |
 
 ## 7. 商品中心字段建议
@@ -168,7 +168,7 @@
 | 1 | 建 `sjagent_core` schema 和迁移脚本 | 空库 + 表结构 | 后续所有迁移的地基 |
 | 2 | 导入商品、分类、单位、仓库 | 商品中心可查 | 先解决双商品库问题 |
 | 3 | 导入库存余额并生成初始流水 | 库存可查、可对账 | 让库存脱离 ERP 查询 |
-| 4 | 改商品列表/搜索/库存查询读新库 | WebUI 查询切新源 | 风险低，收益明显 |
+| 4 | 改商品列表/搜索/库存查询读新库 | React 后台查询切新源 | 风险低，收益明显 |
 | 5 | 导入销售历史和客户 | 历史价可用 | 开单前必须有价格依据 |
 | 6 | 新增库存流水服务 | 入库/调拨/盘点可试跑 | 为开单扣库存做准备 |
 | 7 | 新销售单服务灰度 | 测试开单闭环 | 最后再替换高风险写链路 |

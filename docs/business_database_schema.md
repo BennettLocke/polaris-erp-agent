@@ -87,7 +87,7 @@
 | `linked_party_id` | BIGINT | 否 | 关联客户 | 客户账号才需要，指向 `party.id` |
 | `approval_status` | VARCHAR(20) | 是 | 审批状态 | `pending`、`approved`、`rejected` |
 | `is_active` | TINYINT | 是 | 是否启用 | 停用后不能登录 |
-| `is_admin` | TINYINT | 是 | 是否管理员 | 兼容当前 WebUI 管理员逻辑 |
+| `is_admin` | TINYINT | 是 | 是否管理员 | 兼容当前 React 后台管理员逻辑 |
 | `last_login_at` | DATETIME | 否 | 最后登录时间 | 审计用 |
 | `created_at` | DATETIME | 是 | 创建时间 | 新库时间 |
 | `updated_at` | DATETIME | 是 | 更新时间 | 新库时间 |
@@ -113,7 +113,7 @@
 
 ## 6. `auth_session` 登录会话表
 
-这张表替代 ShopXO token 校验，WebUI、小程序、后续移动端都可以用。
+这张表替代 ShopXO token 校验，React 后台、小程序、后续移动端都可以用。
 
 | 字段 | 类型建议 | 是否必填 | 存什么 | 来源/说明 |
 |---|---|---:|---|---|
@@ -148,8 +148,8 @@
 | `order_image_urls` | JSON | 否 | 订单图片 | 客户图片、设计稿、OCR 图片 URL |
 | `ocr_text` | TEXT | 否 | OCR 原文 | 方便追溯智能体识别依据 |
 | `is_screen_print` | TINYINT | 是 | 是否丝印 | 兼容现有流程字段 |
-| `is_made` | TINYINT | 是 | 是否制作完成 | 当前 WebUI 常用状态 |
-| `is_delivered` | TINYINT | 是 | 是否已交付 | 当前 WebUI 常用状态 |
+| `is_made` | TINYINT | 是 | 是否制作完成 | 当前 React 后台常用状态 |
+| `is_delivered` | TINYINT | 是 | 是否已交付 | 当前 React 后台常用状态 |
 | `sales_order_id` | BIGINT | 否 | 关联销售单 | 开单后指向 `sales_order.id` |
 | `status` | VARCHAR(30) | 是 | 总状态 | `pending`、`confirmed`、`processing`、`done`、`canceled` |
 | `remark` | TEXT | 否 | 备注 | 人工补充要求 |

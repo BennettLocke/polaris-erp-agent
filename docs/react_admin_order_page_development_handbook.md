@@ -355,11 +355,10 @@
 
 ## 13. 旧入口和兼容边界
 
-订单页改名只改 React 后台的用户可见命名，不改旧业务入口。
+订单页改名只改 React 后台的用户可见命名，不改业务接口。
 
 必须保持:
 
-- 旧 `/web` 工作流页面继续可用，直到 React 订单页验收通过。
 - 小程序 `/api/mini/workflow-order/*` 不受影响。
 - Agent 工具 `workflow_order_*` 不受影响。
 - 后端接口 `/api/workflow/orders` 第一阶段不改名。
@@ -368,7 +367,6 @@
 已同步更新的文档:
 
 - `docs/react_admin_api_contract.md`: 页面名从工作流订单改为订单，路由增加 `/admin/orders`, 查询参数校正为 `filter`。
-- `docs/react_admin_ui_component_plan.md`: Sidebar 和页面组件匹配表里的“工作流”改为“订单”。
 - `docs/react_admin_page_design_blueprint.md`: 后续页面顺序里的“工作流”改为“订单”。
 
 ## 14. 前端命名建议
@@ -433,7 +431,6 @@
 - 保存过程订单不会触发销售单创建。
 - 保存过程订单不会触发库存扣减。
 - 删除订单调用软删除接口。
-- 旧 `/web` 工作流页面不受 React 改名影响。
 - 小程序 `/api/mini/workflow-order/*` 不受 React 改名影响。
 
 后端已有逻辑需要重点回归:
@@ -471,4 +468,4 @@
 - 不会把过程订单误当成销售单。
 - 桌面宽屏信息密度高，窄屏不挤压错位。
 - 视觉风格和商品页、库存页一致。
-- 旧 `/web`、小程序和 Agent 工作流入口不受影响。
+- 小程序和 Agent 工作流入口不受影响。

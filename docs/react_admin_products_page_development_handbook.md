@@ -4,7 +4,7 @@
 日期：2026-05-25  
 适用入口：`/admin/products`  
 关联入口：`/admin/media` 图片资产、`/admin/sales-new` 开单商品搜索、小程序商品详情 API  
-保护范围：旧后台 `/web` 不在本轮改造范围内，不能影响服务器现有 `/web` 运行。
+当前状态：旧 `/web` 页面已下线，商品页只维护 `/admin/products` React 后台入口。
 
 ## 1. 页面定位
 
@@ -517,7 +517,7 @@ Tabs：
 | 状态 | 字段建议 | 含义 | 影响 |
 | --- | --- | --- | --- |
 | 资料状态 | `status` | 商品资料是否有效，比如 active/deleted | 后台是否保留、是否软删除 |
-| 开单可用 | `is_sellable` | WebUI、React、Agent 能不能用于开销售单 | 开单搜索和 Agent 开单 |
+| 开单可用 | `is_sellable` | React 后台、Agent 能不能用于开销售单 | 开单搜索和 Agent 开单 |
 | 小程序上架 | `is_listed` | 小程序商品列表和详情能不能看到 | `/api/mini/search/datalist` 和 `/api/mini/goods/detail` |
 
 第一版 UI 建议：
@@ -696,7 +696,7 @@ admin/src/components/business/products/
 
 ## 12. 视觉标准
 
-商品页视觉必须靠近 shadcn 后台示例，而不是旧 WebUI。
+商品页视觉必须靠近 shadcn 后台示例，而不是旧版后台。
 
 标准：
 
@@ -758,7 +758,7 @@ admin/src/components/business/products/
 - 删除商品使用 `AlertDialog`。
 - 删除图片资产使用 `AlertDialog`。
 - 前端不直接判断泡袋是否扣库存，只展示服务层返回规则。
-- `/web` 仍然可以打开。
+- `/admin/products` 刷新后仍然可以打开。
 
 ### 13.5 商品质量和跨链路验收
 
@@ -803,7 +803,7 @@ npm.cmd run build
 - 点主图上传/选择，确认弹窗可见且只出现一个选择入口。
 - 切换未绑定、本产品图片、全部图片。
 - 打开 `http://127.0.0.1:8081/admin/media`，确认图片资产仍正常。
-- 打开 `http://127.0.0.1:8081/web`，确认旧后台仍可用。
+- 打开 `http://127.0.0.1:8081/admin/products`，确认商品页仍可用。
 
 ## 15. 开发阶段计划
 
@@ -887,7 +887,7 @@ npm.cmd run build
 - 图片选择器契约测试。
 - admin build 通过。
 - 浏览器 smoke 通过。
-- `/web` smoke 通过。
+- `/admin/products` smoke 通过。
 
 ## 16. 后续拓展方向
 

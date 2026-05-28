@@ -3,8 +3,8 @@
 版本：v0.4  
 日期：2026-05-26  
 适用入口：`/admin/inventory`  
-关联入口：`/admin/products` 商品资料、`/admin/sales-new` 开单扣库存、`/admin/settings` 仓库和库存规则、旧后台 `/web`  
-保护范围：旧后台 `/web` 不在本轮改造范围内，不能影响服务器现有 `/web` 运行。
+关联入口：`/admin/products` 商品资料、`/admin/sales-new` 开单扣库存、`/admin/settings` 仓库和库存规则
+当前状态：旧 `/web` 页面已下线，库存页只维护 `/admin/inventory` React 后台入口。
 
 v0.4 修订重点：
 
@@ -130,7 +130,7 @@ v0.4 修订重点：
 - 原生 `<button>` 做业务按钮。
 - 原生 `<select>` 做仓库/状态选择。
 - 页面内手写大块 `span` 状态标签。
-- 复杂库存表单里复制旧 WebUI 的长表格。
+- 复杂库存表单里复制旧版后台的长表格。
 - 在前端直接计算库存余额并当成最终结果保存。
 
 ## 5. 库存页整体结构
@@ -728,7 +728,7 @@ admin/src/components/business/inventory/
 开发完成后至少验证：
 
 - [ ] `/admin/inventory` 不再显示占位页。
-- [ ] 旧后台 `/web` 仍能打开。
+- [ ] `/admin/inventory` 刷新后仍能打开。
 - [ ] 库存总览默认打开，能按关键词和仓库筛选。
 - [ ] 商品以数据卡片展示，颜色/SKU 为行，百鑫、自己店等仓库为列。
 - [ ] 0 库存 SKU/仓库组合也显示出来，并能作为进货、调拨、盘点入口。

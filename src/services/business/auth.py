@@ -1,4 +1,4 @@
-"""Authentication and account service for WebUI and mini-program clients."""
+"""Authentication and account service for React admin and mini-program clients."""
 
 from __future__ import annotations
 
@@ -269,7 +269,7 @@ class AuthService(BusinessService):
     def is_admin(self, user: dict | None) -> bool:
         return bool(isinstance(user, dict) and int(user.get("is_admin") or 0) == 1)
 
-    def web_user_can_access_webui(self, user: dict | None) -> bool:
+    def web_user_can_access_admin(self, user: dict | None) -> bool:
         if not isinstance(user, dict):
             return False
         if self.is_admin(user):
@@ -367,7 +367,7 @@ class AuthService(BusinessService):
             return {"code": 401, "msg": "账号或密码不正确", "_http_status": 401}
         if str(user.get("approval_status") or "") != "approved" or int(user.get("is_active") or 0) != 1:
             return {"code": 403, "msg": "账号还在审批中，请联系管理员通过后再登录", "_http_status": 403}
-        if not self.web_user_can_access_webui(user):
+        if not self.web_user_can_access_admin(user):
             return {"code": 403, "msg": "当前账号没有后台访问权限", "_http_status": 403}
         self.db.execute(
             "UPDATE auth_user SET last_login_at=NOW(), updated_at=NOW() WHERE id=%s",

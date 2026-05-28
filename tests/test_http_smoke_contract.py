@@ -10,9 +10,9 @@ class HttpSmokeContractTests(unittest.TestCase):
         self.assertEqual(result["code"], 0, result)
         checked = {item["name"] for item in result["checks"]}
         self.assertIn("health", checked)
-        self.assertIn("login", checked)
-        self.assertIn("web_requires_login", checked)
+        self.assertIn("root_redirects_admin", checked)
         self.assertIn("admin_shell", checked)
+        self.assertIn("admin_login_shell", checked)
         self.assertIn("admin_assets", checked)
         self.assertIn("web_auth_me_unauthorized", checked)
 

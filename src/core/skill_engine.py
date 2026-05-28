@@ -519,7 +519,7 @@ class SkillEngine:
 
     def _is_agent_capability_request(self, user_input: str) -> bool:
         text = user_input.strip()
-        capability_words = ["企业微信", "通知", "提醒", "语音", "打印", "WebUI", "网页", "手机", "按钮"]
+        capability_words = ["企业微信", "通知", "提醒", "语音", "打印", "后台", "网页", "手机", "按钮"]
         self_words = ["你", "北极星", "机器人", "智能体", "系统"]
         ask_words = ["会", "支持", "能不能", "可以", "能否", "是否", "有没有"]
         if "企业微信" in text and any(w in text for w in ask_words + ["通知", "提醒"]):

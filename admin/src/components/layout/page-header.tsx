@@ -38,7 +38,7 @@ function PageHeader({ onLogout, title }: PageHeaderProps) {
           <DialogContent>
             <DialogTitle>新后台底座</DialogTitle>
             <DialogDescription>
-              商品、库存、订单、设置和工作台已统一接入自有服务层；旧 `/web` 仅保留为迁移期备用入口。
+              商品、库存、订单、设置和工作台已统一接入自有服务层；运营入口统一使用 React 后台。
             </DialogDescription>
             <div className="dialog-actions">
               <DialogClose asChild>

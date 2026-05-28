@@ -33,16 +33,11 @@ def run_smoke_tests() -> dict:
         checks.append(_check("health", response.status_code == 200 and payload.get("status") == "ok", f"status={response.status_code}"))
         _close_response(response)
 
-        response = client.get("/login")
-        login_text = response.get_data(as_text=True)
-        checks.append(_check("login", response.status_code == 200 and "北极星" in login_text, f"status={response.status_code}"))
-        _close_response(response)
-
-        response = client.get("/web")
+        response = client.get("/")
         location = response.headers.get("Location", "")
         checks.append(_check(
-            "web_requires_login",
-            response.status_code in {301, 302} and location.endswith("/login"),
+            "root_redirects_admin",
+            response.status_code in {301, 302} and location.endswith("/admin"),
             f"status={response.status_code}, location={location}",
         ))
         _close_response(response)
@@ -50,6 +45,14 @@ def run_smoke_tests() -> dict:
         response = client.get("/admin")
         checks.append(_check(
             "admin_shell",
+            response.status_code == 200 and b'id="root"' in response.data,
+            f"status={response.status_code}",
+        ))
+        _close_response(response)
+
+        response = client.get("/admin/login")
+        checks.append(_check(
+            "admin_login_shell",
             response.status_code == 200 and b'id="root"' in response.data,
             f"status={response.status_code}",
         ))

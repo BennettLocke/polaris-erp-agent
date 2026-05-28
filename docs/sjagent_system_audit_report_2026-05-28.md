@@ -1,12 +1,12 @@
 ﻿# sjagent 系统检测报告
 
 日期：2026-05-28
-范围：React 新后台、Flask HTTP API、业务服务层、NativeDBClient、旧 WebUI 兼容入口、小程序接口、部署与测试文档。
+范围：React 新后台、Flask HTTP API、业务服务层、NativeDBClient、小程序接口、部署与测试文档。
 方式：本地静态审查、文档核对、关键代码抽样、并行子任务审查。未进行线上渗透、未连接生产数据库、未修改业务代码。
 
 ## 1. 总体结论
 
-sjagent 现在已经从“旧 WebUI + 智能体工具”进入“React 后台 + 服务层 + 小程序接口 + 设置中心”的重构阶段。后台主要页面已经具备可操作形态：工作台、商品、库存、订单、客户、销售、设置、小程序设置、图片资产、打印预览都已经接入。但系统还没有达到“可以放心对外暴露和稳定长期运营”的程度。
+sjagent 现在已经从旧后台进入“React 后台 + 服务层 + 小程序接口 + 设置中心”的重构阶段。后台主要页面已经具备可操作形态：工作台、商品、库存、订单、客户、销售、设置、小程序设置、图片资产、打印预览都已经接入。但系统还没有达到“可以放心对外暴露和稳定长期运营”的程度。
 
 最需要优先处理的是四类问题：
 
@@ -30,6 +30,7 @@ sjagent 现在已经从“旧 WebUI + 智能体工具”进入“React 后台 + 
 - 已修高频页面闭环：订单分页/图片/制作配送字段，库存流水精确查询和风险确认，客户详情销售分页，设置页当前账号/最后管理员保护。
 - 已修体验和工程项：图片资产上传规则、旧 MediaPage 死代码、库存状态后端筛选、客户余额校验、页面文案、文档口径、日志忽略、锁定依赖、admin_dist 和 HTTP smoke。
 - 已新增基础分析能力：`AnalyticsService.hot_products()` 已对后台和小程序开放，工作台已显示热销预览。完整数据看板仍作为后续独立页面继续做。
+- 已下线旧 `/web` 页面：后台页面入口统一为 `/admin`，旧 WebUI 模板、脚本、启动脚本和迁移期计划书已从仓库移除。
 
 ## 2. 当前系统状态
 
@@ -409,18 +410,18 @@ sjagent 现在已经从“旧 WebUI + 智能体工具”进入“React 后台 + 
 
 - `tests/test_admin_*` 多数是源码字符串合同测试。
 - `admin/package.json` 只有 `dev/build/preview`，没有前端 test。
-- 缺 Flask test client 对 `/web`、`/admin`、静态资源、权限态的 smoke。
+- 缺 Flask test client 对 `/admin`、静态资源、权限态的 smoke。
 
 建议发布门禁：
 
 - `python -m unittest`
 - `cd admin && npm ci && npm run build`
-- Flask test client 检查 `/health`、`/web`、`/admin`、`admin_dist` 静态资源。
+- Flask test client 检查 `/health`、`/admin`、`/admin/login`、`admin_dist` 静态资源。
 - 浏览器 smoke 检查登录页、主要后台页面、图片资源不白屏。
 
 处理状态（2026-05-28）：已完成基础 Flask smoke，浏览器 smoke 仍保留为人工/后续自动化项。
 
-- 已增加 `scripts/smoke_http_routes.py`，不用启动真实 HTTP 服务即可检查 `/health`、`/login`、未登录 `/web` 跳转、`/admin` shell、admin hash 静态资源和未登录 `/api/web-auth/me`。
+- 已增加 `scripts/smoke_http_routes.py`，不用启动真实 HTTP 服务即可检查 `/health`、根路径跳转 `/admin`、`/admin` shell、`/admin/login` shell、admin hash 静态资源和未登录 `/api/web-auth/me`。
 - 已补 `tests/test_http_smoke_contract.py`，保证 smoke runner 覆盖核心路由。
 - 后续如接 CI，可把顺序固定为 `python -m unittest`、`cd admin && npm run build`、`python scripts/smoke_http_routes.py`。
 
@@ -701,7 +702,7 @@ sjagent 现在已经从“旧 WebUI + 智能体工具”进入“React 后台 + 
 
 目的：
 
-把智能体、React 后台、小程序、旧 WebUI 对同一业务规则的调用统一起来，避免“一个地方调拨、一个地方进货、一个地方直接开单”。
+把智能体、React 后台、小程序对同一业务规则的调用统一起来，避免“一个地方调拨、一个地方进货、一个地方直接开单”。
 
 ### 6.3 权限感知 UI
 
@@ -813,7 +814,7 @@ sjagent 现在已经从“旧 WebUI + 智能体工具”进入“React 后台 + 
 12. 热销商品按 SPU 聚合。
 13. 工作流订单开单后回填销售单关联。
 14. React build 后 `admin_dist/index.html` 引用资源存在。
-15. Flask smoke 覆盖 `/health`、`/web`、`/admin`、静态资源、未登录/已登录/403。
+15. Flask smoke 覆盖 `/health`、`/admin`、`/admin/login`、静态资源、未登录/已登录/403。
 
 ## 9. 推荐推进顺序
 

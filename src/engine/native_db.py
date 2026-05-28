@@ -2,8 +2,8 @@
 
 This module is the first runtime layer that reads and writes the self-owned
 sjagent_core schema.  It keeps the response shape close to the old ERP helpers
-so the existing agent tools and WebUI can switch over without a large frontend
-rewrite.
+so the existing agent tools and React admin can switch over without a large
+frontend rewrite.
 """
 from __future__ import annotations
 
@@ -281,7 +281,7 @@ def _source_text(value: Any) -> str:
         "migration": "迁移导入",
         "upload": "上传",
         "native_api": "系统保存",
-        "webui": "WebUI上传",
+        "webui": "后台上传",
         "manual": "手工维护",
         "shopxo": "商城迁移",
         "erp": "ERP迁移",

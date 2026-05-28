@@ -3,7 +3,7 @@
 版本：v0.1  
 日期：2026-05-24  
 范围：`/admin/sales` 销售单列表、销售单详情、打印、删除  
-保护范围：旧后台 `/web` 不在本轮改造范围内，不能影响服务器现有 `/web` 运行
+当前状态：旧 `/web` 页面已下线，销售单页只维护 `/admin/sales` React 后台入口。
 
 ## 1. 这张页要解决什么
 
@@ -399,13 +399,13 @@ admin/src/components/business/sales-list/
 - 打印预览会打开 `print-html?auto=0`。
 - 删除必须弹 `AlertDialog`。
 - 删除成功后列表刷新，库存和余额回滚只由服务层处理。
-- `/web` 仍可正常打开。
+- `/admin/sales` 仍可正常打开。
 
 ### 11.2 UI 验收
 
 - 桌面端主列表是表格，不再是大卡片网格。
 - 移动端使用紧凑卡片。
-- 页面密度接近 shadcn 后台示例，不出现旧 WebUI 的大按钮、大边距。
+- 页面密度接近 shadcn 后台示例，不出现旧版后台的大按钮、大边距。
 - 加载态使用 `Skeleton`。
 - 空状态使用 `Empty`。
 - 详情使用 `Dialog`。
@@ -441,7 +441,7 @@ npm.cmd run build
 打开销售单详情
 打开打印预览
 点删除但不确认，确认 AlertDialog 文案
-打开 http://127.0.0.1:8081/web 确认旧后台未受影响
+打开 http://127.0.0.1:8081/admin/sales 确认销售单页未受影响
 ```
 
 ## 12. 分阶段计划
@@ -483,7 +483,7 @@ npm.cmd run build
 - 跑合同测试。
 - 跑 admin build。
 - 浏览器检查 `/admin/sales`。
-- 浏览器检查 `/web`。
+- 浏览器检查 `/admin/sales` 刷新后仍可用。
 - 更新总 UI 开发手册和阶段计划。
 
 ## 13. 不能再犯的错误
@@ -524,4 +524,4 @@ npm.cmd run build
 剩余人工确认：
 
 - 在浏览器打开 `/admin/sales`，确认列表密度、详情 Dialog、删除确认和筛选手感。
-- 打开 `/web`，确认旧后台不受影响。
+- 打开 `/admin/sales`，确认销售单页不受影响。

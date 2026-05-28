@@ -2,7 +2,7 @@
 
 版本：V1.0  
 日期：2026-05-22  
-适用范围：`sjagent` 当前 Flask WebUI、小程序兼容 API、Agent 工具、打印代理。
+适用范围：`sjagent` 当前 React 后台、小程序兼容 API、Agent 工具、打印代理。
 
 ## 1. 目的
 
@@ -19,7 +19,7 @@ React 新后台页面级接口以 [React 后台 API 合同](react_admin_api_cont
 ## 2. 当前分层
 
 ```text
-WebUI / 小程序兼容 API / Agent 工具 / 打印代理
+React 后台 / 小程序兼容 API / Agent 工具 / 打印代理
   -> src/channels/http_api 或 src/core/tools
     -> src/services/business/*
       -> src/engine/native_db.py
@@ -142,7 +142,7 @@ python tests\sales_flow_regression.py
 npm.cmd run build  # admin React
 python -m py_compile src\channels\http_api\__init__.py
 git diff --check
-Flask test client: /web, /admin, /admin/login
+Flask test client: /admin, /admin/login
 Flask test client: /api/mini/goods/category, /api/mini/search/index, /api/mini/search/datalist, /api/mini/home, /api/mini/user/center, /api/mini/goods/detail?id=12
 Flask test client: /api/dashboard/summary, /api/orders/recent, /api/screen/dashboard
 Flask test client: /api/web-auth/me, /api/web-auth/users, /api/auth/me
@@ -159,10 +159,10 @@ Flask test client: /api/users, /api/customers
 - 首页汇总、右侧最近记录、屏幕仪表盘接口 smoke 通过。
 - 后台认证当前账号、审批账号列表、小程序 token 校验 smoke 通过。
 - 身份绑定服务单元测试通过，后台用户/客户列表接口 smoke 通过。
-- React + Radix `/admin` 已能独立构建，`/admin` 和 `/admin/login` smoke 通过。
+- React 后台 `/admin` 已能独立构建，`/admin` 和 `/admin/login` smoke 通过。
 - React 客户列表、客户详情所需 API、销售单列表和销售单详情 smoke 通过。
-- 旧 WebUI `/web` smoke 通过，未替换旧入口。
-- 2026-05-24 服务层基础版已定向部署到服务器 `/opt/sjagent`，重启 `sjagent.service` 后验证 `/api/mini/home`、`/api/mini/goods/detail?id=12`、`/api/auth/wechat-quick-login`、`/web` 基础 smoke 通过。
+- 旧 `/web` 页面已下线，后台入口统一为 `/admin`。
+- 2026-05-24 服务层基础版已定向部署到服务器 `/opt/sjagent`，重启 `sjagent.service` 后验证 `/api/mini/home`、`/api/mini/goods/detail?id=12`、`/api/auth/wechat-quick-login` 和 `/admin` 基础 smoke 通过。
 - 小程序手机号绑定当前支持直接传真实手机号字段；微信 `phoneCode` 换手机号接口尚未实现，后续小程序联调阶段补。
 - React 销售单打印、打印预览和删除确认已接入 `/api/sales/<id>/print-task`、`/api/sales/<id>/print-html`、`DELETE /api/sales/<id>`，前端合同测试和构建通过。
 - React 开单页基础版已接入客户搜索/创建、商品 SPU 分组搜索、颜色规格选择、客户历史价、仓库、付款状态和 `/api/sales/add` 提交；前端合同测试和构建通过。
@@ -202,7 +202,7 @@ Flask test client: /api/users, /api/customers
 - `/api/screen/dashboard` 的汇总和待配送统计走 `DashboardService`。已完成。
 - `/api/mini/home` 的首页设计和商品货架聚合走 `MiniAppService`。已完成。
 - `/api/mini/user/center` 的订单流/销售单统计走 `MiniAppService`。已完成。
-- 旧 WebUI 商品页、库存页、首页仍能打开。
+- `/admin` 商品页、库存页、工作台可用。
 
 ### 第二步：认证服务独立
 
@@ -227,8 +227,8 @@ Flask test client: /api/users, /api/customers
 - `/api/web-auth/users/<id>/approve` 和 reject 正常。
 - 不影响已有后台账号。
 - 服务层单元测试覆盖登录、审批、token 校验。
-- 旧 WebUI `/web` 打开和权限拦截不变。
-状态：已完成基础迁移和 smoke，后续 React 新后台接入时继续压测。
+- `/admin` 打开和权限拦截正常。
+状态：已完成基础迁移和 smoke，后续继续压测。
 
 ### 第三步：Dashboard 服务
 
@@ -252,13 +252,13 @@ Flask test client: /api/users, /api/customers
 
 ### 第五步：React + Radix 后台底座
 
-已完成：创建独立 `/admin` 前端，不替换旧 `/web`。
+已完成：创建独立 `/admin` 前端，并下线旧 `/web` 页面。
 
 验收标准：
 
-- `/web` 不受影响。
+- `/admin` 能独立工作。
 - `/admin` 能独立构建。
 - React API client 统一处理 `code`、`401`、`403`。
 - 登录页和工作台能用现有接口 smoke。
 
-状态：已完成基础底座。源码在 `admin/`，构建产物在 `src/channels/http_api/admin_dist/`，Flask 只新增 `/admin` 静态入口，旧 `/web` 继续保留。
+状态：已完成基础底座。源码在 `admin/`，构建产物在 `src/channels/http_api/admin_dist/`，Flask 使用 `/admin` 作为唯一后台页面入口。

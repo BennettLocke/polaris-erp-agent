@@ -3,7 +3,7 @@
 版本：v0.1  
 日期：2026-05-25  
 适用入口：`/admin/customers`  
-保护范围：旧后台 `/web` 不在本轮改造范围内，必须保持可用。  
+当前状态：旧 `/web` 页面已下线，客户页只维护 `/admin/customers` React 后台入口。
 
 ## 1. 页面定位
 
@@ -925,7 +925,7 @@ error
 
 - 客户页看起来和 shadcn 官方后台示例同一风格。
 - 主色只使用黑、白、灰，状态色克制使用。
-- 客户卡片不再是旧 WebUI 大按钮、大空白。
+- 客户卡片不再是旧版后台的大按钮、大空白。
 - 客户操作按钮在信息下面横向排列或进入更多菜单，不竖着堆。
 - 详情使用中间 Dialog，不再使用旧抽屉样式。
 - 表格使用 `Table`，分页使用 `Pagination`。
@@ -981,7 +981,7 @@ python -m unittest tests.test_business_services -v
 
 - 打开 `/admin/customers`。
 - 打开 `/admin/sales-new`，确认月结客户自动切换仍可用。
-- 打开 `/web`，确认旧后台仍可用。
+- 打开 `/admin/customers`，确认客户页刷新后仍可用。
 
 ## 11. 测试文件计划
 
@@ -1069,8 +1069,8 @@ tests/test_admin_customer_cards_contract.py
 - 浏览器打开 `/admin/customers` 检查真实数据。
 - 搜索客户、打开详情、切换月份。
 - 不直接在生产数据上乱点收款；钱账动作先用本地测试客户或测试库验证。
-- 打开 `/web` 确认旧后台正常。
-- 更新 `docs/react_admin_ui_development_handbook.md` 和 `docs/react_radix_admin_rearchitecture_plan.md` 的进度记录。
+- 打开 `/admin/customers` 确认当前后台正常。
+- 更新本项目书和 `docs/react_admin_api_contract.md` 的进度记录。
 
 ## 13. 功能优化优先级
 
