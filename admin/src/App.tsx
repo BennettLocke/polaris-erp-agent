@@ -1036,12 +1036,17 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  function handleLogin(nextUser: AuthUser) {
+    setUser(nextUser);
+    setNeedsLogin(false);
+  }
+
   if (loading) {
     return <div className="loading-screen">北极星后台加载中</div>;
   }
 
   if (needsLogin || !user) {
-    return <LoginView onLogin={setUser} />;
+    return <LoginView onLogin={handleLogin} />;
   }
 
   return <AdminArea user={user} onLogout={() => setUser(null)} />;
