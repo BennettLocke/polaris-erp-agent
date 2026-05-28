@@ -974,6 +974,16 @@ def _mini_category_id(payload: dict) -> int | None:
     category_id = _mini_int(value, 0)
     return category_id or None
 
+def _mini_category_ids(payload: dict) -> list[int]:
+    values = _mini_text_list(_mini_value(payload, "category_ids", "categoryIds", "cat_ids", "cids", default=[]))
+    ids: list[int] = []
+    for value in values:
+        category_id = _mini_int(value, 0)
+        if category_id and category_id not in ids:
+            ids.append(category_id)
+    return ids
+
+
 
 def _mini_page_payload(payload: dict) -> tuple[int, int]:
     page = max(1, _mini_int(_mini_value(payload, "page", default=1), 1))
@@ -3469,6 +3479,7 @@ def mini_search_datalist_api():
     )
     page, page_size = _mini_page_payload(payload)
     category_id = _mini_category_id(payload)
+    category_ids = _mini_category_ids(payload)
     sort = str(_mini_value(payload, "sort", "order_by", default="")).strip()
 
     try:
@@ -3479,6 +3490,7 @@ def mini_search_datalist_api():
             status=0,
             category_id=category_id,
             group=True,
+            category_ids=category_ids,
             listed_only=True,
             sort=sort,
         )

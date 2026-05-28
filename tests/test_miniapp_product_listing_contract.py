@@ -86,6 +86,18 @@ class MiniappProductListingContractTest(unittest.TestCase):
         self.assertIn("group_order_sql = \"min_price IS NULL ASC, min_price ASC, latest_time DESC, latest_id DESC\"", product_list_source)
         self.assertIn("group_order_sql = \"latest_time DESC, latest_id DESC\"", product_list_source)
 
+    def test_miniapp_product_list_accepts_multiple_category_ids(self):
+        source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+
+        search_start = source.index("def mini_search_datalist_api")
+        detail_start = source.index("def mini_goods_detail_api")
+        search_source = source[search_start:detail_start]
+
+        self.assertIn("category_ids = _mini_category_ids(payload)", search_source)
+        self.assertIn("category_ids=category_ids", search_source)
+        self.assertIn('def _mini_category_ids(payload: dict) -> list[int]', source)
+        self.assertIn('_mini_value(payload, "category_ids", "categoryIds"', source)
+
     def test_mini_home_fallback_requires_listed_products(self):
         source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
 
