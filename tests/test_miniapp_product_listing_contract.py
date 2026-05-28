@@ -1,7 +1,8 @@
 from pathlib import Path
+import json
 import unittest
 
-from src.engine.native_db import NativeDBClient
+from src.engine.native_db import NativeDBClient, _normalize_public_image_url
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -167,6 +168,40 @@ class MiniappProductListingContractTest(unittest.TestCase):
 
         self.assertIn("_hydrate_product_group_summary(product, listed_only=True)", product_info_source)
         self.assertIn("s.is_listed = 1", product_info_source)
+
+    def test_miniapp_product_payload_rewrites_old_oss_image_host(self):
+        old = "https://513sjbz.oss-cn-beijing.aliyuncs.com/upload/6/20260307/detail.jpg"
+        self.assertEqual(
+            _normalize_public_image_url(old),
+            "https://img.513sjbz.com/upload/6/20260307/detail.jpg",
+        )
+
+        db = NativeDBClient.__new__(NativeDBClient)
+        row = {
+            "id": 88,
+            "spu_id": 9,
+            "sku_no": "SJTEST",
+            "category_ids": json.dumps([1], ensure_ascii=False),
+            "primary_category_id": 1,
+            "primary_category_name": "半斤礼盒",
+            "title": "【测试】半斤",
+            "status": "active",
+            "is_listed": 1,
+            "main_image_url": old,
+            "spu_main_image_url": old,
+            "detail_image_urls": json.dumps([old], ensure_ascii=False),
+            "content_html": f'<img src="{old}">',
+            "case_pack_qty": 20,
+            "unit_id": 1,
+        }
+        db._product_category_name_lookup = lambda: {1: "半斤礼盒"}
+
+        payload = db._row_to_product(row)
+
+        self.assertEqual(payload["images"], "https://img.513sjbz.com/upload/6/20260307/detail.jpg")
+        self.assertEqual(payload["detail_image_urls"], ["https://img.513sjbz.com/upload/6/20260307/detail.jpg"])
+        self.assertIn("https://img.513sjbz.com/upload/6/20260307/detail.jpg", payload["content"])
+        self.assertNotIn("513sjbz.oss-cn-beijing.aliyuncs.com", json.dumps(payload, ensure_ascii=False))
 
 
 if __name__ == "__main__":

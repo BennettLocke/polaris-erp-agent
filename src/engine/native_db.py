@@ -28,6 +28,12 @@ from src.utils import get_logger
 
 logger = get_logger("sjagent.native_db")
 
+PUBLIC_IMAGE_HOST = "https://img.513sjbz.com"
+LEGACY_OSS_IMAGE_HOSTS = (
+    "https://513sjbz.oss-cn-beijing.aliyuncs.com",
+    "http://513sjbz.oss-cn-beijing.aliyuncs.com",
+)
+
 _NATIVE_OPERATOR_USER_ID: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "sjagent_native_operator_user_id",
     default=None,
@@ -154,6 +160,39 @@ def _first_image(value: Any) -> str:
         return parsed
     text = str(value).strip()
     return text.split(",")[0].strip() if text else ""
+
+
+def _normalize_public_image_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for host in LEGACY_OSS_IMAGE_HOSTS:
+        if text.startswith(host):
+            return f"{PUBLIC_IMAGE_HOST}{text[len(host):]}"
+    return text
+
+
+def _normalize_public_image_urls(value: Any) -> list[str]:
+    items = _json_loads(value, [])
+    if isinstance(items, str):
+        items = [items]
+    if not isinstance(items, list):
+        return []
+    result: list[str] = []
+    for item in items:
+        url = _normalize_public_image_url(item)
+        if url and url not in result:
+            result.append(url)
+    return result
+
+
+def _normalize_public_image_text(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    for host in LEGACY_OSS_IMAGE_HOSTS:
+        text = text.replace(host, PUBLIC_IMAGE_HOST)
+    return text
 
 
 def _merge_category_names(category_ids: Iterable[Any], category_lookup: dict[int, str], primary_name: str = "") -> list[str]:
@@ -1112,12 +1151,10 @@ class NativeDBClient:
         )
         category_text = " / ".join(category_names)
         price = row.get("retail_price") or row.get("min_price") or row.get("max_price") or 0
-        spec_image = row.get("main_image_url") or _first_image(row.get("detail_image_urls"))
-        spu_image = row.get("spu_main_image_url") or ""
-        image = spu_image or spec_image
-        detail_images = _json_loads(row.get("detail_image_urls"), [])
-        if not isinstance(detail_images, list):
-            detail_images = []
+        spec_image = _normalize_public_image_url(row.get("main_image_url") or _first_image(row.get("detail_image_urls")))
+        spu_image = _normalize_public_image_url(row.get("spu_main_image_url") or "")
+        image = _normalize_public_image_url(spu_image or spec_image)
+        detail_images = _normalize_public_image_urls(row.get("detail_image_urls"))
         available_colors = _json_loads(row.get("available_colors"), [])
         if not isinstance(available_colors, list):
             available_colors = []
@@ -1168,7 +1205,7 @@ class NativeDBClient:
             "main_images": image,
             "main_images_list": [image] if image else [],
             "detail_image_urls": detail_images,
-            "content": row.get("content_html") or "",
+            "content": _normalize_public_image_text(row.get("content_html") or ""),
             "product_category_ids": category_ids,
             "product_category_names": category_names,
             "product_category_text": category_text,

@@ -187,8 +187,51 @@ def _mini_order_customer_id(user: dict | None) -> int | None:
     return None
 
 
+def _mini_orderflow_public_keyword(keyword: str) -> bool:
+    """Allow public order lookups only when the user typed an exact-looking order id."""
+    text = str(keyword or "").strip().upper()
+    if not text:
+        return False
+    if re.fullmatch(r"\d{4,}", text):
+        return True
+    return bool(re.fullmatch(r"(?:WF|WFO|XSD|XS|SO|DD|ORDER|SALES)[A-Z0-9_-]{4,}", text))
+
+
+def _mini_order_identifier_values(row: dict) -> set[str]:
+    if not isinstance(row, dict):
+        return set()
+    keys = (
+        "id",
+        "order_id",
+        "orderId",
+        "order_no",
+        "orderNo",
+        "workflow_order_id",
+        "workflowOrderId",
+        "sales_id",
+        "salesId",
+        "sales_no",
+        "salesNo",
+        "no",
+        "sn",
+    )
+    values: set[str] = set()
+    for key in keys:
+        value = str(row.get(key) or "").strip()
+        if value:
+            values.add(value.upper())
+    return values
+
+
+def _mini_filter_public_order_rows(rows: list[dict], keyword: str) -> list[dict]:
+    text = str(keyword or "").strip().upper()
+    if not text:
+        return []
+    return [row for row in rows if text in _mini_order_identifier_values(row)]
+
+
 def _mini_orderflow_should_query(keyword: str, user: dict | None) -> bool:
-    return bool(str(keyword or "").strip()) or _mini_order_user_can_edit(user) or bool(_mini_order_customer_id(user))
+    return _mini_order_user_can_edit(user) or bool(_mini_order_customer_id(user)) or _mini_orderflow_public_keyword(keyword)
 
 
 def _mini_orderflow_empty_payload(page: int = 1, page_size: int = 20) -> dict:
@@ -974,6 +1017,7 @@ def _mini_category_id(payload: dict) -> int | None:
     category_id = _mini_int(value, 0)
     return category_id or None
 
+
 def _mini_category_ids(payload: dict) -> list[int]:
     values = _mini_text_list(_mini_value(payload, "category_ids", "categoryIds", "cat_ids", "cids", default=[]))
     ids: list[int] = []
@@ -982,7 +1026,6 @@ def _mini_category_ids(payload: dict) -> list[int]:
         if category_id and category_id not in ids:
             ids.append(category_id)
     return ids
-
 
 
 def _mini_page_payload(payload: dict) -> tuple[int, int]:
@@ -3552,6 +3595,8 @@ def mini_orderflow_list_api():
     page, page_size = _mini_page_payload(payload)
     user = _mini_request_user()
     customer_id = _mini_order_customer_id(user)
+    internal_user = _mini_order_user_can_edit(user)
+    public_exact_search = bool(keyword and not internal_user and not customer_id)
 
     if not _mini_orderflow_should_query(keyword, user):
         return jsonify({"code": 0, "data": _mini_orderflow_empty_payload(page, page_size)})
@@ -3562,12 +3607,30 @@ def mini_orderflow_list_api():
     sales_total = 0
 
     try:
-        workflows, workflow_total = _db_workflow_orders(keyword, page, page_size, "active", customer_id=customer_id if not keyword else None)
+        workflows, workflow_total = _db_workflow_orders(
+            keyword,
+            page,
+            page_size,
+            "active",
+            customer_id=None if internal_user else customer_id,
+        )
+        if public_exact_search:
+            workflows = _mini_filter_public_order_rows(workflows, keyword)
+            workflow_total = len(workflows)
     except Exception as e:
         logger.warning(f"mini orderflow workflow query failed: {e}")
 
     try:
-        sales, sales_total = _db_sales_cards(keyword, page, page_size, None, customer_id=customer_id if not keyword else None)
+        sales, sales_total = _db_sales_cards(
+            keyword,
+            page,
+            page_size,
+            None,
+            customer_id=None if internal_user else customer_id,
+        )
+        if public_exact_search:
+            sales = _mini_filter_public_order_rows(sales, keyword)
+            sales_total = len(sales)
     except Exception as e:
         logger.warning(f"mini orderflow sales query failed: {e}")
 
@@ -3618,8 +3681,21 @@ def _mini_workflow_quantity(value) -> int:
         return 0
 
 
-def _mini_workflow_order_list(keyword: str, page: int = 1, page_size: int = 100, status_filter: str = "active") -> tuple[list[dict], int]:
-    cards, total = _db_workflow_orders(keyword, max(1, page), min(max(1, page_size), 200), status_filter)
+def _mini_workflow_order_list(
+    keyword: str,
+    page: int = 1,
+    page_size: int = 100,
+    status_filter: str = "active",
+    *,
+    customer_id: int | None = None,
+) -> tuple[list[dict], int]:
+    cards, total = _db_workflow_orders(
+        keyword,
+        max(1, page),
+        min(max(1, page_size), 200),
+        status_filter,
+        customer_id=customer_id,
+    )
     return _safe_json(cards), int(total or 0)
 
 
@@ -3705,9 +3781,20 @@ def mini_workflow_search_api():
     payload = _mini_request_payload()
     keyword = str(_mini_value(payload, "keyword", "q", "wd", default="")).strip()
     user = _mini_request_user()
+    customer_id = _mini_order_customer_id(user)
+    internal_user = _mini_order_user_can_edit(user)
+    public_exact_search = bool(keyword and not internal_user and not customer_id)
     if not _mini_orderflow_should_query(keyword, user):
         return jsonify({"code": 0, "data": []})
-    cards, _total = _mini_workflow_order_list(keyword, 1, 100, "active")
+    cards, _total = _mini_workflow_order_list(
+        keyword,
+        1,
+        100,
+        "active",
+        customer_id=None if internal_user else customer_id,
+    )
+    if public_exact_search:
+        cards = _mini_filter_public_order_rows(cards, keyword)
     return jsonify({"code": 0, "data": cards})
 
 

@@ -4,11 +4,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import src.channels.http_api as api_module
 from src.channels.http_api.__init__ import (
+    _mini_filter_public_order_rows,
     _miniapp_path_is_public,
     _mini_order_customer_id,
     _mini_order_user_can_edit,
     _mini_orderflow_empty_payload,
+    _mini_orderflow_public_keyword,
     _mini_orderflow_should_query,
 )
 
@@ -34,8 +37,60 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
         self.assertFalse(_mini_orderflow_should_query("", None))
         self.assertFalse(_mini_orderflow_should_query("   ", {"role": "customer"}))
         self.assertTrue(_mini_orderflow_should_query("", {"role": "customer", "linked_party_id": 55}))
-        self.assertTrue(_mini_orderflow_should_query("岩韵", None))
+        self.assertTrue(_mini_orderflow_should_query("岩韵", {"role": "customer", "linked_party_id": 55}))
         self.assertTrue(_mini_orderflow_should_query("", {"role": "staff"}))
+
+    def test_public_order_search_requires_exact_order_number(self):
+        self.assertFalse(_mini_orderflow_should_query("见喜", None))
+        self.assertFalse(_mini_orderflow_should_query("SJ", None))
+        self.assertFalse(_mini_orderflow_should_query("SJ1123", None))
+        self.assertFalse(_mini_orderflow_should_query("客户名称", {"role": "customer"}))
+        self.assertTrue(_mini_orderflow_public_keyword("1000025"))
+        self.assertTrue(_mini_orderflow_public_keyword("WF202605280001"))
+        self.assertTrue(_mini_orderflow_should_query("1000025", None))
+        self.assertTrue(_mini_orderflow_should_query("XSD202605280001", {"role": "customer"}))
+
+    def test_public_exact_search_filters_fuzzy_order_results(self):
+        rows = [
+            {"id": 1000025, "order_no": "WF202605280001", "goods_name": "见喜半斤"},
+            {"id": 1000026, "order_no": "WF202605280002", "goods_name": "见喜三两"},
+            {"sales_no": "XSD202605280001", "customer_name": "好照"},
+        ]
+        self.assertEqual(
+            _mini_filter_public_order_rows(rows, "WF202605280001"),
+            [{"id": 1000025, "order_no": "WF202605280001", "goods_name": "见喜半斤"}],
+        )
+        self.assertEqual(
+            _mini_filter_public_order_rows(rows, "1000025"),
+            [{"id": 1000025, "order_no": "WF202605280001", "goods_name": "见喜半斤"}],
+        )
+        self.assertEqual(
+            _mini_filter_public_order_rows(rows, "XSD202605280001"),
+            [{"sales_no": "XSD202605280001", "customer_name": "好照"}],
+        )
+
+    def test_public_legacy_workflow_search_filters_exact_order_results(self):
+        rows = [
+            {"id": 1000025, "order_no": "WF202605280001", "goods_name": "match"},
+            {"id": 1000026, "order_no": "WF202605280002", "goods_name": "nearby"},
+        ]
+        original_db_workflow_orders = api_module._db_workflow_orders
+        original_request_user = api_module._mini_request_user
+        try:
+            def fake_db_workflow_orders(keyword, page, page_size, status_filter, customer_id=None):
+                return rows, len(rows)
+
+            api_module._db_workflow_orders = fake_db_workflow_orders
+            api_module._mini_request_user = lambda: None
+            with api_module.app.test_client() as client:
+                response = client.get("/api/mini/workflow-order/search?keyword=WF202605280001")
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["code"], 0)
+            self.assertEqual(payload["data"], [rows[0]])
+        finally:
+            api_module._db_workflow_orders = original_db_workflow_orders
+            api_module._mini_request_user = original_request_user
 
     def test_empty_payload_never_contains_order_rows(self):
         payload = _mini_orderflow_empty_payload(page=2, page_size=30)
