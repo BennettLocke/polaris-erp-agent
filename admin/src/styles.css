@@ -3351,10 +3351,10 @@ nav button:hover {
   font-size: 12px;
 }
 
-.sales-order-detail-dialog {
+.sj-dialog-content.sales-order-detail-dialog {
   display: grid;
   gap: 14px;
-  width: min(920px, calc(100vw - 32px));
+  width: min(1100px, calc(100vw - 32px));
   max-height: min(88vh, 760px);
   overflow: hidden;
 }
@@ -3394,6 +3394,33 @@ nav button:hover {
 .sales-detail-table-wrap .sj-table-container,
 .sales-detail-table .sj-table-container {
   max-height: 420px;
+}
+
+.sales-detail-table {
+  min-width: 920px;
+}
+
+.sales-detail-table .sj-table-head:nth-child(1),
+.sales-detail-table .sj-table-cell:nth-child(1) {
+  width: 240px;
+}
+
+.sales-detail-table .sj-table-head:nth-child(2),
+.sales-detail-table .sj-table-cell:nth-child(2) {
+  width: 160px;
+}
+
+.sales-detail-table .sj-table-head:nth-child(3),
+.sales-detail-table .sj-table-cell:nth-child(3),
+.sales-detail-table .sj-table-head:nth-child(4),
+.sales-detail-table .sj-table-cell:nth-child(4),
+.sales-detail-table .sj-table-head:nth-child(5),
+.sales-detail-table .sj-table-cell:nth-child(5),
+.sales-detail-table .sj-table-head:nth-child(6),
+.sales-detail-table .sj-table-cell:nth-child(6),
+.sales-detail-table .sj-table-head:nth-child(7),
+.sales-detail-table .sj-table-cell:nth-child(7) {
+  white-space: nowrap;
 }
 
 .business-card header,
