@@ -17,11 +17,39 @@ class InventoryService(BusinessService):
     def search(self, *, keyword: str = "", color: str = "", only_in_stock: bool = False, limit: int = 100) -> list[dict]:
         return self.db.search_inventory(keyword=keyword, color=color, only_in_stock=only_in_stock, limit=limit)
 
-    def balances(self, *, keyword: str = "", warehouse_id: int | None = None, page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
-        return self.db.inventory_balances(keyword=keyword, warehouse_id=warehouse_id, page=page, page_size=page_size)
+    def balances(
+        self,
+        *,
+        keyword: str = "",
+        warehouse_id: int | None = None,
+        stock_status: str = "",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[dict], int]:
+        return self.db.inventory_balances(
+            keyword=keyword,
+            warehouse_id=warehouse_id,
+            stock_status=stock_status,
+            page=page,
+            page_size=page_size,
+        )
 
-    def ledger(self, *, keyword: str = "", page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
-        return self.db.inventory_ledger(keyword=keyword, page=page, page_size=page_size)
+    def ledger(
+        self,
+        *,
+        keyword: str = "",
+        sku_id: int | None = None,
+        warehouse_id: int | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[dict], int]:
+        return self.db.inventory_ledger(
+            keyword=keyword,
+            sku_id=sku_id,
+            warehouse_id=warehouse_id,
+            page=page,
+            page_size=page_size,
+        )
 
     def stock_documents(self, *, keyword: str = "", page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
         return self.db.stock_documents(keyword=keyword, page=page, page_size=page_size)

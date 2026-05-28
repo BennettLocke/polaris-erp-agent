@@ -288,6 +288,50 @@ class MiniAppService(BusinessService):
             return self.db.update_product_category_image(target_id, field, url)
         return {"code": 400, "msg": "不支持的图片配置类型"}
 
+    def create_image_asset(self, payload: dict) -> dict:
+        data = payload if isinstance(payload, dict) else {}
+        scene = str(data.get("scene") or "home_banner").strip()
+        if scene != "home_banner":
+            return {"code": 400, "msg": "当前只支持新增首页轮播图"}
+        if not hasattr(self.db, "create_miniapp_asset"):
+            return {"code": 500, "msg": "数据库服务未实现小程序图片新增"}
+
+        existing = self._safe_rows("miniapp_assets", scene, True)
+        next_index = len(existing) + 1
+        sort_values = []
+        for item in existing:
+            try:
+                sort_values.append(int(item.get("sort_order") or 0))
+            except Exception:
+                continue
+        default_sort = (max(sort_values) - 10) if sort_values else 100
+        name = str(data.get("name") or f"首页轮播{next_index}").strip()
+        asset = {
+            "scene": scene,
+            "name": name,
+            "asset_url": str(data.get("asset_url") or "").strip(),
+            "active_asset_url": str(data.get("active_asset_url") or "").strip(),
+            "link_type": str(data.get("link_type") or "page").strip(),
+            "link_value": str(data.get("link_value") or "/pages/category/index").strip(),
+            "badge_text": str(data.get("badge_text") or "").strip(),
+            "subtitle": str(data.get("subtitle") or "").strip(),
+            "sort_order": int(data.get("sort_order") or default_sort),
+            "enabled": 1,
+            "extra_json": data.get("extra_json") if data.get("extra_json") not in ("", {}) else None,
+        }
+        return self.db.create_miniapp_asset(**asset)
+
+    def delete_image_asset(self, asset_id: int) -> dict:
+        try:
+            clean_id = int(asset_id or 0)
+        except Exception:
+            clean_id = 0
+        if clean_id <= 0:
+            return {"code": 400, "msg": "缺少小程序图片ID"}
+        if not hasattr(self.db, "delete_miniapp_asset"):
+            return {"code": 500, "msg": "数据库服务未实现小程序图片删除"}
+        return self.db.delete_miniapp_asset(clean_id)
+
     def config_payload(self) -> dict:
         banners = [
             self._normalize_banner(item, index)
@@ -527,22 +571,47 @@ class MiniAppService(BusinessService):
             "source": "sjagent_core",
         }
 
+    def _user_is_internal(self, user: dict) -> bool:
+        try:
+            if int(user.get("is_admin") or 0) == 1:
+                return True
+        except Exception:
+            if user.get("is_admin") is True:
+                return True
+        role = str(user.get("role") or user.get("role_code") or "").strip().lower()
+        return role in {"admin", "staff", "employee", "warehouse", "designer"}
+
+    def _linked_customer_id(self, user: dict) -> int | None:
+        for key in ("linked_party_id", "linkedPartyId", "customer_id", "customerId"):
+            try:
+                value = int(user.get(key) or 0)
+            except Exception:
+                value = 0
+            if value > 0:
+                return value
+        return None
+
     def user_center_payload(self, user: dict | None = None) -> dict:
+        user_data = user if isinstance(user, dict) else {}
+        customer_id = None if self._user_is_internal(user_data) else self._linked_customer_id(user_data)
+        should_query_orders = self._user_is_internal(user_data) or bool(customer_id)
         workflow_total = 0
         sales_total = 0
-        try:
-            _rows, workflow_total = self.db.workflow_orders(
-                keyword="",
-                page=1,
-                page_size=1,
-                status_filter="active",
-            )
-        except Exception:
-            workflow_total = 0
-        try:
-            _rows, sales_total = self.db.sales_cards(keyword="", page=1, page_size=1, status=None)
-        except Exception:
-            sales_total = 0
+        if should_query_orders:
+            try:
+                _rows, workflow_total = self.db.workflow_orders(
+                    keyword="",
+                    page=1,
+                    page_size=1,
+                    status_filter="active",
+                    customer_id=customer_id,
+                )
+            except Exception:
+                workflow_total = 0
+            try:
+                _rows, sales_total = self.db.sales_cards(keyword="", page=1, page_size=1, status=None, customer_id=customer_id)
+            except Exception:
+                sales_total = 0
 
         workflow_count = int(workflow_total or 0)
         sales_count = int(sales_total or 0)

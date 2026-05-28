@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -83,7 +83,10 @@ type OrderFormState = {
   color: string;
   quantity: string;
   screenPrint: boolean;
+  made: boolean;
+  delivered: boolean;
   completed: boolean;
+  imageUrls: string[];
   remark: string;
 };
 type OrderStatusGroup = {
@@ -115,7 +118,10 @@ const emptyForm: OrderFormState = {
   color: "",
   quantity: "1",
   screenPrint: false,
+  made: false,
+  delivered: false,
   completed: false,
+  imageUrls: [],
   remark: ""
 };
 
@@ -133,6 +139,11 @@ function numericValue(value: unknown, fallback = 0) {
 
 function boolValue(value: unknown) {
   return value === true || Number(value || 0) === 1 || value === "1";
+}
+
+function uploadedImageUrl(result: { url?: string; full_url?: string; images?: string; path?: string } | string) {
+  if (typeof result === "string") return result;
+  return result.url || result.full_url || result.images || result.path || "";
 }
 
 function parseOrderImages(order_images: ProcessOrderRaw["order_images"]) {
@@ -238,7 +249,10 @@ function formFromOrder(order: ProcessOrder | null): OrderFormState {
     color: order.color === "未记录颜色" ? "" : order.color,
     quantity: String(order.quantity || 1),
     screenPrint: order.screenPrint,
+    made: order.made,
+    delivered: order.delivered,
     completed: order.completed,
+    imageUrls: order.imageUrls,
     remark: order.remark
   };
 }
@@ -252,8 +266,10 @@ function payloadFromForm(form: OrderFormState, order?: ProcessOrder | null): Pro
     color: form.color.trim(),
     order_quantity: Math.max(1, numericValue(form.quantity, 1)),
     is_screen_print: form.screenPrint ? 1 : 0,
+    is_made: form.made ? 1 : 0,
+    is_delivered: form.delivered ? 1 : 0,
     order_type: form.completed ? 1 : 0,
-    order_images: order?.imageUrls || [],
+    order_images: form.imageUrls,
     remark: form.remark.trim()
   };
 }
@@ -733,18 +749,30 @@ function OrderFormDialog({
   form,
   loading,
   open,
+  uploading,
   onFormChange,
+  onRemoveImage,
   onOpenChange,
+  onUploadImage,
   onSubmit
 }: {
   editingOrder: ProcessOrder | null;
   form: OrderFormState;
   loading: boolean;
   open: boolean;
+  uploading: boolean;
   onFormChange: (form: OrderFormState) => void;
+  onRemoveImage: (index: number) => void;
   onOpenChange: (open: boolean) => void;
+  onUploadImage: (files: File[]) => void;
   onSubmit: () => void;
 }) {
+  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith("image/"));
+    if (files.length) onUploadImage(files);
+    event.target.value = "";
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="order-form-dialog">
@@ -805,6 +833,22 @@ function OrderFormDialog({
               />
             </Field>
             <Field className="order-form-switch-field">
+              <FieldLabel>已制作</FieldLabel>
+              <Switch
+                checked={form.made}
+                onCheckedChange={(checked) => onFormChange({ ...form, made: checked })}
+                aria-label="已制作"
+              />
+            </Field>
+            <Field className="order-form-switch-field">
+              <FieldLabel>已配送</FieldLabel>
+              <Switch
+                checked={form.delivered}
+                onCheckedChange={(checked) => onFormChange({ ...form, delivered: checked })}
+                aria-label="已配送"
+              />
+            </Field>
+            <Field className="order-form-switch-field">
               <FieldLabel>完成状态</FieldLabel>
               <Switch
                 checked={form.completed}
@@ -813,6 +857,32 @@ function OrderFormDialog({
               />
             </Field>
           </div>
+          <Field className="order-form-image-field">
+            <FieldLabel>订单图片</FieldLabel>
+            {form.imageUrls.length ? (
+              <div className="order-form-image-grid">
+                {form.imageUrls.map((url, index) => (
+                  <div className="order-form-image-card" key={`${url}-${index}`}>
+                    <img src={url} alt={`订单图片 ${index + 1}`} />
+                    <Button type="button" variant="outline" size="sm" onClick={() => onRemoveImage(index)} disabled={loading || uploading}>
+                      移除
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="order-form-image-empty">还没有图片</div>
+            )}
+            <Input
+              className="order-form-image-upload"
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={loading || uploading}
+              onChange={handleImageChange}
+            />
+            <FieldDescription>{uploading ? "图片上传中..." : "可上传多张订单图，保存后会跟订单一起展示。"}</FieldDescription>
+          </Field>
           <Field>
             <FieldLabel htmlFor="orderRemark">备注</FieldLabel>
             <Textarea
@@ -824,8 +894,8 @@ function OrderFormDialog({
           </Field>
         </FieldGroup>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>取消</Button>
-          <Button type="button" onClick={onSubmit} disabled={loading || !form.customerName.trim() || !form.goodsName.trim()}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading || uploading}>取消</Button>
+          <Button type="button" onClick={onSubmit} disabled={loading || uploading || !form.customerName.trim() || !form.goodsName.trim()}>
             {loading ? "保存中" : "保存订单"}
           </Button>
         </DialogFooter>
@@ -1084,6 +1154,7 @@ function OrdersPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<OrderFormState>(emptyForm);
   const [formSaving, setFormSaving] = useState(false);
+  const [formUploading, setFormUploading] = useState(false);
 
   async function load(nextPage = page, nextKeyword = keyword, nextFilter = filter) {
     setLoading(true);
@@ -1159,6 +1230,35 @@ function OrdersPage() {
     } finally {
       setFormSaving(false);
     }
+  }
+
+  async function uploadOrderImages(files: File[]) {
+    if (!files.length) return;
+    setError("");
+    setFormUploading(true);
+    try {
+      const urls: string[] = [];
+      for (const file of files) {
+        const result = await api.uploadWorkflowOrderImage(file);
+        const url = uploadedImageUrl(result);
+        if (url) urls.push(url);
+      }
+      if (urls.length) {
+        setForm((current) => ({ ...current, imageUrls: [...current.imageUrls, ...urls].slice(0, 12) }));
+      }
+      setNotice(urls.length ? "订单图片已上传" : "图片上传完成但没有返回地址");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "订单图片上传失败");
+    } finally {
+      setFormUploading(false);
+    }
+  }
+
+  function removeFormImage(index: number) {
+    setForm((current) => ({
+      ...current,
+      imageUrls: current.imageUrls.filter((_, itemIndex) => itemIndex !== index)
+    }));
   }
 
   async function updateOrderStatus(order: ProcessOrder, field: OrderStatusField, checked: boolean) {
@@ -1276,8 +1376,11 @@ function OrdersPage() {
         form={form}
         loading={formSaving}
         open={formOpen}
+        uploading={formUploading}
         onFormChange={setForm}
+        onRemoveImage={removeFormImage}
         onOpenChange={setFormOpen}
+        onUploadImage={(files) => void uploadOrderImages(files)}
         onSubmit={() => void saveOrder()}
       />
       <OrderDetailDialog

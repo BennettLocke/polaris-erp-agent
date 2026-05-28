@@ -49,6 +49,10 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                 return self._reply("已取消创建工作流订单，没有写入系统。")
             create_result = self._create_many(state.get("parsed_list") or [])
             order_params = state.get("order_params") or {}
+            created_ids = create_result.get("workflow_order_ids") or []
+            if created_ids:
+                order_params = dict(order_params)
+                order_params.setdefault("workflow_order_id", created_ids[0])
             if order_params.get("products"):
                 from src.skills.order_flow.workflow import OrderFlowWorkflow
                 order_result = OrderFlowWorkflow().execute("图片识别结果确认开单", params=order_params)
@@ -58,6 +62,9 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                     return order_result
                 return self._reply(create_result.get("reply", "") + "\n\n" + order_result.get("reply", "开单流程已处理。"))
             optional_order_params = state.get("optional_order_params") or {}
+            if created_ids:
+                optional_order_params = dict(optional_order_params)
+                optional_order_params.setdefault("workflow_order_id", created_ids[0])
             if optional_order_params.get("products"):
                 return {
                     "status": "ask",
@@ -332,6 +339,7 @@ class WorkflowOrderWorkflow(BaseWorkflow):
 
         ok_lines = []
         errors = []
+        created_ids = []
         for idx, parsed in enumerate(parsed_list, 1):
             try:
                 result = self.caller.call(
@@ -360,6 +368,11 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                 order_id = result.get("data") or result.get("id") or ""
                 if isinstance(order_id, dict):
                     order_id = order_id.get("id") or order_id.get("order_id") or ""
+            if order_id:
+                try:
+                    created_ids.append(int(order_id))
+                except (TypeError, ValueError):
+                    pass
             suffix = f"单号 {order_id}" if order_id else "已提交"
             ok_lines.append(f"{idx}. {parsed.get('customer') or '散客'} | {parsed.get('goods_name', '')} {parsed.get('color', '')} | {parsed.get('quantity') or 1} | {suffix}")
 
@@ -370,7 +383,9 @@ class WorkflowOrderWorkflow(BaseWorkflow):
         if errors:
             lines.append("以下工作流订单创建失败：")
             lines.extend(errors)
-        return self._reply("\n".join(lines) if lines else "没有成功创建工作流订单。")
+        reply = self._reply("\n".join(lines) if lines else "没有成功创建工作流订单。")
+        reply["workflow_order_ids"] = created_ids
+        return reply
 
     def _create(self, parsed: dict) -> dict:
         try:

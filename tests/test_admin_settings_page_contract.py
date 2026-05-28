@@ -18,7 +18,7 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         settings_index = settings_index_path.read_text(encoding="utf-8")
 
         self.assertIn('from "./components/business/settings"', app_source)
-        self.assertIn("<SettingsPage />", app_source)
+        self.assertIn("<SettingsPage currentUser={user} />", app_source)
         self.assertIn('route === "media"', app_source)
         self.assertIn('route === "miniapp-images"', app_source)
         self.assertIn('new URLSearchParams(window.location.search)', settings_source)
@@ -97,6 +97,14 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         self.assertIn("编辑分类", settings_source)
         self.assertIn("api.saveProductCategory", settings_source)
         self.assertIn("分类库存策略", settings_source)
+        product_source = settings_source.split("function ProductBasicPanel", 1)[1].split("function InventoryRulesPanel", 1)[0]
+        inventory_source = settings_source.split("function InventoryRulesPanel", 1)[1].split("function PaymentRulesPanel", 1)[0]
+        self.assertIn("库存规则由库存规则页统一维护", product_source)
+        self.assertIn("去库存规则设置", product_source)
+        self.assertNotIn("<FieldLabel>分类库存策略</FieldLabel>", product_source)
+        self.assertNotIn("onValueChange={(next) => setCategoryDraft({ ...categoryDraft, inventory_policy: next })}", product_source)
+        self.assertIn("唯一编辑入口", inventory_source)
+        self.assertIn("新分类自动判断规则", inventory_source)
         self.assertIn("扣库存关键词", settings_source)
         self.assertIn("不扣库存关键词", settings_source)
         self.assertIn("non_stock_category_keywords", settings_source)
@@ -132,6 +140,7 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         self.assertIn("multiple", media_source)
         self.assertIn("uploadPendingImages", media_source)
         self.assertIn("deleteProductMedia", media_source)
+        self.assertIn("deletePendingProductMedia", media_source)
         self.assertIn("selectedMediaIds", media_source)
         self.assertIn("toggleMediaSelection", media_source)
         self.assertIn("deleteSelectedProductMedia", media_source)
@@ -152,6 +161,69 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         self.assertIn("updateMiniappImage", miniapp_source)
         self.assertNotIn("productMedia", miniapp_source)
         self.assertNotIn("deleteProductMedia", miniapp_source)
+
+    def test_media_settings_can_edit_upload_rules(self):
+        settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
+        media_source = settings_source.split("function MediaSettingsPanel", 1)[1].split("function MiniappSettingsPanel", 1)[0]
+        css_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        for token in [
+            "mediaRules",
+            "patchMediaRule",
+            "saveImageRules",
+            "registerSave(\"media\", saveImageRules)",
+            "api.saveSystemSetting(\"image_rules\"",
+            "settings-media-rules",
+            "settings-media-rule-grid",
+            "上传规则",
+            "OSS 路径",
+            "压缩规则",
+            "待绑定清理天数",
+            "1:1 主图规则",
+            "max_image_upload_mb",
+            "pending_cleanup_days",
+            "require_square_main_image",
+        ]:
+            self.assertIn(token, media_source)
+        self.assertIn(".settings-media-rules", css_source)
+        self.assertIn(".settings-media-rule-grid", css_source)
+
+    def test_product_media_has_pending_batch_delete_boundary(self):
+        settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        native_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+        media_source = settings_source.split("function MediaSettingsPanel", 1)[1].split("function MiniappSettingsPanel", 1)[0]
+
+        self.assertIn("deletePendingProductMedia", api_source)
+        self.assertIn("/api/product/media/pending", api_source)
+        self.assertIn("api.deletePendingProductMedia(selectedPendingMediaIds)", media_source)
+        self.assertIn('@app.route("/api/product/media/pending", methods=["DELETE", "POST"])', http_source)
+        self.assertIn("delete_pending_media", http_source)
+        self.assertIn("delete_pending_product_media", native_source)
+        self.assertIn("media_type='pending'", native_source)
+        self.assertIn("sku_id IS NULL", native_source)
+        self.assertIn("spu_id IS NULL", native_source)
+
+    def test_user_permissions_protect_current_admin_in_ui(self):
+        settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
+        app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")
+        user_source = settings_source.split("function UserPermissionsPanel", 1)[1].split("function PrintSettingsPanel", 1)[0]
+
+        self.assertIn("currentUser={user}", app_source)
+        self.assertIn("AuthUser", settings_source)
+        self.assertIn("type SettingsPageProps", settings_source)
+        self.assertIn("currentUser?: AuthUser | null", settings_source)
+        self.assertIn("UserPermissionsPanel {...callbacks} currentUser={currentUser}", settings_source)
+        self.assertIn("type UserPermissionsPanelProps", settings_source)
+        self.assertIn("UserPermissionsPanelProps", user_source)
+        self.assertIn("isSelfUser", user_source)
+        self.assertIn("currentUser?.native_user_id", user_source)
+        self.assertIn("roleGuarded", user_source)
+        self.assertIn("statusGuarded", user_source)
+        self.assertIn("当前账号", user_source)
+        self.assertIn("settings-user-guard-note", user_source)
+        self.assertIn("最后一个管理员", user_source)
 
 
 if __name__ == "__main__":

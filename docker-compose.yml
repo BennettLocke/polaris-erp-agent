@@ -22,6 +22,11 @@ services:
       # OSS
       - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID}
       - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET}
+      # Web 后台会话密钥
+      - SJAGENT_ENV=${SJAGENT_ENV:-production}
+      - SJAGENT_HTTP_HOST=${SJAGENT_HTTP_HOST:-0.0.0.0}
+      - SJAGENT_SECRET_KEY=${SJAGENT_SECRET_KEY}
+      - SJAGENT_SESSION_COOKIE_SECURE=${SJAGENT_SESSION_COOKIE_SECURE:-1}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./logs:/app/logs

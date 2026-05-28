@@ -16,6 +16,7 @@ node_modules/
 
 # Runtime data
 logs/
+admin/*.log
 .tmp/
 data/sessions/
 data/uploads/

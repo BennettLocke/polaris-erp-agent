@@ -1,0 +1,43 @@
+# Production baseline for sjagent.
+# Keep requirements.txt as the flexible developer input; deploy with this file
+# when the server needs reproducible direct dependency versions.
+
+langgraph==0.2.60
+langchain-core==0.3.62
+langchain-anthropic==0.3.14
+
+anthropic==0.52.0
+
+pymysql==1.1.1
+
+httpx==0.28.1
+requests==2.32.3
+
+Pillow==10.4.0
+RapidOCR==2.0.0
+onnxruntime==1.25.0
+openwakeword==0.6.0; platform_system == "Linux"
+opencv-python==4.10.0.84
+
+oss2==2.19.0
+aliyun-python-sdk-core==2.16.0
+
+pyyaml==6.0.2
+
+pydantic==2.10.5
+
+loguru==0.7.3
+
+flask==3.0.0
+reportlab==4.2.0
+
+lark-oapi==1.2.0
+
+python-dotenv==1.0.0
+websockets==12.0
+pyalsaaudio==0.11.0; platform_system == "Linux"
+webrtcvad-wheels==2.0.14; platform_system == "Linux"
+pvporcupine==4.0.2; platform_system == "Linux"
+sherpa-onnx==1.13.2; platform_machine == "aarch64" or platform_machine == "x86_64" or platform_machine == "AMD64"
+sentencepiece==0.2.0
+pypinyin==0.55.0

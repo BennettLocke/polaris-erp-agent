@@ -21,7 +21,11 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
         self.assertTrue(_miniapp_path_is_public("/api/mini/search/datalist"))
         self.assertTrue(_miniapp_path_is_public("/api/mini/goods/detail"))
         self.assertTrue(_miniapp_path_is_public("/api/mini/goods/category"))
+        self.assertTrue(_miniapp_path_is_public("/api/mini/home"))
         self.assertFalse(_miniapp_path_is_public("/api/mini/user"))
+        self.assertFalse(_miniapp_path_is_public("/api/mini/orderflow/list"))
+        self.assertFalse(_miniapp_path_is_public("/api/mini/workflow-order/search"))
+        self.assertFalse(_miniapp_path_is_public("/api/mini/workflow-order/inventory-search"))
 
     def test_only_staff_and_admin_can_edit_orders(self):
         self.assertFalse(_mini_order_user_can_edit(None))
@@ -47,8 +51,8 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
         self.assertFalse(_mini_orderflow_should_query("客户名称", {"role": "customer"}))
         self.assertTrue(_mini_orderflow_public_keyword("1000025"))
         self.assertTrue(_mini_orderflow_public_keyword("WF202605280001"))
-        self.assertTrue(_mini_orderflow_should_query("1000025", None))
-        self.assertTrue(_mini_orderflow_should_query("XSD202605280001", {"role": "customer"}))
+        self.assertFalse(_mini_orderflow_should_query("1000025", None))
+        self.assertFalse(_mini_orderflow_should_query("XSD202605280001", {"role": "customer"}))
 
     def test_public_exact_search_filters_fuzzy_order_results(self):
         rows = [
@@ -69,28 +73,129 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
             [{"sales_no": "XSD202605280001", "customer_name": "好照"}],
         )
 
-    def test_public_legacy_workflow_search_filters_exact_order_results(self):
+    def test_private_legacy_workflow_search_allows_authenticated_staff(self):
         rows = [
             {"id": 1000025, "order_no": "WF202605280001", "goods_name": "match"},
             {"id": 1000026, "order_no": "WF202605280002", "goods_name": "nearby"},
         ]
         original_db_workflow_orders = api_module._db_workflow_orders
         original_request_user = api_module._mini_request_user
+        original_verify_native_token = api_module._verify_native_token
         try:
             def fake_db_workflow_orders(keyword, page, page_size, status_filter, customer_id=None):
                 return rows, len(rows)
 
             api_module._db_workflow_orders = fake_db_workflow_orders
-            api_module._mini_request_user = lambda: None
+            api_module._mini_request_user = lambda: {
+                "role": "staff",
+                "id": 7,
+                "is_active": 1,
+                "approval_status": "approved",
+                "miniapp_allowed": True,
+            }
+            api_module._verify_native_token = lambda token: {
+                "role": "staff",
+                "id": 7,
+                "is_active": 1,
+                "approval_status": "approved",
+                "miniapp_allowed": True,
+            }
             with api_module.app.test_client() as client:
-                response = client.get("/api/mini/workflow-order/search?keyword=WF202605280001")
+                response = client.get(
+                    "/api/mini/workflow-order/search?keyword=WF202605280001",
+                    headers={"X-SJ-Token": "valid-token"},
+                )
             self.assertEqual(response.status_code, 200)
             payload = response.get_json()
             self.assertEqual(payload["code"], 0)
-            self.assertEqual(payload["data"], [rows[0]])
+            self.assertEqual(payload["data"], rows)
         finally:
             api_module._db_workflow_orders = original_db_workflow_orders
             api_module._mini_request_user = original_request_user
+            api_module._verify_native_token = original_verify_native_token
+
+    def test_private_mini_orderflow_requires_token_even_without_client_header(self):
+        with api_module.app.test_client() as client:
+            response = client.get("/api/mini/orderflow/list?keyword=WF202605280001")
+        self.assertEqual(response.status_code, 401)
+
+    def test_private_mini_orderflow_requires_token_with_client_header(self):
+        with api_module.app.test_client() as client:
+            response = client.get(
+                "/api/mini/orderflow/list?keyword=WF202605280001",
+                headers={"X-SJ-Client": "miniapp"},
+            )
+        self.assertEqual(response.status_code, 401)
+
+    def test_unbound_customer_cannot_use_exact_order_number_as_public_lookup(self):
+        original_db_workflow_orders = api_module._db_workflow_orders
+        original_db_sales_cards = api_module._db_sales_cards
+        original_verify_native_token = api_module._verify_native_token
+        try:
+            api_module._verify_native_token = lambda token: {
+                "role": "customer",
+                "id": 8,
+                "linked_party_id": None,
+                "is_active": 1,
+                "approval_status": "approved",
+                "miniapp_allowed": True,
+            }
+            api_module._db_workflow_orders = lambda *args, **kwargs: (
+                [{"id": 1000025, "order_no": "WF202605280001"}],
+                1,
+            )
+            api_module._db_sales_cards = lambda *args, **kwargs: (
+                [{"sales_no": "XSD202605280001"}],
+                1,
+            )
+            with api_module.app.test_client() as client:
+                response = client.get(
+                    "/api/mini/orderflow/list?keyword=WF202605280001",
+                    headers={"X-SJ-Token": "valid-token"},
+                )
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["code"], 0)
+            self.assertEqual(payload["data"]["total"], 0)
+            self.assertEqual(payload["data"]["workflows"], [])
+            self.assertEqual(payload["data"]["sales"], [])
+        finally:
+            api_module._db_workflow_orders = original_db_workflow_orders
+            api_module._db_sales_cards = original_db_sales_cards
+            api_module._verify_native_token = original_verify_native_token
+
+    def test_customer_role_cannot_use_staff_inventory_or_customer_lookup(self):
+        original_inventory_payload = api_module._mini_workflow_inventory_payload
+        original_workflow_order_list = api_module._mini_workflow_order_list
+        original_verify_native_token = api_module._verify_native_token
+        try:
+            api_module._verify_native_token = lambda token: {
+                "role": "customer",
+                "id": 8,
+                "linked_party_id": 55,
+                "is_active": 1,
+                "approval_status": "approved",
+                "miniapp_allowed": True,
+            }
+            api_module._mini_workflow_inventory_payload = lambda keyword="": {"items": [{"id": 1}]}
+            api_module._mini_workflow_order_list = lambda *args, **kwargs: ([{"id": 2}], 1)
+
+            with api_module.app.test_client() as client:
+                inventory_response = client.get(
+                    "/api/mini/workflow-order/inventory-search?keyword=岩彩",
+                    headers={"X-SJ-Token": "valid-token"},
+                )
+                customer_response = client.get(
+                    "/api/mini/workflow-order/customer-list?nickname=齐唯",
+                    headers={"X-SJ-Token": "valid-token"},
+                )
+
+            self.assertEqual(inventory_response.status_code, 403)
+            self.assertEqual(customer_response.status_code, 403)
+        finally:
+            api_module._mini_workflow_inventory_payload = original_inventory_payload
+            api_module._mini_workflow_order_list = original_workflow_order_list
+            api_module._verify_native_token = original_verify_native_token
 
     def test_empty_payload_never_contains_order_rows(self):
         payload = _mini_orderflow_empty_payload(page=2, page_size=30)

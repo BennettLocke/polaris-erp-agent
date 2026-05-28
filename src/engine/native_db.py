@@ -1584,6 +1584,79 @@ class NativeDBClient:
         )
         return {"code": 0, "data": {"id": int(asset_id), field: clean_url, "affected": affected}}
 
+    def create_miniapp_asset(
+        self,
+        *,
+        scene: str,
+        name: str,
+        asset_url: str = "",
+        active_asset_url: str = "",
+        link_type: str = "page",
+        link_value: str = "",
+        badge_text: str = "",
+        subtitle: str = "",
+        sort_order: int = 0,
+        enabled: int = 1,
+        extra_json: Any = None,
+    ) -> dict:
+        clean_scene = str(scene or "").strip()
+        if clean_scene != "home_banner":
+            return {"code": 400, "msg": "当前只支持新增首页轮播图"}
+        clean_name = str(name or "").strip() or "首页轮播"
+        now = _now()
+        extra_text = json.dumps(extra_json, ensure_ascii=False) if isinstance(extra_json, (dict, list)) else extra_json
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO miniapp_asset
+                    (scene, name, asset_url, active_asset_url, link_type, link_value,
+                     badge_text, subtitle, sort_order, enabled, extra_json, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    clean_scene,
+                    clean_name,
+                    str(asset_url or "").strip(),
+                    str(active_asset_url or "").strip(),
+                    str(link_type or "page").strip(),
+                    str(link_value or "").strip(),
+                    str(badge_text or "").strip(),
+                    str(subtitle or "").strip(),
+                    int(sort_order or 0),
+                    1 if int(enabled or 0) else 0,
+                    extra_text,
+                    now,
+                    now,
+                ),
+            )
+            asset_id = int(cursor.lastrowid or 0)
+        return {
+            "code": 0,
+            "data": {
+                "id": asset_id,
+                "scene": clean_scene,
+                "name": clean_name,
+                "asset_url": str(asset_url or "").strip(),
+                "active_asset_url": str(active_asset_url or "").strip(),
+                "link_type": str(link_type or "page").strip(),
+                "link_value": str(link_value or "").strip(),
+                "badge_text": str(badge_text or "").strip(),
+                "subtitle": str(subtitle or "").strip(),
+                "sort_order": int(sort_order or 0),
+                "enabled": 1 if int(enabled or 0) else 0,
+            },
+        }
+
+    def delete_miniapp_asset(self, asset_id: int) -> dict:
+        clean_id = int(asset_id or 0)
+        rows = self.query("SELECT id, scene FROM miniapp_asset WHERE id=%s", (clean_id,))
+        if not rows:
+            return {"code": 404, "msg": "小程序图片配置不存在"}
+        if str(rows[0].get("scene") or "") != "home_banner":
+            return {"code": 400, "msg": "只能删除首页轮播图"}
+        affected = self.execute("DELETE FROM miniapp_asset WHERE id=%s AND scene=%s", (clean_id, "home_banner"))
+        return {"code": 0, "data": {"id": clean_id, "affected": affected}}
+
     def update_product_category_image(self, category_id: int, field: str, url: str) -> dict:
         allowed = {"icon", "icon_active"}
         if field not in allowed:
@@ -2095,6 +2168,32 @@ class NativeDBClient:
                 (_now(), int(media_id)),
             )
         return {"code": 0, "data": {"id": int(media_id), "affected": affected}}
+
+    def delete_pending_product_media(self, media_ids: Iterable[Any]) -> dict:
+        ids: list[int] = []
+        for raw in media_ids or []:
+            text = str(raw or "").strip()
+            if not text.isdigit():
+                continue
+            media_id = int(text)
+            if media_id > 0 and media_id not in ids:
+                ids.append(media_id)
+        if not ids:
+            return {"code": 400, "msg": "缺少未绑定图片ID"}
+        placeholders = ",".join(["%s"] * len(ids))
+        affected = self.execute(
+            f"""
+            UPDATE product_media
+            SET is_active=0, updated_at=%s
+            WHERE is_active=1
+              AND media_type='pending'
+              AND sku_id IS NULL
+              AND spu_id IS NULL
+              AND id IN ({placeholders})
+            """,
+            [_now()] + ids,
+        )
+        return {"code": 0, "data": {"ids": ids, "affected": affected}}
 
     def save_product(self, payload: dict) -> dict:
         title = str(payload.get("title") or payload.get("name") or "").strip()
@@ -2943,24 +3042,35 @@ class NativeDBClient:
         page_size: int = 50,
         period: str = "",
         month: str = "",
+        pay_status: str = "",
     ) -> tuple[list[dict], int, dict]:
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or 50), 200))
         period_where, period_params, summary = self._sales_period_where(period, month)
-        where_sql = "customer_id=%s AND status NOT IN ('canceled', 'deleted')"
+        where_sql = "s.customer_id=%s AND s.status NOT IN ('canceled', 'deleted')"
         params: list[Any] = [customer_id]
         if period_where:
-            where_sql += " AND " + " AND ".join(period_where)
+            where_sql += " AND " + " AND ".join(clause.replace("sales_at", "s.sales_at") for clause in period_where)
             params.extend(period_params)
+        clean_pay_status = str(pay_status or "").strip()
+        pay_status_label = ""
+        if clean_pay_status and clean_pay_status != "all":
+            if clean_pay_status in {"unsettled", "debt"}:
+                where_sql += " AND s.pay_status IN ('unpaid', 'monthly', 'partial')"
+                pay_status_label = "未结"
+            else:
+                where_sql += " AND s.pay_status=%s"
+                params.append(clean_pay_status)
+                pay_status_label = _pay_status_text(clean_pay_status)
         total_rows = self.query(
             f"""
             SELECT COUNT(*) AS total,
                    COALESCE(SUM(receivable_amount), 0) AS total_amount,
                    COALESCE(SUM(CASE
                      WHEN pay_status IN ('unpaid', 'monthly', 'partial') THEN receivable_amount
-                     ELSE 0
+                   ELSE 0
                    END), 0) AS unpaid_amount
-            FROM sales_order
+            FROM sales_order s
             WHERE {where_sql}
             """,
             params,
@@ -3017,6 +3127,7 @@ class NativeDBClient:
             })
         total_row = total_rows[0] if total_rows else {}
         summary.update({
+            "label": " · ".join([item for item in [summary.get("label") or "全部销售单", pay_status_label] if item]),
             "total": int(total_row.get("total") or 0),
             "total_amount": _money(total_row.get("total_amount")),
             "unpaid_amount": _money(total_row.get("unpaid_amount")),
@@ -3946,12 +4057,14 @@ class NativeDBClient:
             existing_user = cursor.fetchone()
             if existing_user:
                 user_id = int(existing_user["id"])
+                saved_phone = _phone_digits(existing_user.get("phone"))
+                link_phone = digits or saved_phone
                 if digits and not existing_user.get("phone"):
                     cursor.execute("UPDATE auth_user SET phone=%s, updated_at=%s WHERE id=%s", (digits, now, user_id))
                     existing_user["phone"] = digits
-                if digits:
-                    self._identity_upsert(cursor, user_id=user_id, provider="phone", external_id=digits)
-                    customer_id, status, needs_review = self._identity_link_customer_if_allowed(cursor, user=existing_user, phone=digits)
+                if link_phone:
+                    self._identity_upsert(cursor, user_id=user_id, provider="phone", external_id=link_phone)
+                    customer_id, status, needs_review = self._identity_link_customer_if_allowed(cursor, user=existing_user, phone=link_phone)
                 else:
                     customer_id = existing_user.get("linked_party_id")
                     status = "existing_identity"
@@ -3970,7 +4083,7 @@ class NativeDBClient:
                     "data": {
                         "user_id": user_id,
                         "customer_id": customer_id,
-                        "phone": digits or existing_user.get("phone") or "",
+                        "phone": link_phone or "",
                         "bind_status": status,
                         "needs_review": needs_review,
                     },
@@ -4204,6 +4317,7 @@ class NativeDBClient:
         self,
         keyword: str = "",
         warehouse_id: int | None = None,
+        stock_status: str = "",
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[dict], int]:
@@ -4215,51 +4329,104 @@ class NativeDBClient:
             warehouse_where.append("w.id=%s")
             warehouse_params.append(int(warehouse_id))
         warehouse_where_sql = " AND ".join(warehouse_where)
-        count_rows = self.query(
-            f"""
-            SELECT COUNT(*) AS total
-            FROM product_sku s
-            JOIN product_spu sp ON sp.id=s.spu_id
-            WHERE {where_sql}
-            """,
-            params,
-        )
-        total = int(count_rows[0].get("total") or 0) if count_rows else 0
-        rows = self.query(
-            f"""
-            SELECT
-                s.id AS product_id,
-                sp.id AS spu_id,
-                s.sku_no,
-                s.is_stock_item,
-                sp.title,
-                s.color,
-                sp.case_pack_qty,
-                w.id AS warehouse_id,
-                w.name AS warehouse_name,
-                COALESCE(b.unit_id, s.unit_id) AS unit_id,
-                u.name AS unit_name,
-                COALESCE(b.quantity, 0) AS quantity,
-                COALESCE(b.available_qty, b.quantity, 0) AS available_qty,
-                COALESCE(b.reserved_qty, 0) AS reserved_qty
-            FROM (
-                SELECT s.id
+        quantity_expr = "COALESCE(b.quantity, 0)"
+        stock_status = (stock_status or "").strip()
+        status_where = ""
+        if stock_status == "in_stock":
+            status_where = f"{quantity_expr} > 0"
+        elif stock_status == "zero":
+            status_where = f"{quantity_expr} = 0"
+        elif stock_status == "negative":
+            status_where = f"{quantity_expr} < 0"
+        if status_where:
+            scoped_where_sql = f"{where_sql} AND {warehouse_where_sql} AND {status_where}"
+            scoped_params = params + warehouse_params
+            count_rows = self.query(
+                f"""
+                SELECT COUNT(*) AS total
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id=s.spu_id
+                CROSS JOIN warehouse w
+                LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+                WHERE {scoped_where_sql}
+                """,
+                scoped_params,
+            )
+            total = int(count_rows[0].get("total") or 0) if count_rows else 0
+            rows = self.query(
+                f"""
+                SELECT
+                    s.id AS product_id,
+                    sp.id AS spu_id,
+                    s.sku_no,
+                    s.is_stock_item,
+                    sp.title,
+                    s.color,
+                    sp.case_pack_qty,
+                    w.id AS warehouse_id,
+                    w.name AS warehouse_name,
+                    COALESCE(b.unit_id, s.unit_id) AS unit_id,
+                    u.name AS unit_name,
+                    COALESCE(b.quantity, 0) AS quantity,
+                    COALESCE(b.available_qty, b.quantity, 0) AS available_qty,
+                    COALESCE(b.reserved_qty, 0) AS reserved_qty
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id=s.spu_id
+                CROSS JOIN warehouse w
+                LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+                LEFT JOIN product_unit u ON u.id=COALESCE(b.unit_id, s.unit_id)
+                WHERE {scoped_where_sql}
+                ORDER BY sp.title ASC, s.color ASC, w.id ASC
+                LIMIT %s OFFSET %s
+                """,
+                scoped_params + [page_size, (max(1, page) - 1) * page_size],
+            )
+        else:
+            count_rows = self.query(
+                f"""
+                SELECT COUNT(*) AS total
                 FROM product_sku s
                 JOIN product_spu sp ON sp.id=s.spu_id
                 WHERE {where_sql}
-                ORDER BY sp.title ASC, s.color ASC, s.id ASC
-                LIMIT %s OFFSET %s
-            ) page_sku
-            JOIN product_sku s ON s.id=page_sku.id
-            JOIN product_spu sp ON sp.id=s.spu_id
-            CROSS JOIN warehouse w
-            LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
-            LEFT JOIN product_unit u ON u.id=COALESCE(b.unit_id, s.unit_id)
-            WHERE {warehouse_where_sql}
-            ORDER BY sp.title ASC, s.color ASC, w.id ASC
-            """,
-            params + [page_size, (max(1, page) - 1) * page_size] + warehouse_params,
-        )
+                """,
+                params,
+            )
+            total = int(count_rows[0].get("total") or 0) if count_rows else 0
+            rows = self.query(
+                f"""
+                SELECT
+                    s.id AS product_id,
+                    sp.id AS spu_id,
+                    s.sku_no,
+                    s.is_stock_item,
+                    sp.title,
+                    s.color,
+                    sp.case_pack_qty,
+                    w.id AS warehouse_id,
+                    w.name AS warehouse_name,
+                    COALESCE(b.unit_id, s.unit_id) AS unit_id,
+                    u.name AS unit_name,
+                    COALESCE(b.quantity, 0) AS quantity,
+                    COALESCE(b.available_qty, b.quantity, 0) AS available_qty,
+                    COALESCE(b.reserved_qty, 0) AS reserved_qty
+                FROM (
+                    SELECT s.id
+                    FROM product_sku s
+                    JOIN product_spu sp ON sp.id=s.spu_id
+                    WHERE {where_sql}
+                    ORDER BY sp.title ASC, s.color ASC, s.id ASC
+                    LIMIT %s OFFSET %s
+                ) page_sku
+                JOIN product_sku s ON s.id=page_sku.id
+                JOIN product_spu sp ON sp.id=s.spu_id
+                CROSS JOIN warehouse w
+                LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+                LEFT JOIN product_unit u ON u.id=COALESCE(b.unit_id, s.unit_id)
+                WHERE {warehouse_where_sql}
+                ORDER BY sp.title ASC, s.color ASC, w.id ASC
+                """,
+                params + [page_size, (max(1, page) - 1) * page_size] + warehouse_params,
+            )
         result = []
         for row in rows:
             piece = f"1件{_qty_text(row.get('case_pack_qty'))}套" if row.get("case_pack_qty") not in (None, "") else ""
@@ -4290,9 +4457,22 @@ class NativeDBClient:
             })
         return result, total
 
-    def inventory_ledger(self, keyword: str = "", page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
+    def inventory_ledger(
+        self,
+        keyword: str = "",
+        sku_id: int | None = None,
+        warehouse_id: int | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[dict], int]:
         where = ["1=1"]
         params: list[Any] = []
+        if sku_id:
+            where.append("l.sku_id=%s")
+            params.append(int(sku_id))
+        if warehouse_id:
+            where.append("l.warehouse_id=%s")
+            params.append(int(warehouse_id))
         if keyword:
             like = f"%{keyword}%"
             where.append("(l.ledger_no LIKE %s OR l.sku_no_snapshot LIKE %s OR sp.title LIKE %s OR s.color LIKE %s OR w.name LIKE %s OR l.biz_type LIKE %s)")
@@ -5781,12 +5961,16 @@ class NativeDBClient:
         color: str = "",
         order_images: list[str] | None = None,
         is_screen_print: int = 0,
+        is_made: int | None = None,
+        is_delivered: int | None = None,
         order_type: int = 0,
         remark: str = "",
     ) -> dict:
         now = _now()
         operator_user_id = self._operator_user_id()
         status = "completed" if int(order_type or 0) == 1 else "pending"
+        made_value = int(is_made or 0) if is_made is not None else None
+        delivered_value = int(is_delivered or 0) if is_delivered is not None else None
         customer_id = self._find_party_id(customer_name, customer_phone)
         if order_id:
             with self.transaction() as cursor:
@@ -5795,7 +5979,8 @@ class NativeDBClient:
                     UPDATE workflow_order
                     SET customer_id=%s, customer_name_snapshot=%s, customer_phone_snapshot=%s,
                         goods_name_snapshot=%s, color_snapshot=%s, quantity=%s, order_image_urls=%s,
-                        is_screen_print=%s, status=%s, remark=%s, updated_at=%s
+                        is_screen_print=%s, is_made=COALESCE(%s, is_made),
+                        is_delivered=COALESCE(%s, is_delivered), status=%s, remark=%s, updated_at=%s
                     WHERE id=%s
                     """,
                     (
@@ -5807,6 +5992,8 @@ class NativeDBClient:
                         Decimal(str(order_quantity or 0)),
                         _json_dumps(order_images or []),
                         int(is_screen_print or 0),
+                        made_value,
+                        delivered_value,
                         status,
                         remark,
                         now,
@@ -5831,7 +6018,7 @@ class NativeDBClient:
                      goods_name_snapshot, color_snapshot, quantity, order_image_urls,
                      is_screen_print, is_made, is_delivered, status, remark, source,
                      created_by_user_id, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 0, %s, %s, 'native_api', %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'native_api', %s, %s, %s)
                 """,
                 (
                     workflow_no,
@@ -5843,6 +6030,8 @@ class NativeDBClient:
                     Decimal(str(order_quantity or 0)),
                     _json_dumps(order_images or []),
                     int(is_screen_print or 0),
+                    int(is_made or 0),
+                    int(is_delivered or 0),
                     status,
                     remark,
                     operator_user_id,
@@ -5906,6 +6095,80 @@ class NativeDBClient:
                     (order_id, operator_user_id, "native workflow order delete", now),
                 )
         return {"code": 0, "data": {"ids": raw_ids}}
+
+    def link_workflow_sales_order(
+        self,
+        workflow_order_id: int,
+        sales_order_id: int,
+        operator_user_id: Any = None,
+    ) -> dict:
+        workflow_order_id = int(workflow_order_id or 0)
+        sales_order_id = int(sales_order_id or 0)
+        if workflow_order_id <= 0 or sales_order_id <= 0:
+            return {"code": 400, "msg": "workflow_order_id and sales_order_id are required"}
+        now = _now()
+        operator_user_id = self._operator_user_id(operator_user_id)
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT id, sales_order_id
+                FROM workflow_order
+                WHERE id=%s AND deleted_at IS NULL
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (workflow_order_id,),
+            )
+            workflow_order = cursor.fetchone()
+            if not workflow_order:
+                return {"code": 404, "msg": "工作流订单不存在"}
+
+            cursor.execute(
+                """
+                SELECT id, source_workflow_id
+                FROM sales_order
+                WHERE id=%s AND status NOT IN ('canceled', 'deleted')
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (sales_order_id,),
+            )
+            sales_order = cursor.fetchone()
+            if not sales_order:
+                return {"code": 404, "msg": "销售单不存在"}
+
+            old_sales_order_id = int(workflow_order.get("sales_order_id") or 0)
+            old_workflow_order_id = int(sales_order.get("source_workflow_id") or 0)
+            if old_sales_order_id and old_sales_order_id != sales_order_id:
+                return {"code": 409, "msg": "工作流订单已关联其他销售单"}
+            if old_workflow_order_id and old_workflow_order_id != workflow_order_id:
+                return {"code": 409, "msg": "销售单已关联其他工作流订单"}
+
+            cursor.execute(
+                "UPDATE workflow_order SET sales_order_id=%s, updated_at=%s WHERE id=%s",
+                (sales_order_id, now, workflow_order_id),
+            )
+            cursor.execute(
+                "UPDATE sales_order SET source_workflow_id=%s, updated_at=%s WHERE id=%s",
+                (workflow_order_id, now, sales_order_id),
+            )
+            cursor.execute(
+                """
+                INSERT INTO workflow_order_log
+                    (workflow_order_id, action, field_name, old_value, new_value,
+                     operator_user_id, note, created_at)
+                VALUES (%s, 'link_sales', 'sales_order_id', %s, %s, %s, %s, %s)
+                """,
+                (
+                    workflow_order_id,
+                    str(old_sales_order_id or ""),
+                    str(sales_order_id),
+                    operator_user_id,
+                    f"link sales order {sales_order_id}",
+                    now,
+                ),
+            )
+        return {"code": 0, "data": {"workflow_order_id": workflow_order_id, "sales_order_id": sales_order_id}}
 
     def _find_party_id(self, name: str = "", phone: str = "") -> int | None:
         phone_norm = _phone_digits(phone)
@@ -6005,7 +6268,31 @@ class NativeDBClient:
     def _ledger_no(self, prefix: str) -> str:
         return f"{prefix}{datetime.now().strftime('%Y%m%d%H%M%S')}{int(time.time() * 1000) % 1000:03d}"
 
-    def _get_sku_for_update(self, cursor, sku_id: int) -> dict:
+    def _db_enabled_flag(self, value: Any, *, default: bool = True) -> bool:
+        if value in (None, ""):
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return int(value) == 1
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "on", "active", "enabled"}:
+            return True
+        if text in {"0", "false", "no", "n", "off", "inactive", "disabled", "deleted", "none"}:
+            return False
+        return default
+
+    def _sku_sales_unavailable_reason(self, sku: dict) -> str:
+        status = str(sku.get("status") if sku.get("status") not in (None, "") else "active").strip().lower()
+        if status not in {"active", "normal", "enabled", "0"}:
+            return "状态不是正常"
+        if not self._db_enabled_flag(sku.get("is_sellable"), default=True):
+            return "不可售"
+        if not self._db_enabled_flag(sku.get("is_listed"), default=True):
+            return "未上架"
+        return ""
+
+    def _get_sku_for_update(self, cursor, sku_id: int, *, require_sellable: bool = False) -> dict:
         cursor.execute(
             """
             SELECT s.*, sp.title, sp.product_type, sp.case_pack_qty
@@ -6019,6 +6306,11 @@ class NativeDBClient:
         row = cursor.fetchone()
         if not row:
             raise DBError(f"商品不存在: {sku_id}")
+        if require_sellable:
+            reason = self._sku_sales_unavailable_reason(row)
+            if reason:
+                title = row.get("title") or row.get("sku_no") or sku_id
+                raise DBError(f"商品{reason}，不能开单：{title}")
         return row
 
     def _change_inventory(
@@ -6304,7 +6596,7 @@ class NativeDBClient:
                 sku_id = self.resolve_sku_id(int(item.get("product_id") or item.get("id") or 0), cursor=cursor)
                 if not sku_id:
                     raise DBError("销售商品不存在")
-                sku = self._get_sku_for_update(cursor, sku_id)
+                sku = self._get_sku_for_update(cursor, sku_id, require_sellable=True)
                 line_warehouse_id = int(item.get("warehouse_id") or warehouse_id or sku.get("default_warehouse_id") or default_out_warehouse_id)
                 unit_id = int(item.get("unit_id") or sku.get("unit_id") or 1)
                 qty = Decimal(str(item.get("buy_number") or item.get("quantity") or item.get("number") or 0))

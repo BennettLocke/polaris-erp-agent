@@ -6,6 +6,66 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AdminCustomerCardsContractTest(unittest.TestCase):
+    def test_customer_balance_action_dialog_validates_settlement_and_adjustment(self):
+        dialog_source = (
+            ROOT
+            / "admin"
+            / "src"
+            / "components"
+            / "business"
+            / "customers"
+            / "customer-balance-action-dialog.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('const isAdjust = action === "adjust"', dialog_source)
+        self.assertIn("const settlementAmount = moneyNumber(preview?.unpaid_amount)", dialog_source)
+        self.assertNotIn("preview?.unpaid_amount || preview?.total_amount", dialog_source)
+        self.assertIn("function validateAction", dialog_source)
+        self.assertIn("if (isAdjust && !note.trim())", dialog_source)
+        self.assertIn('setError("请填写调整原因")', dialog_source)
+        self.assertIn('setError("请输入有效金额")', dialog_source)
+        self.assertIn('pay_type: isAdjust ? undefined : payType', dialog_source)
+        self.assertIn('{isAdjust ? "调整原因" : "备注"}', dialog_source)
+        self.assertIn("required={isAdjust}", dialog_source)
+
+    def test_customer_detail_sales_records_are_paginated_and_filterable(self):
+        customers_dir = ROOT / "admin" / "src" / "components" / "business" / "customers"
+        detail_source = (customers_dir / "customer-detail-dialog.tsx").read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        service_source = (ROOT / "src" / "services" / "business" / "customers.py").read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+        css_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        for token in [
+            "salesPage",
+            "salesTotal",
+            "salesPageCount",
+            "salesPayStatus",
+            "loadSalesPage",
+            "changeSalesPayStatus",
+            "sales-page-count",
+            "sales-pagination-row",
+            "pageSize: salesPageSize",
+            "payStatus: nextPayStatus",
+            "<PaginationPrevious",
+            "<PaginationNext",
+        ]:
+            self.assertIn(token, detail_source)
+        self.assertNotIn("pageSize: 20", detail_source)
+        self.assertIn("payStatus?:", api_source)
+        self.assertIn('params.set("pay_status", options.payStatus)', api_source)
+        self.assertIn('pay_status = (request.args.get("pay_status") or "").strip()', http_source)
+        self.assertIn("pay_status=pay_status", http_source)
+        self.assertIn("pay_status: str = \"\"", service_source)
+        self.assertIn("pay_status=pay_status", service_source)
+        self.assertIn("def customer_sales(", db_source)
+        self.assertIn("pay_status: str = \"\"", db_source)
+        self.assertIn("pay_status IN ('unpaid', 'monthly', 'partial')", db_source)
+        self.assertIn("s.pay_status=%s", db_source)
+        self.assertIn(".sales-pagination-row", css_source)
+        self.assertIn(".sales-page-count", css_source)
+
     def test_customer_page_uses_shadcn_customer_components(self):
         customers_dir = ROOT / "admin" / "src" / "components" / "business" / "customers"
         badge_path = ROOT / "admin" / "src" / "components" / "ui" / "badge.tsx"
@@ -27,7 +87,7 @@ class AdminCustomerCardsContractTest(unittest.TestCase):
         self.assertIn("sj-badge--outline", badge_source)
 
         self.assertIn('from "./components/business/customers"', app_source)
-        self.assertIn("<CustomersPage />", app_source)
+        self.assertIn("<CustomersPage currentUser={user} />", app_source)
         self.assertIn("type CustomerListQuery", api_source)
         self.assertIn('params.set("page"', api_source)
         self.assertIn('params.set("page_size"', api_source)

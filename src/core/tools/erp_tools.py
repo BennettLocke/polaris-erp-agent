@@ -134,6 +134,7 @@ def sales_add(
     create_time: str = "",
     pay_status: str | None = None,
     pay_type: str | None = None,
+    workflow_order_id: int | None = None,
 ) -> dict:
     try:
         result = _sales_service().create_order(
@@ -143,6 +144,7 @@ def sales_add(
             create_time=create_time,
             pay_status=pay_status,
             pay_type=pay_type,
+            workflow_order_id=workflow_order_id,
         )
         logger.info(f"native sales order created: {result}")
         return result

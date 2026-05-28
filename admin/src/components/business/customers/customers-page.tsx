@@ -25,7 +25,8 @@ import {
   PaginationNext,
   PaginationPrevious
 } from "@/components/ui/pagination";
-import type { CustomerBalanceActionPayload, CustomerItem, CustomerListSummary } from "@/types";
+import { hasPermission } from "@/lib/permissions";
+import type { AuthUser, CustomerBalanceActionPayload, CustomerItem, CustomerListSummary } from "@/types";
 import {
   customerFilterOptions,
   money,
@@ -100,7 +101,7 @@ function customerPageRangeText(page: number, customerPageSize: number, total: nu
   return `第 ${start}-${end} 位 / 共 ${total} 位`;
 }
 
-function CustomersPage() {
+function CustomersPage({ currentUser }: { currentUser?: AuthUser } = {}) {
   const [keyword, setKeyword] = useState("");
   const [items, setItems] = useState<CustomerItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -122,6 +123,7 @@ function CustomersPage() {
   }, []);
   const summary = useMemo(() => normalizeCustomerSummary(remoteSummary, items), [remoteSummary, items]);
   const pageCount = Math.max(1, Math.ceil(total / customerPageSize));
+  const canAdjustBalance = hasPermission(currentUser, "调余额");
 
   async function load(nextPage = page, nextKeyword = keyword, nextFilter = filter, nextPageSize = customerPageSize) {
     setLoading(true);
@@ -195,6 +197,10 @@ function CustomersPage() {
   }
 
   function openAction(customer: CustomerItem, nextAction: CustomerBalanceActionPayload["action"]) {
+    if (nextAction === "adjust" && !canAdjustBalance) {
+      setError("当前账号没有调余额权限");
+      return;
+    }
     setActionTarget(customer);
     setAction(nextAction);
   }
@@ -321,6 +327,7 @@ function CustomersPage() {
           onOpenDetail={openDetail}
           onAction={openAction}
           onToggleMonthly={(customer) => void toggleMonthly(customer)}
+          canAdjustBalance={canAdjustBalance}
         />
         <Pagination className="customers-pagination">
           <PaginationContent>
@@ -339,6 +346,7 @@ function CustomersPage() {
 
       <CustomerDetailDialog
         customer={selected}
+        currentUser={currentUser}
         initialTab={detailTab}
         onClose={() => setSelected(null)}
         onChanged={(updated) => {

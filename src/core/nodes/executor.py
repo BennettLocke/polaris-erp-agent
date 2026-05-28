@@ -90,7 +90,7 @@ def executor_node(state: AgentState) -> AgentState:
             sales_items.append({
                 "product_id": product_id,
                 "unit_id": order.get("unit_id", 1),
-                "warehouse_id": order.get("warehouse_id", 2),
+                "warehouse_id": resolve_sales_warehouse_id(order),
                 "buy_number": order.get("quantity", 1),
                 "price": price,
                 "product_name": order.get("product_name", ""),
@@ -152,6 +152,21 @@ def execute_purchase(caller, order: dict) -> dict:
         )
     except Exception as e:
         return {"error": str(e)}
+
+
+def resolve_sales_warehouse_id(order: dict) -> int:
+    """销售扣库仓库：调拨单扣调入仓，进货/直接单扣目标发货仓。"""
+    action = order.get("action")
+    if action == "transfer":
+        warehouse_id = order.get("to_warehouse") or WAREHOUSE_BAIXIN
+    elif action == "purchase":
+        warehouse_id = order.get("warehouse_id") or WAREHOUSE_BAIXIN
+    else:
+        warehouse_id = order.get("warehouse_id") or DEFAULT_WAREHOUSE
+    try:
+        return int(warehouse_id)
+    except (TypeError, ValueError):
+        return WAREHOUSE_BAIXIN
 
 
 def execute_transfer(caller, order: dict) -> dict:

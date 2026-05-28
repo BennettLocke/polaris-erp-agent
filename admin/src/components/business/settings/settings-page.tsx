@@ -81,6 +81,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
+  AuthUser,
   MediaSummary,
   MiniappAssetImageItem,
   MiniappImageConfig,
@@ -115,7 +116,16 @@ type PanelCallbacks = {
   markDirty: () => void;
   onSaved: (message: string) => void;
   onError: (message: string) => void;
+  goToSection: (section: SettingsSectionKey) => void;
   registerSave: (section: SettingsSectionKey, handler: () => Promise<boolean>) => void;
+};
+
+type SettingsPageProps = {
+  currentUser?: AuthUser | null;
+};
+
+type UserPermissionsPanelProps = PanelCallbacks & {
+  currentUser?: AuthUser | null;
 };
 
 type ImageFieldConfig<T> = {
@@ -254,7 +264,7 @@ function categoryMeta(category: ProductCategory) {
   return `${category.total || 0} 款商品`;
 }
 
-function SettingsPage() {
+function SettingsPage({ currentUser }: SettingsPageProps) {
   const [activeSection, setActiveSection] = useState<SettingsSectionKey>(sectionFromLocation);
   const [pendingSection, setPendingSection] = useState<SettingsSectionKey | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -302,6 +312,7 @@ function SettingsPage() {
       setError(nextError);
       setMessage("");
     },
+    goToSection: requestSection,
     registerSave: (section, handler) => {
       saveHandlersRef.current[section] = handler;
     }
@@ -350,7 +361,7 @@ function SettingsPage() {
       {activeSection === "payment" ? <PaymentRulesPanel {...callbacks} /> : null}
       {activeSection === "media" ? <MediaSettingsPanel {...callbacks} /> : null}
       {activeSection === "miniapp" ? <MiniappSettingsPanel {...callbacks} /> : null}
-      {activeSection === "users" ? <UserPermissionsPanel {...callbacks} /> : null}
+      {activeSection === "users" ? <UserPermissionsPanel {...callbacks} currentUser={currentUser} /> : null}
       {activeSection === "print" ? <PrintSettingsPanel {...callbacks} /> : null}
 
       <AlertDialog open={Boolean(pendingSection)} onOpenChange={(open) => {
@@ -705,7 +716,7 @@ function NumberSettingsPanel({ markDirty, onSaved, onError, registerSave }: Pane
   );
 }
 
-function ProductBasicPanel({ markDirty, onSaved, onError, registerSave }: PanelCallbacks) {
+function ProductBasicPanel({ markDirty, onSaved, onError, goToSection, registerSave }: PanelCallbacks) {
   const [setting, setSetting] = useState<SystemSetting | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -779,7 +790,7 @@ function ProductBasicPanel({ markDirty, onSaved, onError, registerSave }: PanelC
       await load();
       const synced = result.synced || {};
       const total = Number(synced.sku || 0) + Number(synced.spu || 0);
-      onSaved(total > 0 ? `分类已保存，已同步 ${total} 条商品库存规则` : "分类已保存");
+      onSaved(total > 0 ? `分类已保存，已按现有库存规则同步 ${total} 条商品` : "分类已保存，库存规则由库存规则页统一维护");
       setCategoryDraft(null);
     } catch (err) {
       onError(err instanceof Error ? err.message : "分类保存失败");
@@ -801,16 +812,25 @@ function ProductBasicPanel({ markDirty, onSaved, onError, registerSave }: PanelC
           <CardHeader>
             <div>
               <CardTitle>分类管理</CardTitle>
-              <CardDescription>新增分类后可以直接用于商品编辑，小程序分类图标也会读取这里。</CardDescription>
+              <CardDescription>新增分类后可以直接用于商品编辑，小程序分类图标也会读取这里；库存规则由库存规则页统一维护。</CardDescription>
             </div>
             <CardAction>
-              <Button type="button" size="sm" onClick={() => openCategoryDialog()}>
-                <Plus data-icon="inline-start" />
-                新增分类
-              </Button>
+              <div className="settings-savebar-actions">
+                <Button type="button" variant="outline" size="sm" onClick={() => goToSection("inventory")}>
+                  去库存规则设置
+                </Button>
+                <Button type="button" size="sm" onClick={() => openCategoryDialog()}>
+                  <Plus data-icon="inline-start" />
+                  新增分类
+                </Button>
+              </div>
             </CardAction>
           </CardHeader>
-          <CardContent>
+          <CardContent className="settings-stack">
+            <div className="settings-rule-callout">
+              <strong>商品基础只管理分类资料</strong>
+              <span>这里的库存状态只读展示；扣库存或不扣库存请到库存规则页统一调整。</span>
+            </div>
             {(setting.categories || []).length ? (
               <Table>
                 <TableHeader>
@@ -897,7 +917,7 @@ function ProductBasicPanel({ markDirty, onSaved, onError, registerSave }: PanelC
         </Card>
       </div>
       <SettingsSaveBar
-        text="泡袋、茶袋、标签、服务、设计、制版、辅料、快递纸箱、PVC礼盒固定不扣库存，具体判断由服务层保护。"
+        text="商品基础只维护分类、单位和件规；扣不扣库存请到库存规则页统一设置。"
         saving={saving}
         onSave={() => void saveSystemSetting()}
       />
@@ -908,7 +928,7 @@ function ProductBasicPanel({ markDirty, onSaved, onError, registerSave }: PanelC
           <DialogHeader>
             <DialogTitle>{categoryDraft?.id ? "编辑分类" : "新增分类"}</DialogTitle>
             <DialogDescription>
-              分类库存策略保存后会同步这个分类下商品的 SKU 规则。
+              库存规则由库存规则页统一维护，保存分类不会在这里调整扣库存策略。
             </DialogDescription>
           </DialogHeader>
           {categoryDraft ? (
@@ -921,44 +941,36 @@ function ProductBasicPanel({ markDirty, onSaved, onError, registerSave }: PanelC
                   onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })}
                 />
               </Field>
-              <FieldGroup className="settings-form-grid settings-form-grid--two">
-                <Field>
-                  <FieldLabel>商品类型</FieldLabel>
-                  <Select
-                    value={categoryDraft.product_type || "other"}
-                    onValueChange={(next) => setCategoryDraft({ ...categoryDraft, product_type: next })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择商品类型" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {productTypeOptions.map((item) => (
-                          <SelectItem value={item.value} key={item.value}>{item.label}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel>分类库存策略</FieldLabel>
-                  <Select
-                    value={categoryDraft.inventory_policy || "strict"}
-                    onValueChange={(next) => setCategoryDraft({ ...categoryDraft, inventory_policy: next })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择库存策略" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {inventoryPolicyOptions.map((item) => (
-                          <SelectItem value={item.value} key={item.value}>{item.label}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </FieldGroup>
+              <Field>
+                <FieldLabel>商品类型</FieldLabel>
+                <Select
+                  value={categoryDraft.product_type || "other"}
+                  onValueChange={(next) => setCategoryDraft({ ...categoryDraft, product_type: next })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择商品类型" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {productTypeOptions.map((item) => (
+                        <SelectItem value={item.value} key={item.value}>{item.label}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel>当前库存规则</FieldLabel>
+                  <FieldDescription>只读展示，点击下方按钮去库存规则页修改。</FieldDescription>
+                </FieldContent>
+                <Badge variant={policyBadgeVariant(categoryDraft.inventory_policy)}>
+                  {policyText(categoryDraft.inventory_policy)}
+                </Badge>
+              </Field>
+              <Button type="button" variant="outline" size="sm" onClick={() => goToSection("inventory")}>
+                去库存规则设置
+              </Button>
               <Field>
                 <FieldLabel>排序</FieldLabel>
                 <Input
@@ -1079,12 +1091,12 @@ function InventoryRulesPanel({ markDirty, onSaved, onError, registerSave }: Pane
         <Card>
           <CardHeader>
             <CardTitle>分类库存策略</CardTitle>
-            <CardDescription>这里直接控制分类下商品是否进库存页，保存后服务层同步 SKU。</CardDescription>
+            <CardDescription>这里是扣不扣库存的唯一编辑入口，保存后服务层同步分类下 SKU。</CardDescription>
           </CardHeader>
           <CardContent className="settings-stack">
             <div className="settings-rule-callout">
-              <strong>分类优先，关键词兜底</strong>
-              <span>分类有明确库存策略时按分类执行；没有明确策略时，再按下面关键词判断。</span>
+              <strong>库存规则唯一编辑入口</strong>
+              <span>商品基础只读展示库存状态；分类在这里改为扣库存或不扣库存后，会同步到商品 SKU。</span>
             </div>
             <Table>
               <TableHeader>
@@ -1141,6 +1153,10 @@ function InventoryRulesPanel({ markDirty, onSaved, onError, registerSave }: Pane
                   <Badge variant="secondary" key={category.id || category.name}>{category.name}</Badge>
                 ))}
               </div>
+            </section>
+            <section className="settings-rule-list">
+              <h3>新分类自动判断规则</h3>
+              <p>这些关键词只用于新增分类或旧数据兜底，日常修改以分类库存策略为准。</p>
             </section>
             <div className="settings-two-column">
               <SettingListEditor
@@ -1360,13 +1376,14 @@ function MediaSummaryCards({ summary }: { summary?: MediaSummary }) {
   );
 }
 
-function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
+function MediaSettingsPanel({ markDirty, onSaved, onError, registerSave }: PanelCallbacks) {
   const [setting, setSetting] = useState<SystemSetting | null>(null);
   const [mediaType, setMediaType] = useState("");
   const [items, setItems] = useState<ProductMediaAsset[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -1408,6 +1425,33 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
   useEffect(() => {
     void loadMedia(1, "");
   }, []);
+
+  function patchMediaRule(patch: Record<string, unknown>) {
+    setSetting((current) => {
+      const existing = current || { key: "image_rules", value: {} };
+      return { ...existing, value: { ...(existing.value || {}), ...patch } };
+    });
+    markDirty();
+  }
+
+  async function saveImageRules() {
+    if (!setting) return false;
+    setSaving(true);
+    try {
+      setSetting(await api.saveSystemSetting("image_rules", { value: setting.value || {} }));
+      onSaved("图片上传规则已保存");
+      return true;
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "图片上传规则保存失败");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    registerSave("media", saveImageRules);
+  });
 
   async function uploadPendingImages(files: File[]) {
     if (!files.length) return;
@@ -1460,9 +1504,7 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
     if (!ids.length) return;
     setDeleting(true);
     try {
-      for (const id of ids) {
-        await api.deleteProductMedia(id);
-      }
+      await api.deletePendingProductMedia(selectedPendingMediaIds);
       setSelectedMediaIds([]);
       setConfirmBatchDelete(false);
       await loadMedia(page, "pending");
@@ -1492,10 +1534,72 @@ function MediaSettingsPanel({ onSaved, onError }: PanelCallbacks) {
   const allPendingSelected = pendingSelectableIds.length > 0 && pendingSelectableIds.every((id) => selectedPendingMediaIds.includes(id));
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const uploadButtonText = uploading ? (uploadProgress ? `上传中 ${uploadProgress}` : "上传中") : "上传待绑定图片";
+  const mediaRules = setting?.value || {};
 
   return (
     <>
       <MediaSummaryCards summary={setting?.media_summary} />
+      <Card className="settings-media-rules">
+        <CardHeader>
+          <div>
+            <CardTitle>上传规则</CardTitle>
+            <CardDescription>统一维护商品图片资产的上传限制、压缩、待绑定清理和 1:1 主图要求。</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="settings-stack">
+          <div className="settings-media-rule-grid">
+            <Field>
+              <FieldLabel>OSS 路径</FieldLabel>
+              <Input
+                value={stringValue(mediaRules.oss_path_prefix)}
+                placeholder="product/"
+                onChange={(event) => patchMediaRule({ oss_path_prefix: event.target.value })}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>最大上传 MB</FieldLabel>
+              <Input
+                type="number"
+                min={1}
+                max={25}
+                value={numberValue(mediaRules.max_image_upload_mb, 25)}
+                onChange={(event) => patchMediaRule({ max_image_upload_mb: Number(event.target.value || 25) })}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>压缩规则</FieldLabel>
+              <Input
+                value={stringValue(mediaRules.compression_rule || "image/resize,m_lfit,w_1600,h_1600/quality,q_88")}
+                onChange={(event) => patchMediaRule({ compression_rule: event.target.value })}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>待绑定清理天数</FieldLabel>
+              <Input
+                type="number"
+                min={1}
+                value={numberValue(mediaRules.pending_cleanup_days, 30)}
+                onChange={(event) => patchMediaRule({ pending_cleanup_days: Number(event.target.value || 30) })}
+              />
+            </Field>
+          </div>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel>1:1 主图规则</FieldLabel>
+              <FieldDescription>开启后主图和颜色规格图都要求先裁成正方形再保存。</FieldDescription>
+            </FieldContent>
+            <Switch
+              checked={Number(mediaRules.require_square_main_image ?? 1) === 1}
+              onCheckedChange={(checked) => patchMediaRule({ require_square_main_image: checked ? 1 : 0 })}
+            />
+          </Field>
+          <SettingsSaveBar
+            text="保存后影响后续商品图上传、裁切和未绑定图片治理规则。"
+            saving={saving}
+            onSave={() => void saveImageRules()}
+          />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <div>
@@ -1722,6 +1826,34 @@ function MiniappSettingsPanel({ onSaved, onError }: PanelCallbacks) {
     }
   }
 
+  async function createHomeBanner() {
+    setBusyKey("create:home_banner");
+    try {
+      await api.createMiniappImageAsset({ scene: "home_banner" });
+      await load();
+      onSaved("首页轮播已新增，请上传轮播图片");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "首页轮播新增失败");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function deleteHomeBanner(asset: MiniappAssetImageItem) {
+    const id = Number(asset.id || 0);
+    if (!id) return;
+    setBusyKey(`delete:miniapp_asset:${id}`);
+    try {
+      await api.deleteMiniappImageAsset(id);
+      await load();
+      onSaved("首页轮播已删除");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "首页轮播删除失败");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
   if (loading) return <SettingsLoading rows={4} />;
 
   return (
@@ -1746,6 +1878,10 @@ function MiniappSettingsPanel({ onSaved, onError }: PanelCallbacks) {
         getName={(asset) => asset.title || asset.name || "首页轮播"}
         getMeta={assetMeta}
         onUpload={uploadMiniappImage}
+        onCreate={createHomeBanner}
+        createLabel="新增轮播"
+        onDelete={deleteHomeBanner}
+        deleteLabel="删除轮播"
       />
       <MiniappImageConfigTable
         icon={<Layers aria-hidden="true" />}
@@ -1781,12 +1917,17 @@ function MiniappSettingsPanel({ onSaved, onError }: PanelCallbacks) {
   );
 }
 
-function UserPermissionsPanel({ onSaved, onError }: PanelCallbacks) {
+function UserPermissionsPanel({ onSaved, onError, currentUser }: UserPermissionsPanelProps) {
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyUserId, setBusyUserId] = useState<number | null>(null);
   const [disableTarget, setDisableTarget] = useState<UserListItem | null>(null);
+
+  function isSelfUser(user: UserListItem) {
+    const nativeUserId = Number(currentUser?.native_user_id || currentUser?.id || 0);
+    return nativeUserId > 0 && nativeUserId === Number(user.id || 0);
+  }
 
   async function load(nextKeyword = keyword) {
     setLoading(true);
@@ -1840,6 +1981,10 @@ function UserPermissionsPanel({ onSaved, onError }: PanelCallbacks) {
           </CardAction>
         </CardHeader>
         <CardContent>
+          <div className="settings-user-guard-note">
+            <Badge variant="secondary">安全保护</Badge>
+            <span>当前账号不能在这里停用或修改角色；最后一个管理员也会被后端拦截，避免后台锁死。</span>
+          </div>
           {loading ? (
             <SettingsLoading rows={4} />
           ) : users.length ? (
@@ -1853,18 +1998,25 @@ function UserPermissionsPanel({ onSaved, onError }: PanelCallbacks) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {users.map((user) => (
+                {users.map((user) => {
+                  const self = isSelfUser(user);
+                  const roleGuarded = busyUserId === user.id || self;
+                  const statusGuarded = busyUserId === user.id || self;
+                  return (
                   <TableRow key={user.id}>
                     <TableCell>
                       <div className="settings-table-title">
-                        <strong>{user.display_name || user.account_display || user.username}</strong>
+                        <strong>
+                          {user.display_name || user.account_display || user.username}
+                          {self ? <Badge variant="outline">当前账号</Badge> : null}
+                        </strong>
                         <span>{[user.account_display || user.username, user.phone].filter(Boolean).join(" / ") || `ID ${user.id}`}</span>
                       </div>
                     </TableCell>
                     <TableCell>
                       <Select
                         value={user.role || "staff"}
-                        disabled={busyUserId === user.id}
+                        disabled={roleGuarded}
                         onValueChange={(next) => void updateUser(user, { role: next })}
                       >
                         <SelectTrigger>
@@ -1883,7 +2035,7 @@ function UserPermissionsPanel({ onSaved, onError }: PanelCallbacks) {
                     <TableCell>
                       <Switch
                         checked={Number(user.is_active || 0) === 1}
-                        disabled={busyUserId === user.id}
+                        disabled={statusGuarded}
                         onCheckedChange={(checked) => {
                           if (!checked) setDisableTarget(user);
                           else void updateUser(user, { is_active: 1 });
@@ -1891,7 +2043,8 @@ function UserPermissionsPanel({ onSaved, onError }: PanelCallbacks) {
                       />
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           ) : (
@@ -2137,7 +2290,12 @@ function MiniappImageConfigTable<T>({
   getId,
   getName,
   getMeta,
-  onUpload
+  onUpload,
+  onCreate,
+  createLabel,
+  onDelete,
+  deleteLabel,
+  canDelete
 }: {
   icon: ReactNode;
   title: string;
@@ -2152,6 +2310,11 @@ function MiniappImageConfigTable<T>({
   getName: (item: T) => string;
   getMeta: (item: T) => string;
   onUpload: (targetType: MiniappImageTarget, id: number, field: MiniappImageField, file: File) => void;
+  onCreate?: () => void;
+  createLabel?: string;
+  onDelete?: (item: T) => void;
+  deleteLabel?: string;
+  canDelete?: (item: T) => boolean;
 }) {
   return (
     <Card className="settings-miniapp-panel">
@@ -2163,7 +2326,17 @@ function MiniappImageConfigTable<T>({
             <CardDescription>{desc}</CardDescription>
           </div>
         </div>
-        <CardAction><Badge variant="outline">{countText}</Badge></CardAction>
+        <CardAction>
+          <div className="settings-savebar-actions">
+            <Badge variant="outline">{countText}</Badge>
+            {onCreate ? (
+              <Button type="button" size="sm" disabled={busyKey === "create:home_banner"} onClick={onCreate}>
+                <Plus data-icon="inline-start" />
+                {createLabel || "新增"}
+              </Button>
+            ) : null}
+          </div>
+        </CardAction>
       </CardHeader>
       <CardContent>
         {items.length ? (
@@ -2179,6 +2352,18 @@ function MiniappImageConfigTable<T>({
                   <div className="settings-miniapp-name">
                     <strong>{getName(item)}</strong>
                     <span>{getMeta(item)}</span>
+                    {onDelete && (!canDelete || canDelete(item)) ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        disabled={busyKey === `delete:${targetType}:${id}`}
+                        onClick={() => onDelete(item)}
+                      >
+                        <Trash2 data-icon="inline-start" />
+                        {deleteLabel || "删除"}
+                      </Button>
+                    ) : null}
                   </div>
                   {fields.map((field) => (
                     <MiniappImageUploadCell

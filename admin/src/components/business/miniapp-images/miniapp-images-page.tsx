@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Image, Images, Layers, Navigation, RefreshCw, Upload } from "lucide-react";
+import { Image, Images, Layers, Navigation, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import { api } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -113,7 +113,11 @@ function ImageConfigTable<T>({
   getId,
   getName,
   getMeta,
-  onUpload
+  onUpload,
+  onCreate,
+  createLabel,
+  onDelete,
+  deleteLabel
 }: {
   icon: ReactNode;
   title: string;
@@ -128,6 +132,10 @@ function ImageConfigTable<T>({
   getName: (item: T) => string;
   getMeta: (item: T) => string;
   onUpload: (targetType: MiniappImageTarget, id: number, field: MiniappImageField, file: File) => void;
+  onCreate?: () => void;
+  createLabel?: string;
+  onDelete?: (item: T) => void;
+  deleteLabel?: string;
 }) {
   return (
     <section className="miniapp-image-panel">
@@ -139,7 +147,15 @@ function ImageConfigTable<T>({
             <p>{desc}</p>
           </div>
         </div>
-        <Badge variant="outline">{countText}</Badge>
+        <div className="settings-savebar-actions">
+          <Badge variant="outline">{countText}</Badge>
+          {onCreate ? (
+            <Button type="button" size="sm" onClick={onCreate} disabled={busyKey === "create:home_banner"}>
+              <Plus aria-hidden="true" />
+              {createLabel || "新增"}
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {items.length ? (
@@ -155,6 +171,18 @@ function ImageConfigTable<T>({
                 <div className="miniapp-image-name">
                   <strong>{getName(item)}</strong>
                   <span>{getMeta(item)}</span>
+                  {onDelete ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={busyKey === `delete:${targetType}:${id}`}
+                      onClick={() => onDelete(item)}
+                    >
+                      <Trash2 aria-hidden="true" />
+                      {deleteLabel || "删除"}
+                    </Button>
+                  ) : null}
                 </div>
                 {fields.map((field) => (
                   <ImageUploadCell
@@ -235,6 +263,38 @@ export function MiniappImagesPage() {
     }
   }
 
+  async function createHomeBanner() {
+    setBusyKey("create:home_banner");
+    setError("");
+    setNotice("");
+    try {
+      await api.createMiniappImageAsset({ scene: "home_banner" });
+      setNotice("首页轮播已新增，请上传轮播图片。");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "首页轮播新增失败");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function deleteHomeBanner(asset: MiniappAssetImageItem) {
+    const id = Number(asset.id || 0);
+    if (!id) return;
+    setBusyKey(`delete:miniapp_asset:${id}`);
+    setError("");
+    setNotice("");
+    try {
+      await api.deleteMiniappImageAsset(id);
+      setNotice("首页轮播已删除。");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "首页轮播删除失败");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
   return (
     <section className="miniapp-images-page">
       <div className="settings-head miniapp-images-head">
@@ -267,6 +327,10 @@ export function MiniappImagesPage() {
         getName={(asset) => asset.title || asset.name || "首页轮播图"}
         getMeta={assetMeta}
         onUpload={uploadAndSave}
+        onCreate={createHomeBanner}
+        createLabel="新增轮播"
+        onDelete={deleteHomeBanner}
+        deleteLabel="删除轮播"
       />
 
       <ImageConfigTable

@@ -16,6 +16,16 @@ import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -66,8 +76,10 @@ import {
   TableRow
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { hasPermission } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import type {
+  AuthUser,
   InventoryActionPayload,
   InventoryActionResult,
   InventoryBalance,
@@ -86,6 +98,16 @@ type InventoryActionTarget = {
   mode: InventoryActionMode;
   row?: InventoryBalance | null;
 };
+type InventoryRiskConfirm = {
+  type: "transfer_over_stock" | "stocktake_large_delta";
+  title: string;
+  description: string;
+  currentQty: number;
+  changeQty: number;
+  afterQty: number;
+  warehouseName: string;
+  payload: InventoryActionPayload;
+} | null;
 type InventoryMatrixWarehouse = {
   key: string;
   label: string;
@@ -110,6 +132,8 @@ const INVENTORY_PAGE_SIZE_MIN = 20;
 const INVENTORY_PAGE_SIZE_MAX = 80;
 const INVENTORY_TABLE_ROW_HEIGHT = 46;
 const INVENTORY_PAGE_SIZE_RESIZE_DELAY = 160;
+const STOCKTAKE_RISK_ABSOLUTE = 20;
+const STOCKTAKE_RISK_RATIO = 0.5;
 
 const inventoryTabs: Array<{ value: InventoryTab; label: string }> = [
   { value: "overview", label: "库存总览" },
@@ -183,6 +207,61 @@ function rowWarehouseKey(row?: InventoryBalance | null) {
 
 function rowWarehouseLabel(row?: InventoryBalance | null) {
   return row?.warehouse_name || (row?.warehouse_id ? `仓库${row.warehouse_id}` : "未记录仓库");
+}
+
+function warehouseNameById(warehouses: Warehouse[], id: number | string | undefined) {
+  const matched = warehouses.find((warehouse) => String(warehouse.id) === String(id));
+  return warehouseLabel(matched || null);
+}
+
+function buildInventoryRisk({
+  mode,
+  selectedRow,
+  quantity,
+  warehouseId,
+  outWarehouseId,
+  warehouseOptions,
+  payload
+}: {
+  mode: InventoryActionMode;
+  selectedRow: InventoryBalance;
+  quantity: number;
+  warehouseId: string;
+  outWarehouseId: string;
+  warehouseOptions: Warehouse[];
+  payload: InventoryActionPayload;
+}): InventoryRiskConfirm {
+  const currentQty = rowQuantity(selectedRow);
+  if (mode === "transfer" && quantity > currentQty) {
+    return {
+      type: "transfer_over_stock",
+      title: "调货数量超过当前库存",
+      description: "确认后会继续生成调拨单，可能让调出仓库出现负库存。",
+      currentQty,
+      changeQty: -quantity,
+      afterQty: currentQty - quantity,
+      warehouseName: warehouseNameById(warehouseOptions, outWarehouseId),
+      payload
+    };
+  }
+  if (mode === "stocktake") {
+    const changeQty = quantity - currentQty;
+    const largeAbsolute = Math.abs(changeQty) >= STOCKTAKE_RISK_ABSOLUTE;
+    const largeRatio = currentQty > 0 && Math.abs(changeQty) / currentQty >= STOCKTAKE_RISK_RATIO;
+    if (largeAbsolute || largeRatio) {
+      return {
+        type: "stocktake_large_delta",
+        title: "盘点差异较大",
+        description: "请确认账面库存、实盘库存和影响仓库无误，确认后会直接写入库存流水。",
+        currentQty,
+        changeQty,
+        afterQty: quantity,
+        warehouseName: warehouseNameById(warehouseOptions, warehouseId),
+        payload
+      };
+    }
+  }
+  return null;
 }
 
 function formatDate(value?: string) {
@@ -349,7 +428,10 @@ function InventoryToolbar({
   onSearch,
   onReset,
   onRefresh,
-  onAction
+  onAction,
+  canAdjustInventory,
+  canTransferInventory,
+  canStocktakeInventory
 }: {
   keyword: string;
   warehouseId: string;
@@ -366,6 +448,9 @@ function InventoryToolbar({
   onReset: () => void;
   onRefresh: () => void;
   onAction: (mode: InventoryActionMode) => void;
+  canAdjustInventory: boolean;
+  canTransferInventory: boolean;
+  canStocktakeInventory: boolean;
 }) {
   const totalText = isBalanceTab(activeTab) ? `本页 ${pageSize} 条 / 当前结果 ${total}` : `第 ${page}/${pageCount} 页 / 共 ${total} 条`;
   return (
@@ -383,13 +468,13 @@ function InventoryToolbar({
           <Button type="button" variant="outline" size="sm" disabled={loading} onClick={onRefresh}>
             <RefreshCw data-icon="inline-start" /> 刷新
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => onAction("purchase")}>
+          <Button type="button" variant="outline" size="sm" disabled={!canAdjustInventory} onClick={() => onAction("purchase")}>
             <PackagePlus data-icon="inline-start" /> 进货
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => onAction("transfer")}>
+          <Button type="button" variant="outline" size="sm" disabled={!canTransferInventory} onClick={() => onAction("transfer")}>
             <ArrowRightLeft data-icon="inline-start" /> 调拨
           </Button>
-          <Button type="button" size="sm" onClick={() => onAction("stocktake")}>
+          <Button type="button" size="sm" disabled={!canStocktakeInventory} onClick={() => onAction("stocktake")}>
             <ClipboardCheck data-icon="inline-start" /> 盘点
           </Button>
         </div>
@@ -482,7 +567,10 @@ function InventoryOverviewMatrix({
   status,
   onAction,
   onOpenLedger,
-  onReset
+  onReset,
+  canAdjustInventory,
+  canTransferInventory,
+  canStocktakeInventory
 }: {
   rows: InventoryBalance[];
   warehouses: Warehouse[];
@@ -492,6 +580,9 @@ function InventoryOverviewMatrix({
   onAction: (mode: InventoryActionMode, row: InventoryBalance) => void;
   onOpenLedger: (row: InventoryBalance) => void;
   onReset: () => void;
+  canAdjustInventory: boolean;
+  canTransferInventory: boolean;
+  canStocktakeInventory: boolean;
 }) {
   const displayRows = filterBalances(rows, status);
   const warehouseColumns = buildMatrixWarehouses(displayRows, warehouses, warehouseId);
@@ -590,13 +681,13 @@ function InventoryOverviewMatrix({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuGroup>
-                        <DropdownMenuItem disabled={!sku.primaryRow} onSelect={() => sku.primaryRow && onAction("purchase", sku.primaryRow)}>
+                        <DropdownMenuItem disabled={!sku.primaryRow || !canAdjustInventory} onSelect={() => sku.primaryRow && onAction("purchase", sku.primaryRow)}>
                           <PackagePlus data-icon="inline-start" /> 进货
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={!sku.primaryRow} onSelect={() => sku.primaryRow && onAction("transfer", sku.primaryRow)}>
+                        <DropdownMenuItem disabled={!sku.primaryRow || !canTransferInventory} onSelect={() => sku.primaryRow && onAction("transfer", sku.primaryRow)}>
                           <ArrowRightLeft data-icon="inline-start" /> 调拨
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={!sku.primaryRow} onSelect={() => sku.primaryRow && onAction("stocktake", sku.primaryRow)}>
+                        <DropdownMenuItem disabled={!sku.primaryRow || !canStocktakeInventory} onSelect={() => sku.primaryRow && onAction("stocktake", sku.primaryRow)}>
                           <ClipboardCheck data-icon="inline-start" /> 盘点
                         </DropdownMenuItem>
                       </DropdownMenuGroup>
@@ -618,7 +709,10 @@ function InventoryBalanceTable({
   status,
   onAction,
   onOpenLedger,
-  onReset
+  onReset,
+  canAdjustInventory,
+  canTransferInventory,
+  canStocktakeInventory
 }: {
   rows: InventoryBalance[];
   loading: boolean;
@@ -626,6 +720,9 @@ function InventoryBalanceTable({
   onAction: (mode: InventoryActionMode, row: InventoryBalance) => void;
   onOpenLedger: (row: InventoryBalance) => void;
   onReset: () => void;
+  canAdjustInventory: boolean;
+  canTransferInventory: boolean;
+  canStocktakeInventory: boolean;
 }) {
   const displayRows = filterBalances(rows, status);
   if (loading) {
@@ -696,13 +793,13 @@ function InventoryBalanceTable({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuGroup>
-                        <DropdownMenuItem disabled={!tracksStock} onSelect={() => onAction("purchase", row)}>
+                        <DropdownMenuItem disabled={!tracksStock || !canAdjustInventory} onSelect={() => onAction("purchase", row)}>
                           <PackagePlus data-icon="inline-start" /> 进货
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={!tracksStock} onSelect={() => onAction("transfer", row)}>
+                        <DropdownMenuItem disabled={!tracksStock || !canTransferInventory} onSelect={() => onAction("transfer", row)}>
                           <ArrowRightLeft data-icon="inline-start" /> 调拨
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={!tracksStock} onSelect={() => onAction("stocktake", row)}>
+                        <DropdownMenuItem disabled={!tracksStock || !canStocktakeInventory} onSelect={() => onAction("stocktake", row)}>
                           <ClipboardCheck data-icon="inline-start" /> 盘点
                         </DropdownMenuItem>
                       </DropdownMenuGroup>
@@ -910,7 +1007,7 @@ function InventoryLedgerDrawer({
     if (!row) return;
     setLoading(true);
     setError("");
-    api.inventoryLedger({ keyword: row.sku_no || rowTitle(row), page: 1, pageSize: 30 })
+    api.inventoryLedger({ skuId: row.sku_id || rowProductId(row), warehouseId: row.warehouse_id, page: 1, pageSize: 30 })
       .then((data) => setItems(data.list || []))
       .catch((err) => setError(err instanceof Error ? err.message : "库存流水加载失败"))
       .finally(() => setLoading(false));
@@ -956,6 +1053,7 @@ function InventoryActionDialog({
   const [loadingLookup, setLoadingLookup] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [riskConfirm, setRiskConfirm] = useState<InventoryRiskConfirm>(null);
   const mode = action?.mode || "purchase";
   const open = Boolean(action);
   const warehouseOptions = useMemo(
@@ -977,6 +1075,7 @@ function InventoryActionDialog({
     setQuantity(mode === "stocktake" && row ? quantityText(row.quantity ?? row.inventory ?? row.stock) : "");
     setNote("");
     setError("");
+    setRiskConfirm(null);
   }, [action, mode, warehouseOptions]);
 
   async function searchSkuRows() {
@@ -1024,6 +1123,19 @@ function InventoryActionDialog({
       payload.out_warehouse_id = Number(outWarehouseId);
       payload.enter_warehouse_id = Number(enterWarehouseId);
     }
+    const risk = buildInventoryRisk({
+      mode,
+      selectedRow,
+      quantity: amount,
+      warehouseId,
+      outWarehouseId,
+      warehouseOptions,
+      payload
+    });
+    if (risk) {
+      setRiskConfirm(risk);
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
@@ -1042,9 +1154,29 @@ function InventoryActionDialog({
   }
 
   const title = mode === "purchase" ? "进货入库" : mode === "transfer" ? "仓库调拨" : "盘点修正";
+  async function executeAction(payload: InventoryActionPayload) {
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = mode === "purchase"
+        ? await api.createInventoryPurchase(payload)
+        : mode === "transfer"
+          ? await api.createInventoryTransfer(payload)
+          : await api.createInventoryStocktake(payload);
+      onSaved(mode, result);
+      setRiskConfirm(null);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "库存操作失败");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   const selectedSummary = selectedRow ? `${rowTitle(selectedRow)} · ${rowColor(selectedRow)} · ${selectedRow.sku_no || rowProductId(selectedRow)}` : "尚未选择 SKU";
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(nextOpen) => {
       if (!nextOpen) onClose();
     }}>
@@ -1170,6 +1302,63 @@ function InventoryActionDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <InventoryRiskConfirmDialog
+      risk={riskConfirm}
+      submitting={submitting}
+      onCancel={() => setRiskConfirm(null)}
+      onConfirm={() => {
+        if (riskConfirm) void executeAction(riskConfirm.payload);
+      }}
+    />
+    </>
+  );
+}
+
+function InventoryRiskConfirmDialog({
+  risk,
+  submitting,
+  onCancel,
+  onConfirm
+}: {
+  risk: InventoryRiskConfirm;
+  submitting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={Boolean(risk)} onOpenChange={(open) => {
+      if (!open) onCancel();
+    }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{risk?.title || "确认库存变更"}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {risk?.description || "请确认库存变更信息无误。"}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {risk ? (
+          <div className="inventory-risk-grid">
+            <span>当前库存</span>
+            <strong>{quantityText(risk.currentQty)}</strong>
+            <span>变更数量</span>
+            <strong>{quantityText(risk.changeQty)}</strong>
+            <span>变更后库存</span>
+            <strong>{quantityText(risk.afterQty)}</strong>
+            <span>影响仓库</span>
+            <strong>{risk.warehouseName}</strong>
+          </div>
+        ) : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={submitting}>取消</AlertDialogCancel>
+          <AlertDialogAction disabled={submitting} onClick={(event) => {
+            event.preventDefault();
+            onConfirm();
+          }}>
+            {submitting ? "提交中" : "确认继续"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -1207,7 +1396,7 @@ function InventoryPager({
   );
 }
 
-export function InventoryPage() {
+export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) {
   const [keyword, setKeyword] = useState("");
   const [warehouseId, setWarehouseId] = useState("all");
   const [status, setStatus] = useState<InventoryStatusFilter>("all");
@@ -1230,13 +1419,17 @@ export function InventoryPage() {
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const currentWarehouse = warehouses.find((warehouse) => String(warehouse.id) === warehouseId);
   const summary = useMemo(() => buildPageSummary(balances, remoteSummary), [balances, remoteSummary]);
+  const canAdjustInventory = hasPermission(currentUser, "调库存");
+  const canTransferInventory = hasPermission(currentUser, "调拨");
+  const canStocktakeInventory = hasPermission(currentUser, "盘点");
 
   async function loadTab(
     nextTab = activeTab,
     nextPage = page,
     nextKeyword = keyword,
     nextWarehouseId = warehouseId,
-    nextPageSize = pageSize
+    nextPageSize = pageSize,
+    nextStatus = status
   ) {
     setLoading(true);
     setError("");
@@ -1245,6 +1438,7 @@ export function InventoryPage() {
         const data = await api.inventoryBalances({
           keyword: nextKeyword,
           warehouseId: nextWarehouseId,
+          stockStatus: nextStatus,
           page: nextPage,
           pageSize: nextPageSize
         });
@@ -1285,7 +1479,7 @@ export function InventoryPage() {
     api.warehouses()
       .then((data) => setWarehouses(data.list || []))
       .catch(() => undefined);
-    void loadTab("overview", 1, "", "all", pageSize);
+    void loadTab("overview", 1, "", "all", pageSize, "all");
   }, []);
 
   useEffect(() => {
@@ -1306,40 +1500,45 @@ export function InventoryPage() {
   }, []);
 
   useEffect(() => {
-    void loadTab(activeTab, 1, keyword, warehouseId, pageSize);
+    void loadTab(activeTab, 1, keyword, warehouseId, pageSize, status);
   }, [pageSize]);
 
   function refreshCurrent() {
-    void loadTab(activeTab, page, keyword, warehouseId, pageSize);
+    void loadTab(activeTab, page, keyword, warehouseId, pageSize, status);
   }
 
   function searchInventory() {
-    void loadTab(activeTab, 1, keyword, warehouseId, pageSize);
+    void loadTab(activeTab, 1, keyword, warehouseId, pageSize, status);
   }
 
   function resetFilters() {
     setKeyword("");
     setWarehouseId("all");
     setStatus("all");
-    void loadTab(activeTab, 1, "", "all", pageSize);
+    void loadTab(activeTab, 1, "", "all", pageSize, "all");
   }
 
   function changeWarehouse(nextWarehouseId: string) {
     setWarehouseId(nextWarehouseId);
-    void loadTab(activeTab, 1, keyword, nextWarehouseId, pageSize);
+    void loadTab(activeTab, 1, keyword, nextWarehouseId, pageSize, status);
+  }
+
+  function changeStatus(nextStatus: InventoryStatusFilter) {
+    setStatus(nextStatus);
+    void loadTab(activeTab, 1, keyword, warehouseId, pageSize, nextStatus);
   }
 
   function switchTab(nextTab: string) {
     const tab = nextTab as InventoryTab;
     setActiveTab(tab);
-    void loadTab(tab, 1, keyword, warehouseId, pageSize);
+    void loadTab(tab, 1, keyword, warehouseId, pageSize, status);
   }
 
   function afterActionSaved(mode: InventoryActionMode, result: InventoryActionResult) {
     const docNo = result.doc_no || result.transfer_no || result.stocktake_no || result.id || "";
     const actionText = mode === "purchase" ? "进货已保存" : mode === "transfer" ? "调拨已保存" : "盘点已保存";
     setNotice(docNo ? `${actionText}：${docNo}` : actionText);
-    void loadTab("overview", 1, keyword, warehouseId, pageSize);
+    void loadTab("overview", 1, keyword, warehouseId, pageSize, status);
     setActiveTab("overview");
   }
 
@@ -1362,10 +1561,13 @@ export function InventoryPage() {
           onReset={resetFilters}
           onRefresh={refreshCurrent}
           onAction={(mode) => setActionTarget({ mode })}
+          canAdjustInventory={canAdjustInventory}
+          canTransferInventory={canTransferInventory}
+          canStocktakeInventory={canStocktakeInventory}
         />
       </CardHeader>
       <CardContent className="inventory-page-content">
-        <InventoryStatusFilter status={status} onStatusChange={setStatus} />
+        <InventoryStatusFilter status={status} onStatusChange={changeStatus} />
         <InventorySummaryStrip
           summary={summary}
           warehouseName={warehouseId === "all" ? "全部仓库" : warehouseLabel(currentWarehouse)}
@@ -1393,6 +1595,9 @@ export function InventoryPage() {
               onAction={(mode, row) => setActionTarget({ mode, row })}
               onOpenLedger={setLedgerRow}
               onReset={resetFilters}
+              canAdjustInventory={canAdjustInventory}
+              canTransferInventory={canTransferInventory}
+              canStocktakeInventory={canStocktakeInventory}
             />
           </TabsContent>
           <TabsContent value="balances">
@@ -1403,6 +1608,9 @@ export function InventoryPage() {
               onAction={(mode, row) => setActionTarget({ mode, row })}
               onOpenLedger={setLedgerRow}
               onReset={resetFilters}
+              canAdjustInventory={canAdjustInventory}
+              canTransferInventory={canTransferInventory}
+              canStocktakeInventory={canStocktakeInventory}
             />
           </TabsContent>
           <TabsContent value="ledger">
@@ -1420,10 +1628,10 @@ export function InventoryPage() {
         </Tabs>
         <InventoryPager
           page={page}
-          pageCount={isBalanceTab(activeTab) && status !== "all" ? 1 : pageCount}
+          pageCount={pageCount}
           loading={loading}
-          onPrevious={() => void loadTab(activeTab, page - 1, keyword, warehouseId, pageSize)}
-          onNext={() => void loadTab(activeTab, page + 1, keyword, warehouseId, pageSize)}
+          onPrevious={() => void loadTab(activeTab, page - 1, keyword, warehouseId, pageSize, status)}
+          onNext={() => void loadTab(activeTab, page + 1, keyword, warehouseId, pageSize, status)}
         />
       </CardContent>
       <InventoryLedgerDrawer row={ledgerRow} onClose={() => setLedgerRow(null)} />

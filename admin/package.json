@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5179",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run check:dist",
+    "check:dist": "python3 ../scripts/check_admin_dist.py",
     "preview": "vite preview --host 127.0.0.1 --port 5180"
   },
   "dependencies": {

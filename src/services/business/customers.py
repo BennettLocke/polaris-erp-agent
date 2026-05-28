@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -75,8 +76,16 @@ class CustomerService(BusinessService):
         page_size: int = 50,
         period: str = "",
         month: str = "",
+        pay_status: str = "",
     ) -> tuple[list[dict], int, dict]:
-        return self.db.customer_sales(customer_id, page=page, page_size=page_size, period=period, month=month)
+        return self.db.customer_sales(
+            customer_id,
+            page=page,
+            page_size=page_size,
+            period=period,
+            month=month,
+            pay_status=pay_status,
+        )
 
     def statement(
         self,
@@ -98,6 +107,12 @@ class CustomerBalanceService(BusinessService):
     def ledger(self, customer_id: int, *, page: int = 1, page_size: int = 100) -> tuple[list[dict], int, dict]:
         return self.db.customer_balance_ledger(customer_id, page=page, page_size=page_size)
 
+    def _amount_decimal(self, amount: Any) -> Decimal:
+        try:
+            return Decimal(str(amount).replace(",", "").strip())
+        except (InvalidOperation, AttributeError):
+            raise DBError("amount is required")
+
     def apply_action(
         self,
         customer_id: int,
@@ -110,7 +125,10 @@ class CustomerBalanceService(BusinessService):
         operator_user_id: Any = None,
     ) -> dict:
         clean_action = str(action or "").strip()
+        amount_value = self._amount_decimal(amount)
         if clean_action == "settlement":
+            if amount_value <= 0:
+                raise DBError("amount must be greater than 0")
             return self.db.customer_month_settlement(
                 customer_id,
                 month=month,
@@ -120,6 +138,8 @@ class CustomerBalanceService(BusinessService):
                 operator_user_id=operator_user_id,
             )
         if clean_action in ("receipt", "recharge"):
+            if amount_value <= 0:
+                raise DBError("amount must be greater than 0")
             return self.db.customer_balance_entry(
                 customer_id,
                 entry_type=clean_action,
@@ -129,6 +149,10 @@ class CustomerBalanceService(BusinessService):
                 operator_user_id=operator_user_id,
             )
         if clean_action == "adjust":
+            if amount_value == 0:
+                raise DBError("amount cannot be 0")
+            if not str(note or "").strip():
+                raise DBError("adjust note is required")
             return self.db.customer_balance_adjust(
                 customer_id,
                 amount=amount,

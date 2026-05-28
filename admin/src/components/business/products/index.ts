@@ -1,1 +1,1 @@
-export { MediaPage, ProductsPage } from "./products-page";
+export { ProductsPage } from "./products-page";

@@ -3,6 +3,7 @@ sjagent 主入口
 统一启动入口，支持多种渠道
 """
 import argparse
+import os
 import sys
 import threading
 
@@ -40,15 +41,16 @@ def start_feishu(port: int = 5000):
     run_server(port=port)
 
 
-def start_http_api(port: int = 8080):
+def start_http_api(port: int = 8080, host: str | None = None):
     """启动 HTTP API 渠道"""
     from src.channels.http_api import init_api, run_api_server
 
     agent = Agent()
     init_api(agent)
 
-    logger.info(f"启动 HTTP API 渠道: port={port}")
-    run_api_server(port=port)
+    host = host or os.environ.get("SJAGENT_HTTP_HOST") or None
+    logger.info(f"启动 HTTP API 渠道: host={host or '127.0.0.1'}, port={port}")
+    run_api_server(host=host, port=port)
 
 
 def run_console():
@@ -90,6 +92,7 @@ def main():
                         help="运行模式：console=控制台, feishu=飞书渠道, http=HTTP API, all=全部")
     parser.add_argument("--feishu-port", type=int, default=5000, help="飞书渠道端口")
     parser.add_argument("--http-port", type=int, default=8080, help="HTTP API 端口")
+    parser.add_argument("--http-host", type=str, default=None, help="HTTP API 监听地址，例如 0.0.0.0")
     parser.add_argument("--message", type=str, help="单次执行模式，直接传入消息")
 
     args = parser.parse_args()
@@ -116,7 +119,7 @@ def main():
         threads.append(t)
 
     if args.mode in ("http", "all"):
-        t = threading.Thread(target=start_http_api, args=(args.http_port,), daemon=True)
+        t = threading.Thread(target=start_http_api, args=(args.http_port, args.http_host), daemon=True)
         t.start()
         threads.append(t)
 

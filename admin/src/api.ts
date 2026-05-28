@@ -1,5 +1,10 @@
 import type {
   ApiResult,
+  AgentChatResponse,
+  AgentHistoryResult,
+  AgentImageUploadResult,
+  AgentSessionSnapshot,
+  AnalyticsHotProductsResult,
   CustomerBalanceActionPayload,
   CustomerBalanceLedgerResult,
   AuthUser,
@@ -13,6 +18,7 @@ import type {
   InventoryBalanceResult,
   InventoryLedgerItem,
   ListResult,
+  MiniappImageCreatePayload,
   MiniappImageConfig,
   MiniappImageUpdatePayload,
   NumberSequenceSettings,
@@ -69,6 +75,8 @@ export type CustomerStatementQuery = {
 
 export type InventoryListQuery = {
   keyword?: string;
+  skuId?: number | string;
+  stockStatus?: string;
   warehouseId?: number | string;
   page?: number;
   pageSize?: number;
@@ -88,6 +96,15 @@ export type SquareCropPayload = {
   sourceSize: number;
   outputSize?: number;
 };
+
+export type AnalyticsHotProductsQuery = {
+  period?: string;
+  limit?: number;
+  dimension?: "product" | "sku";
+  categoryNames?: string[];
+};
+
+const AGENT_HISTORY_ENDPOINT = "/api/agent/history";
 
 export class ApiError extends Error {
   status: number;
@@ -145,6 +162,12 @@ function listParams(options: InventoryListQuery = {}) {
   if (options.warehouseId && options.warehouseId !== "all") {
     params.set("warehouse_id", String(options.warehouseId));
   }
+  if (options.skuId) {
+    params.set("sku_id", String(options.skuId));
+  }
+  if (options.stockStatus && options.stockStatus !== "all") {
+    params.set("stock_status", options.stockStatus);
+  }
   return params.toString();
 }
 
@@ -157,6 +180,33 @@ export const api = {
     }),
   logout: () => request<Record<string, never>>("/api/web-auth/logout", { method: "POST" }),
   dashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
+  analyticsHotProducts: (query: AnalyticsHotProductsQuery = {}) => {
+    const endpoint = "/api/analytics/hot-products";
+    const params = new URLSearchParams();
+    params.set("period", query.period || "7d");
+    params.set("limit", String(query.limit || 5));
+    params.set("dimension", query.dimension || "product");
+    if (query.categoryNames?.length) params.set("category_names", query.categoryNames.join(","));
+    return request<AnalyticsHotProductsResult>(`${endpoint}?${params.toString()}`);
+  },
+  agentChat: (payload: { message: string; session_id: string; user_id?: string }) =>
+    request<AgentChatResponse>("/api/agent/chat", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  agentHistory: (sessionId: string) =>
+    request<AgentHistoryResult>(`${AGENT_HISTORY_ENDPOINT}?session_id=${encodeURIComponent(sessionId)}`),
+  updateSessionPending: (sessionId: string, state: AgentSessionSnapshot["state"]) =>
+    request<{ session: AgentSessionSnapshot }>("/api/session/pending", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, state })
+    }),
+  uploadAgentImage: (file: File, sessionId: string) => {
+    const form = new FormData();
+    form.append("image", file, file.name || `agent_${Date.now()}.jpg`);
+    form.append("session_id", sessionId);
+    return requestForm<AgentImageUploadResult>("/api/images/upload", form);
+  },
   recentOrders: (limit = 6) =>
     request<{ sales: RecentSale[]; workflows: RecentWorkflow[] }>(`/api/orders/recent?limit=${limit}`),
   workflowOrders: (query: ProcessOrderListQuery = {}) => {
@@ -172,6 +222,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  uploadWorkflowOrderImage: (file: File) => {
+    const form = new FormData();
+    form.append("image", file, file.name || `workflow_${Date.now()}.jpg`);
+    return requestForm<ProductUploadResult>("/api/workflow/images/upload", form);
+  },
   updateWorkflowOrderStatus: (id: number, payload: ProcessOrderStatusPayload) =>
     request<ProcessOrderRaw>(`/api/workflow/orders/${id}/status`, {
       method: "POST",
@@ -211,12 +266,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
-  customerSales: (id: number, options: { page?: number; pageSize?: number; period?: string; month?: string } = {}) => {
+  customerSales: (id: number, options: { page?: number; pageSize?: number; period?: string; month?: string; payStatus?: string } = {}) => {
     const params = new URLSearchParams();
     params.set("page", String(options.page || 1));
     params.set("page_size", String(options.pageSize || 20));
     if (options.period) params.set("period", options.period);
     if (options.month) params.set("month", options.month);
+    if (options.payStatus) params.set("pay_status", options.payStatus);
     return request<CustomerSalesResult>(`/api/customers/${id}/sales?${params.toString()}`);
   },
   customerBalanceLedger: (id: number, page = 1, pageSize = 20) =>
@@ -327,6 +383,15 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
+  createMiniappImageAsset: (payload: MiniappImageCreatePayload) =>
+    request<{ id: number; scene: string; name: string }>("/api/miniapp/image-config/assets", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  deleteMiniappImageAsset: (id: number) =>
+    request<{ id: number; affected?: number }>(`/api/miniapp/image-config/assets/${id}`, {
+      method: "DELETE"
+    }),
   productMedia: (options: { page?: number; pageSize?: number; mediaType?: string; productId?: number } = {}) => {
     const params = new URLSearchParams();
     params.set("page", String(options.page || 1));
@@ -338,6 +403,11 @@ export const api = {
   deleteProductMedia: (id: number) =>
     request<{ id: number; affected: number }>(`/api/product/media/${id}`, {
       method: "DELETE"
+    }),
+  deletePendingProductMedia: (ids: number[]) =>
+    request<{ ids: number[]; affected: number }>("/api/product/media/pending", {
+      method: "DELETE",
+      body: JSON.stringify({ ids })
     }),
   customerPrice: (customerId: number, productId: number) =>
     request<{ price: number | string | null }>(

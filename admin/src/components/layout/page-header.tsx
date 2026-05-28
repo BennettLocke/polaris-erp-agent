@@ -12,12 +12,11 @@ import {
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
 type PageHeaderProps = {
-  eyebrow?: string;
   onLogout: () => void;
   title: string;
 };
 
-function PageHeader({ eyebrow = "React + Radix", onLogout, title }: PageHeaderProps) {
+function PageHeader({ onLogout, title }: PageHeaderProps) {
   return (
     <header className="topbar">
       <div className="topbar-title">
@@ -25,7 +24,6 @@ function PageHeader({ eyebrow = "React + Radix", onLogout, title }: PageHeaderPr
           <PanelLeft />
         </SidebarTrigger>
         <div>
-          <span className="eyebrow">{eyebrow}</span>
           <h1>{title}</h1>
         </div>
       </div>
@@ -40,7 +38,7 @@ function PageHeader({ eyebrow = "React + Radix", onLogout, title }: PageHeaderPr
           <DialogContent>
             <DialogTitle>新后台底座</DialogTitle>
             <DialogDescription>
-              当前接入登录态、工作台、设置页和统一 API client；旧 `/web` 仍然保留为生产入口。
+              商品、库存、订单、设置和工作台已统一接入自有服务层；旧 `/web` 仅保留为迁移期备用入口。
             </DialogDescription>
             <div className="dialog-actions">
               <DialogClose asChild>

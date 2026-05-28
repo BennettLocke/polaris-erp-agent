@@ -11,6 +11,20 @@ from typing import Any
 from .base import BusinessService
 
 
+def _extract_sales_id(result: dict) -> int:
+    if not isinstance(result, dict):
+        return 0
+    data = result.get("data")
+    if isinstance(data, dict):
+        raw_id = data.get("sales_id") or data.get("id")
+    else:
+        raw_id = data
+    try:
+        return int(raw_id or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class SalesService(BusinessService):
     def normalize_products(self, products: list[dict]) -> list[dict]:
         normalized: list[dict] = []
@@ -48,9 +62,10 @@ class SalesService(BusinessService):
         pay_status: str | None = None,
         pay_type: str | None = None,
         operator_user_id: Any = None,
+        workflow_order_id: int | None = None,
     ) -> dict:
         normalized_products = self.normalize_products(products)
-        return self.db.create_sales_order(
+        result = self.db.create_sales_order(
             customer_id=customer_id,
             warehouse_id=warehouse_id,
             products=normalized_products,
@@ -59,6 +74,25 @@ class SalesService(BusinessService):
             pay_type=pay_type,
             operator_user_id=operator_user_id,
         )
+        if not workflow_order_id or not isinstance(result, dict) or result.get("code") not in (None, 0):
+            return result
+
+        sales_id = _extract_sales_id(result)
+        if not sales_id:
+            return result
+
+        link_result = self.db.link_workflow_sales_order(
+            workflow_order_id=int(workflow_order_id),
+            sales_order_id=sales_id,
+            operator_user_id=operator_user_id,
+        )
+        data = result.setdefault("data", {})
+        if isinstance(data, dict):
+            if isinstance(link_result, dict) and link_result.get("code") in (None, 0):
+                data["workflow_link"] = link_result.get("data") or {}
+            else:
+                data["workflow_link_error"] = (link_result or {}).get("msg") if isinstance(link_result, dict) else str(link_result)
+        return result
 
     def delete_order(self, sales_id: int, *, operator_user_id: Any = None) -> dict:
         return self.db.delete_sales_order(sales_id, operator_user_id=operator_user_id)

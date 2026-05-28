@@ -6,6 +6,81 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AdminInventoryPageContractTest(unittest.TestCase):
+    def test_inventory_ledger_uses_exact_filters_and_risk_confirmation(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        inventory_page_path = ROOT / "admin" / "src" / "components" / "business" / "inventory" / "inventory-page.tsx"
+        inventory_source = inventory_page_path.read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        service_source = (ROOT / "src" / "services" / "business" / "inventory.py").read_text(encoding="utf-8")
+        db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+        style_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("skuId?: number | string", api_source)
+        self.assertIn('params.set("sku_id", String(options.skuId))', api_source)
+        self.assertIn("api.inventoryLedger({ skuId:", inventory_source)
+        self.assertIn("warehouseId: row.warehouse_id", inventory_source)
+        ledger_drawer_source = inventory_source.split("function InventoryLedgerDrawer", 1)[1].split("function InventoryActionDialog", 1)[0]
+        self.assertNotIn("keyword: row.sku_no", ledger_drawer_source)
+
+        self.assertIn('sku_id = request.args.get("sku_id", type=int)', http_source)
+        self.assertIn('warehouse_id = request.args.get("warehouse_id", type=int)', http_source)
+        ledger_route_source = http_source.split("def native_inventory_ledger_api", 1)[1].split("\n\n@app.route", 1)[0]
+        self.assertIn("get_inventory_service().ledger(", ledger_route_source)
+        self.assertIn("sku_id=sku_id", ledger_route_source)
+        self.assertIn("warehouse_id=warehouse_id", ledger_route_source)
+        self.assertIn("def ledger(", service_source)
+        self.assertIn("sku_id: int | None = None", service_source)
+        self.assertIn("warehouse_id: int | None = None", service_source)
+        self.assertIn("inventory_ledger(", service_source)
+        self.assertIn("sku_id=sku_id", service_source)
+        self.assertIn("warehouse_id=warehouse_id", service_source)
+        self.assertIn("def inventory_ledger(", db_source)
+        self.assertIn("sku_id: int | None = None", db_source)
+        self.assertIn("warehouse_id: int | None = None", db_source)
+        self.assertIn("l.sku_id=%s", db_source)
+        self.assertIn("l.warehouse_id=%s", db_source)
+
+        for token in [
+            "AlertDialogContent",
+            "type InventoryRiskConfirm",
+            "buildInventoryRisk",
+            "InventoryRiskConfirmDialog",
+            "riskConfirm",
+            "setRiskConfirm",
+            "executeAction",
+            "transfer_over_stock",
+            "stocktake_large_delta",
+            "变更后库存",
+            "影响仓库",
+            "inventory-risk-grid",
+        ]:
+            self.assertIn(token, inventory_source)
+        self.assertIn(".inventory-risk-grid", style_source)
+
+    def test_inventory_status_filter_is_server_side_paginated(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        inventory_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "inventory" / "inventory-page.tsx"
+        ).read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        service_source = (ROOT / "src" / "services" / "business" / "inventory.py").read_text(encoding="utf-8")
+        db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+
+        self.assertIn("stockStatus?: string", api_source)
+        self.assertIn('params.set("stock_status", options.stockStatus)', api_source)
+        self.assertIn("function changeStatus", inventory_source)
+        self.assertIn("stockStatus: nextStatus", inventory_source)
+        self.assertIn("onStatusChange={changeStatus}", inventory_source)
+        self.assertNotIn('status !== "all" ? 1 : pageCount', inventory_source)
+        self.assertIn('stock_status = (request.args.get("stock_status") or "").strip()', http_source)
+        self.assertIn("stock_status=stock_status", http_source)
+        self.assertIn("stock_status: str = \"\"", service_source)
+        self.assertIn("stock_status=stock_status", service_source)
+        self.assertIn("stock_status: str = \"\"", db_source)
+        self.assertIn("quantity_expr", db_source)
+        self.assertIn("stock_status == \"zero\"", db_source)
+        self.assertIn("stock_status == \"negative\"", db_source)
+
     def test_react_inventory_page_follows_inventory_handbook_contract(self):
         app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")
         api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
@@ -21,7 +96,7 @@ class AdminInventoryPageContractTest(unittest.TestCase):
         style_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn('from "./components/business/inventory"', app_source)
-        self.assertIn("<InventoryPage />", app_source)
+        self.assertIn("<InventoryPage currentUser={user} />", app_source)
         self.assertIn('export { InventoryPage } from "./inventory-page"', inventory_index)
 
         for type_name in [

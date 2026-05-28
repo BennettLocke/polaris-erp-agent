@@ -226,7 +226,7 @@ def inventory_decision_node(state: AgentState) -> AgentState:
                 "product_id": product_id,
                 "unit_id": p.get("unit_id", 1),
                 "action": "transfer",
-                "warehouse_id": 1,  # 本店（需确认）
+                "warehouse_id": 2,
                 "from_warehouse": 1,
                 "to_warehouse": 2,
                 "note": "本店有货，需调拨",

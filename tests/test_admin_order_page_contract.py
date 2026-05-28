@@ -151,6 +151,53 @@ class AdminOrderPageContractTest(unittest.TestCase):
         self.assertIn('@app.route("/api/workflow/orders/<int:order_id>", methods=["DELETE"])', http_source)
         self.assertIn('request.args.get("filter"', http_source)
 
+    def test_order_form_can_save_images_made_and_delivery_fields(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        type_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+        order_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "orders" / "orders-page.tsx"
+        ).read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        service_source = (ROOT / "src" / "services" / "business" / "workflow.py").read_text(encoding="utf-8")
+        db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+        form_state = order_source.split("type OrderFormState = {", 1)[1].split("};", 1)[0]
+        payload_source = order_source.split("function payloadFromForm", 1)[1].split("function primaryImageUrl", 1)[0]
+        form_dialog_source = order_source.split("function OrderFormDialog", 1)[1].split("function OrderImageDialog", 1)[0]
+
+        for field in ["made: boolean", "delivered: boolean", "imageUrls: string[]"]:
+            self.assertIn(field, form_state)
+
+        self.assertIn("uploadWorkflowOrderImage", api_source)
+        self.assertIn("/api/workflow/images/upload", api_source)
+        self.assertIn("uploadWorkflowOrderImage: (file: File)", api_source)
+        self.assertIn("is_made?: number", type_source)
+        self.assertIn("is_delivered?: number", type_source)
+
+        self.assertIn("order-form-image-grid", form_dialog_source)
+        self.assertIn("order-form-image-upload", form_dialog_source)
+        self.assertIn("onUploadImage", form_dialog_source)
+        self.assertIn("onRemoveImage", form_dialog_source)
+        self.assertIn("api.uploadWorkflowOrderImage(file)", order_source)
+        self.assertIn("imageUrls: order.imageUrls", order_source)
+        self.assertIn("imageUrls: []", order_source)
+
+        self.assertIn("order_images: form.imageUrls", payload_source)
+        self.assertIn("is_made: form.made ? 1 : 0", payload_source)
+        self.assertIn("is_delivered: form.delivered ? 1 : 0", payload_source)
+
+        self.assertIn('is_made = body.get("is_made") if "is_made" in body else None', http_source)
+        self.assertIn('is_delivered = body.get("is_delivered") if "is_delivered" in body else None', http_source)
+        self.assertIn("is_made=is_made", http_source)
+        self.assertIn("is_delivered=is_delivered", http_source)
+        self.assertIn("is_made: int | None = None", service_source)
+        self.assertIn("is_delivered: int | None = None", service_source)
+        self.assertIn("is_made=is_made", service_source)
+        self.assertIn("is_delivered=is_delivered", service_source)
+        self.assertIn("is_made: int | None = None", db_source)
+        self.assertIn("is_delivered: int | None = None", db_source)
+        self.assertIn("COALESCE(%s, is_made)", db_source)
+        self.assertIn("COALESCE(%s, is_delivered)", db_source)
+
 
 if __name__ == "__main__":
     unittest.main()

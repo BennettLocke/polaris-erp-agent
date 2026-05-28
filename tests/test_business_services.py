@@ -22,6 +22,7 @@ from src.services.business.inventory import InventoryService
 from src.services.business.miniapp import MiniAppService
 from src.services.business.products import ProductService
 from src.services.business.sales import SalesService
+from src.services.business.workflow import WorkflowService
 from src.services.business.users import UserService
 
 
@@ -137,6 +138,14 @@ class FakeDB:
             return rows.get(scene, [])
         return [item for scene_rows in rows.values() for item in scene_rows]
 
+    def create_miniapp_asset(self, **kwargs) -> dict:
+        self.calls.append(("create_miniapp_asset", kwargs))
+        return {"code": 0, "data": {"id": 88, **kwargs}}
+
+    def delete_miniapp_asset(self, asset_id: int) -> dict:
+        self.calls.append(("delete_miniapp_asset", {"asset_id": asset_id}))
+        return {"code": 0, "data": {"id": asset_id, "affected": 1}}
+
     def product_search(self, keyword: str, limit: int = 80, listed_only: bool = False) -> list[dict]:
         self.calls.append(("product_search", {"keyword": keyword, "limit": limit, "listed_only": listed_only}))
         return [{"id": 88, "title": keyword}]
@@ -243,6 +252,17 @@ class FakeDB:
         self.calls.append(("create_sales_order", kwargs))
         return {"code": 0, "data": {"id": 123, "products": kwargs["products"]}}
 
+    def link_workflow_sales_order(self, workflow_order_id: int, sales_order_id: int, operator_user_id=None) -> dict:
+        self.calls.append((
+            "link_workflow_sales_order",
+            {
+                "workflow_order_id": workflow_order_id,
+                "sales_order_id": sales_order_id,
+                "operator_user_id": operator_user_id,
+            },
+        ))
+        return {"code": 0, "data": {"workflow_order_id": workflow_order_id, "sales_order_id": sales_order_id}}
+
     def sales_cards(self, **kwargs):
         self.calls.append(("sales_cards", kwargs))
         return ([{"id": 123, "customer_name": "齐唯茶业"}], 1)
@@ -282,6 +302,19 @@ class FakeDB:
         if "FROM auth_user u" in sql and "WHERE u.id=%s" in sql:
             user = self.auth_users.get(int(params[0]))
             return [user] if user else []
+        if "FROM auth_user" in sql and "WHERE id=%s" in sql:
+            user = self.auth_users.get(int(params[0]))
+            return [user] if user else []
+        if "FROM auth_user" in sql and "id<>%s" in sql and "(is_admin=1 OR role='admin')" in sql:
+            excluded_id = int(params[0])
+            total = sum(
+                1
+                for user in self.auth_users.values()
+                if int(user.get("id") or 0) != excluded_id
+                and int(user.get("is_active") or 0) == 1
+                and (int(user.get("is_admin") or 0) == 1 or user.get("role") == "admin")
+            )
+            return [{"total": total}]
         if "FROM auth_user u" in sql and "WHERE u.username=%s" in sql:
             account = str(params[0])
             phone = str(params[1])
@@ -452,7 +485,7 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(rejected["data"]["affected"], 1)
         self.assertGreaterEqual(len(users["data"]["items"]), 2)
 
-    def test_auth_service_native_register_creates_customer_session(self):
+    def test_auth_service_native_register_does_not_bind_unverified_phone_to_customer(self):
         db = FakeDB()
         service = AuthService(db=db)
 
@@ -468,11 +501,14 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertTrue(result["data"]["token"].startswith("sj_"))
         self.assertEqual(user["username"], "18800138000")
         self.assertEqual(user["role"], "customer")
-        self.assertEqual(user["linked_party_id"], 55)
-        self.assertTrue(any(
-            call[0] == "query"
-            and "FROM party" in call[1]["sql"]
-            and call[1]["params"] == ("18800138000", "18800138000")
+        self.assertEqual(user["linked_party_id"], None)
+        self.assertEqual(user["phone"], "")
+        self.assertFalse(any(
+            call[0] == "query" and "FROM party" in call[1]["sql"]
+            for call in db.calls
+        ))
+        self.assertFalse(any(
+            call[0] == "execute" and "INSERT INTO auth_identity" in call[1]["sql"]
             for call in db.calls
         ))
 
@@ -621,6 +657,46 @@ class BusinessServiceTests(unittest.TestCase):
             db.calls,
         )
 
+    def test_auth_service_wechat_quick_login_ignores_unverified_profile_phone(self):
+        class WechatAuthService(AuthService):
+            def wechat_session_from_code(self, authcode: str, appid: str) -> dict:
+                return {"code": 0, "data": {"openid": "wx-openid"}}
+
+        db = FakeDB()
+        service = WechatAuthService(db=db)
+
+        result = service.wechat_quick_login(
+            authcode="login-code",
+            appid="wx-appid",
+            profile={"nickName": "彬", "purePhoneNumber": "13800138000", "phoneNumber": "13800138000"},
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertIn(
+            (
+                "identity_link_wechat",
+                {
+                    "openid": "wx-openid",
+                    "unionid": "",
+                    "phone": "",
+                    "profile": {"nickName": "彬"},
+                },
+            ),
+            db.calls,
+        )
+
+    def test_auth_service_wechat_quick_login_rejects_client_supplied_openid(self):
+        db = FakeDB()
+        service = AuthService(db=db)
+
+        result = service.wechat_quick_login(
+            openid="client-openid",
+            profile={"nickName": "彬", "purePhoneNumber": "13800138000"},
+        )
+
+        self.assertEqual(result["code"], 400)
+        self.assertFalse(any(call[0] == "identity_link_wechat" for call in db.calls))
+
     def test_auth_service_bind_native_phone_exchanges_phone_code_for_current_user(self):
         class PhoneCodeAuthService(AuthService):
             def __init__(self, db):
@@ -674,6 +750,36 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(db.calls[0], ("product_info", {"product_id": 88, "listed_only": False}))
         self.assertEqual(db.calls[1][0], "create_sales_order")
         self.assertEqual(db.calls[1][1]["operator_user_id"], 5)
+
+    def test_sales_service_links_workflow_order_after_successful_create(self):
+        db = FakeDB()
+        service = SalesService(db=db)
+
+        result = service.create_order(
+            customer_id=7,
+            warehouse_id=2,
+            products=[{"product_id": 88, "buy_number": 3, "price": 28}],
+            workflow_order_id=456,
+            operator_user_id=5,
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(db.calls[-1], (
+            "link_workflow_sales_order",
+            {"workflow_order_id": 456, "sales_order_id": 123, "operator_user_id": 5},
+        ))
+
+    def test_workflow_service_links_sales_order(self):
+        db = FakeDB()
+        service = WorkflowService(db=db)
+
+        result = service.link_sales_order(456, 123, operator_user_id=5)
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(db.calls[-1], (
+            "link_workflow_sales_order",
+            {"workflow_order_id": 456, "sales_order_id": 123, "operator_user_id": 5},
+        ))
 
     def test_inventory_service_transfer_delegates_operator(self):
         db = FakeDB()
@@ -734,6 +840,22 @@ class BusinessServiceTests(unittest.TestCase):
 
         with self.assertRaises(DBError):
             service.apply_action(11, action="", amount=100)
+
+    def test_customer_balance_service_validates_amounts_and_adjust_note(self):
+        service = CustomerBalanceService(db=FakeDB())
+
+        for action in ("receipt", "recharge", "settlement"):
+            with self.subTest(action=action, amount=0):
+                with self.assertRaises(DBError):
+                    service.apply_action(11, action=action, amount=0, note="ok")
+            with self.subTest(action=action, amount=-1):
+                with self.assertRaises(DBError):
+                    service.apply_action(11, action=action, amount=-1, note="ok")
+
+        with self.assertRaises(DBError):
+            service.apply_action(11, action="adjust", amount=0, note="manual")
+        with self.assertRaises(DBError):
+            service.apply_action(11, action="adjust", amount=12, note="")
 
     def test_customer_service_exposes_paged_customer_list(self):
         db = FakeDB()
@@ -1016,7 +1138,7 @@ class BusinessServiceTests(unittest.TestCase):
 
         design = service.design_payload()
         products = service.product_shelf_items(design["home"]["modules"][0])
-        center = service.user_center_payload(user={"id": 1, "display_name": "彬"})
+        center = service.user_center_payload(user={"id": 1, "display_name": "彬", "role": "staff"})
 
         self.assertEqual(products[0]["title"], "喜悦")
         self.assertEqual(center["user_order_count"], 2)
@@ -1082,17 +1204,100 @@ class BusinessServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_miniapp_service_creates_and_deletes_home_banner_assets(self):
+        db = FakeDB()
+        service = MiniAppService(db=db)
+
+        created = service.create_image_asset({"scene": "home_banner"})
+        deleted = service.delete_image_asset(88)
+
+        self.assertEqual(created["code"], 0)
+        self.assertEqual(created["data"]["scene"], "home_banner")
+        self.assertEqual(created["data"]["name"], "首页轮播2")
+        self.assertEqual(created["data"]["link_value"], "/pages/category/index")
+        self.assertEqual(deleted["data"]["id"], 88)
+        self.assertEqual(
+            db.calls,
+            [
+                ("miniapp_assets", {"scene": "home_banner", "include_disabled": True}),
+                (
+                    "create_miniapp_asset",
+                    {
+                        "scene": "home_banner",
+                        "name": "首页轮播2",
+                        "asset_url": "",
+                        "active_asset_url": "",
+                        "link_type": "page",
+                        "link_value": "/pages/category/index",
+                        "badge_text": "",
+                        "subtitle": "",
+                        "sort_order": 90,
+                        "enabled": 1,
+                        "extra_json": None,
+                    },
+                ),
+                ("delete_miniapp_asset", {"asset_id": 88}),
+            ],
+        )
+
     def test_user_service_lists_and_updates(self):
         db = FakeDB()
         service = UserService(db=db)
 
         rows, total = service.list(keyword="彬", page=1, page_size=20)
-        result = service.update(1, role="staff", is_active=1)
+        result = service.update(1, role="admin", is_active=1)
 
         self.assertEqual(total, 1)
         self.assertEqual(rows[0]["role"], "admin")
         self.assertEqual(result["code"], 0)
-        self.assertEqual([call[0] for call in db.calls], ["users", "update_user"])
+        self.assertIn("update_user", [call[0] for call in db.calls])
+
+    def test_user_service_rejects_self_disable_and_self_role_change(self):
+        db = FakeDB()
+        service = UserService(db=db)
+
+        disabled = service.update(1, is_active=0, operator_user_id=1)
+        demoted = service.update(1, role="staff", operator_user_id=1)
+
+        self.assertEqual(disabled["code"], 400)
+        self.assertIn("当前登录账号", disabled["msg"])
+        self.assertEqual(demoted["code"], 400)
+        self.assertIn("当前登录账号", demoted["msg"])
+        self.assertEqual(db.auth_users[1]["role"], "admin")
+        self.assertEqual(db.auth_users[1]["is_active"], 1)
+        self.assertFalse(any(call[0] == "update_user" for call in db.calls))
+
+    def test_user_service_rejects_disabling_or_demoting_last_admin(self):
+        db = FakeDB()
+        service = UserService(db=db)
+
+        disabled = service.update(1, is_active=0, operator_user_id=99)
+        demoted = service.update(1, role="staff", operator_user_id=99)
+
+        self.assertEqual(disabled["code"], 400)
+        self.assertIn("最后一个管理员", disabled["msg"])
+        self.assertEqual(demoted["code"], 400)
+        self.assertIn("最后一个管理员", demoted["msg"])
+        self.assertEqual(db.auth_users[1]["role"], "admin")
+        self.assertEqual(db.auth_users[1]["is_active"], 1)
+        self.assertFalse(any(call[0] == "update_user" for call in db.calls))
+
+    def test_user_service_allows_admin_change_when_another_active_admin_exists(self):
+        db = FakeDB()
+        db.auth_users[2] = {
+            **db.auth_users[1],
+            "id": 2,
+            "username": "admin2",
+            "display_name": "Admin 2",
+            "phone": "13800138001",
+        }
+        service = UserService(db=db)
+
+        result = service.update(1, role="staff", operator_user_id=2)
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(db.auth_users[1]["role"], "staff")
+        self.assertEqual(db.auth_users[1]["is_active"], 1)
 
     def test_identity_link_service_normalizes_wechat_phone_binding(self):
         db = FakeDB()

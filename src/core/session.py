@@ -1,5 +1,6 @@
 """会话状态管理 - 支持历史记录 + skill 暂停/恢复"""
 import json
+import re
 from pathlib import Path
 from src.utils import get_logger
 
@@ -7,12 +8,24 @@ logger = get_logger("sjagent.session")
 
 HISTORY_DIR = Path(__file__).parent.parent.parent / "data" / "sessions"
 CURRENT_SESSION_ID = "default"
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+def normalize_session_id(session_id: str) -> str:
+    """Return a safe session id that cannot escape HISTORY_DIR."""
+    value = str(session_id or "default").strip() or "default"
+    if not SESSION_ID_PATTERN.fullmatch(value):
+        raise ValueError("session_id 只能包含字母、数字、下划线和中划线")
+    return value
 
 
 def set_current_session_id(session_id: str):
     """记录当前请求的 session_id，供 workflow 写入结构化元数据。"""
     global CURRENT_SESSION_ID
-    CURRENT_SESSION_ID = session_id or "default"
+    try:
+        CURRENT_SESSION_ID = normalize_session_id(session_id)
+    except ValueError:
+        CURRENT_SESSION_ID = "default"
 
 
 def get_current_session_id() -> str:
@@ -35,9 +48,12 @@ class SessionManager:
     """
 
     def __init__(self, session_id: str = "default"):
-        self.session_id = session_id
+        self.session_id = normalize_session_id(session_id)
         HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-        self.file = HISTORY_DIR / f"{session_id}.json"
+        self.file = (HISTORY_DIR / f"{self.session_id}.json").resolve()
+        history_root = HISTORY_DIR.resolve()
+        if history_root not in self.file.parents:
+            raise ValueError("session_id 路径无效")
         self.data = self._load()
 
     def _load(self) -> dict:

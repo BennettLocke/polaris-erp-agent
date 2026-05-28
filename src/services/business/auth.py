@@ -43,6 +43,15 @@ _AUTH_LOCK = threading.Lock()
 _TOKEN_CACHE: dict[str, tuple[float, dict]] = {}
 _TOKEN_CACHE_TTL = 60
 _WECHAT_ACCESS_TOKEN_CACHE: dict[str, tuple[float, str]] = {}
+UNTRUSTED_PROFILE_PHONE_KEYS = {
+    "phone",
+    "mobile",
+    "customer_phone",
+    "phoneNumber",
+    "purePhoneNumber",
+    "phone_number",
+    "pure_phone_number",
+}
 
 
 def phone_digits(value: Any) -> str:
@@ -148,17 +157,29 @@ class AuthService(BusinessService):
             "raw": row,
         }
 
+    def _profile_without_untrusted_phone(self, profile: dict | None) -> dict:
+        if not isinstance(profile, dict):
+            return {}
+        return {
+            key: value
+            for key, value in profile.items()
+            if key not in UNTRUSTED_PROFILE_PHONE_KEYS
+        }
+
     def web_user_payload(self, user: dict | None) -> dict:
         if not isinstance(user, dict):
             user = {}
         user_id = int(user.get("id") or user.get("user_id") or 0)
+        role = role_code(user.get("role"))
+        effective_role = "admin" if int(user.get("is_admin") or 0) == 1 or role == "admin" else role
         return {
             "id": user_id,
             "native_user_id": user_id,
             "username": user.get("username") or "",
             "display_name": user.get("display_name") or user.get("username") or "",
-            "role": role_code(user.get("role")),
+            "role": role,
             "role_text": role_label(user.get("role")),
+            "permissions": sorted(FIXED_ROLE_PERMISSIONS.get(effective_role, set())),
             "approval_status": user.get("approval_status") or "",
             "is_admin": int(user.get("is_admin") or 0),
             "is_active": int(user.get("is_active") or 0),
@@ -512,8 +533,7 @@ class AuthService(BusinessService):
         if self.user_by_account(account):
             return {"code": 409, "msg": "账号已存在，请直接登录", "_http_status": 409}
 
-        phone = normalized_phone(account)
-        linked_party_id = self.find_party_id_by_phone(phone) if phone else None
+        linked_party_id = None
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         affected = self.db.execute(
             """
@@ -526,7 +546,7 @@ class AuthService(BusinessService):
                 account,
                 generate_password_hash(password),
                 display_name[:80],
-                phone or None,
+                None,
                 "customer",
                 linked_party_id,
                 "approved",
@@ -544,19 +564,6 @@ class AuthService(BusinessService):
         user_id = int((user_row or {}).get("id") or 0)
         if not user_id:
             return {"code": 500, "msg": "注册后未找到账号，请稍后重试", "_http_status": 500}
-        if phone:
-            self.db.execute(
-                """
-                INSERT INTO auth_identity
-                    (user_id, provider, external_user_id, is_enabled, created_at, updated_at)
-                VALUES (%s,'phone',%s,1,%s,%s)
-                ON DUPLICATE KEY UPDATE
-                    user_id=VALUES(user_id),
-                    is_enabled=1,
-                    updated_at=VALUES(updated_at)
-                """,
-                (user_id, phone, now, now),
-            )
         token = self.issue_session(user_id, client_type=client_type, ip=ip, user_agent=user_agent)
         user_row = self.user_by_id(user_id) or user_row
         user = self.user_public(user_row, token=token)
@@ -789,19 +796,19 @@ class AuthService(BusinessService):
         ip: str = "",
         user_agent: str = "",
     ) -> dict:
-        openid = str(openid or "").strip()
         unionid = str(unionid or "").strip()
-        profile = profile if isinstance(profile, dict) else {}
+        profile = self._profile_without_untrusted_phone(profile)
+        if not authcode:
+            return {"code": 400, "msg": "缺少微信登录 code", "_http_status": 400}
+        wx_result = self.wechat_session_from_code(authcode, appid)
+        if int(wx_result.get("code", -1)) != 0:
+            return {**wx_result, "_http_status": 400}
+        wx_data = wx_result.get("data") or {}
+        openid = str(wx_data.get("openid") or "")
+        unionid = str(wx_data.get("unionid") or unionid or "")
         if not openid:
-            if not authcode:
-                return {"code": 400, "msg": "缺少微信登录 code 或 openid", "_http_status": 400}
-            wx_result = self.wechat_session_from_code(authcode, appid)
-            if int(wx_result.get("code", -1)) != 0:
-                return {**wx_result, "_http_status": 400}
-            wx_data = wx_result.get("data") or {}
-            openid = str(wx_data.get("openid") or "")
-            unionid = str(wx_data.get("unionid") or unionid or "")
-        if phone_code and not self._profile_phone(profile):
+            return {"code": 401, "msg": "微信登录未返回 openid", "_http_status": 400}
+        if phone_code:
             phone_result = self.wechat_phone_from_code(phone_code, appid)
             if int(phone_result.get("code", -1)) != 0:
                 return {**phone_result, "_http_status": int(phone_result.get("_http_status") or 400)}

@@ -31,9 +31,10 @@ type Props = {
   onOpenDetail: (customer: CustomerItem, tab?: string) => void;
   onAction: (customer: CustomerItem, action: CustomerBalanceActionPayload["action"]) => void;
   onToggleMonthly: (customer: CustomerItem) => void;
+  canAdjustBalance: boolean;
 };
 
-function CustomerCardGrid({ customers, loading, gridRef, onOpenDetail, onAction, onToggleMonthly }: Props) {
+function CustomerCardGrid({ customers, loading, gridRef, onOpenDetail, onAction, onToggleMonthly, canAdjustBalance }: Props) {
   if (loading) {
     return (
       <div className="customer-card-grid">
@@ -104,7 +105,7 @@ function CustomerCardGrid({ customers, loading, gridRef, onOpenDetail, onAction,
                     <DropdownMenuItem onSelect={() => onAction(customer, "recharge")}>
                       <WalletCards data-icon="inline-start" /> 充值
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onAction(customer, "adjust")}>调余额</DropdownMenuItem>
+                    <DropdownMenuItem disabled={!canAdjustBalance} onSelect={() => onAction(customer, "adjust")}>调余额</DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => onOpenDetail(customer, "ledger")}>余额明细</DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => onOpenDetail(customer, "sales")}>销售单</DropdownMenuItem>
                   </DropdownMenuGroup>

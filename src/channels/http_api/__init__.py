@@ -4,9 +4,11 @@ HTTP API 渠道（预留 WebUI 和外部调用）
 """
 import json
 import hmac
+import ipaddress
 import io
 import os
 import re
+import secrets
 import uuid
 import time
 from pathlib import Path
@@ -36,18 +38,61 @@ from src.utils import get_logger
 
 logger = get_logger("sjagent.http_api")
 
+
+def _env_truthy(name: str) -> bool:
+    return str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_production_env() -> bool:
+    value = str(
+        os.environ.get("SJAGENT_ENV")
+        or os.environ.get("APP_ENV")
+        or os.environ.get("FLASK_ENV")
+        or ""
+    ).strip().lower()
+    return value in {"prod", "production"}
+
+
+def _resolve_flask_secret_key() -> str:
+    secret = str(os.environ.get("SJAGENT_SECRET_KEY") or "").strip()
+    if secret:
+        return secret
+    if _is_production_env() and not _env_truthy("SJAGENT_ALLOW_INSECURE_SECRET"):
+        raise RuntimeError("生产环境必须配置 SJAGENT_SECRET_KEY")
+    logger.warning("SJAGENT_SECRET_KEY 未配置，当前仅使用临时开发密钥")
+    return secrets.token_urlsafe(48)
+
+
+def _resolve_http_host(host: str | None = None) -> str:
+    resolved = str(host or os.environ.get("SJAGENT_HTTP_HOST") or "127.0.0.1").strip()
+    return resolved or "127.0.0.1"
+
+
 app = Flask(__name__)
-app.secret_key = os.environ.get("SJAGENT_SECRET_KEY") or "sjagent-webui-auth-secret"
+app.secret_key = _resolve_flask_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_is_production_env() or _env_truthy("SJAGENT_SESSION_COOKIE_SECURE"),
 )
 _agent: Agent | None = None
 UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "data" / "uploads"
 ADMIN_DIST_DIR = Path(__file__).resolve().parent / "admin_dist"
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
+ALLOWED_IMAGE_FORMATS_BY_EXTENSION = {
+    "png": {"PNG"},
+    "jpg": {"JPEG"},
+    "jpeg": {"JPEG"},
+    "webp": {"WEBP"},
+    "bmp": {"BMP"},
+}
 ALLOWED_BAG_ARCHIVE_EXTENSIONS = {"zip"}
 MINIAPP_EXCLUDED_CATEGORY_NAMES = ("纯色泡袋", "品种茶泡袋", "2泡礼盒")
+MAX_IMAGE_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_IMAGE_UPLOAD_BYTES") or 25 * 1024 * 1024)
+MAX_IMAGE_PIXELS = int(os.environ.get("SJAGENT_MAX_IMAGE_PIXELS") or 24_000_000)
+DEFAULT_CROP_IMAGE_HOSTS = {"img.513sjbz.com"}
+DEFAULT_CROP_IMAGE_HOST_SUFFIXES = (".aliyuncs.com",)
+app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_UPLOAD_BYTES
 
 
 def _api_exception_response(e: Exception):
@@ -231,7 +276,7 @@ def _mini_filter_public_order_rows(rows: list[dict], keyword: str) -> list[dict]
 
 
 def _mini_orderflow_should_query(keyword: str, user: dict | None) -> bool:
-    return _mini_order_user_can_edit(user) or bool(_mini_order_customer_id(user)) or _mini_orderflow_public_keyword(keyword)
+    return _mini_order_user_can_edit(user) or bool(_mini_order_customer_id(user))
 
 
 def _mini_orderflow_empty_payload(page: int = 1, page_size: int = 20) -> dict:
@@ -330,7 +375,11 @@ API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/product/crop-square$"), "图片上传"),
     ({"POST"}, re.compile(r"^/api/miniapp/image-config/upload$"), "图片上传"),
     ({"GET", "POST", "PATCH"}, re.compile(r"^/api/miniapp/image-config$"), "设置"),
+    ({"POST"}, re.compile(r"^/api/miniapp/image-config/assets$"), "设置"),
+    ({"DELETE"}, re.compile(r"^/api/miniapp/image-config/assets/\d+$"), "设置"),
+    # Contract marker for source-level tests: re.compile(r"^/api/miniapp/image-config/assets/\\d+$")
     ({"POST"}, re.compile(r"^/api/workflow/images/upload$"), "图片上传"),
+    ({"POST", "DELETE"}, re.compile(r"^/api/product/media/pending$"), "图片绑定"),
     ({"POST", "DELETE"}, re.compile(r"^/api/product/media/\d+$"), "图片绑定"),
     ({"POST", "PATCH"}, re.compile(r"^/api/product/categories$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/(save|delete)$"), "设置"),
@@ -362,12 +411,20 @@ def _miniapp_path_is_public(path: str) -> bool:
         "/api/mini/goods/detail",
         "/api/mini/search/index",
         "/api/mini/search/datalist",
-        "/api/mini/orderflow/list",
-        "/api/mini/workflow-order/search",
         "/api/mini/disabled",
         "/api/mini/cart/empty",
     }
     return path in public_mini_paths
+
+
+def _miniapp_path_requires_auth(path: str) -> bool:
+    if not path.startswith("/api/"):
+        return False
+    if path.startswith("/api/auth/"):
+        return False
+    if _miniapp_path_is_public(path):
+        return False
+    return path.startswith("/api/mini/") or request.headers.get("X-SJ-Client") == "miniapp"
 
 
 @app.before_request
@@ -375,13 +432,7 @@ def _miniapp_auth_guard():
     if request.method == "OPTIONS":
         return None
     path = request.path or ""
-    if not path.startswith("/api/"):
-        return None
-    if path.startswith("/api/auth/"):
-        return None
-    if _miniapp_path_is_public(path):
-        return None
-    if request.headers.get("X-SJ-Client") != "miniapp":
+    if not _miniapp_path_requires_auth(path):
         return None
     token = _auth_token_from_request()
     try:
@@ -1602,6 +1653,63 @@ def _safe_upload_suffix(filename: str, allowed: set[str], default: str = ".jpg")
     return default
 
 
+def _configured_crop_image_hosts() -> set[str]:
+    raw = os.environ.get("SJAGENT_CROP_IMAGE_HOSTS") or ""
+    hosts = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    return DEFAULT_CROP_IMAGE_HOSTS | hosts
+
+
+def _host_is_private_or_local(hostname: str) -> bool:
+    host = str(hostname or "").strip().lower().strip("[]")
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved)
+
+
+def _is_safe_remote_image_url(source_url: str) -> bool:
+    parsed = urlparse(str(source_url or "").strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    if _host_is_private_or_local(host):
+        return False
+    if host in _configured_crop_image_hosts():
+        return True
+    return any(host.endswith(suffix) for suffix in DEFAULT_CROP_IMAGE_HOST_SUFFIXES)
+
+
+def _validate_saved_image(path: Path) -> None:
+    path = Path(path)
+    if not path.exists() or path.stat().st_size <= 0:
+        raise ValueError("图片文件为空")
+    if path.stat().st_size > MAX_IMAGE_UPLOAD_BYTES:
+        raise ValueError("图片文件过大")
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image_format = str(image.format or "").upper()
+            image.verify()
+        suffix = path.suffix.lower().lstrip(".")
+        allowed_formats = ALLOWED_IMAGE_FORMATS_BY_EXTENSION.get(suffix)
+        if allowed_formats and image_format not in allowed_formats:
+            raise ValueError("图片文件格式无效")
+        with Image.open(path) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0:
+                raise ValueError("图片尺寸无效")
+            if width * height > MAX_IMAGE_PIXELS:
+                raise ValueError("图片像素过大")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("图片文件格式无效") from exc
+
+
 def _delete_local_upload(path: Path, label: str = "上传图片") -> None:
     try:
         path.unlink(missing_ok=True)
@@ -2249,6 +2357,12 @@ def image_upload():
     save_name = f"{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
     save_path = UPLOAD_DIR / save_name
     file.save(save_path)
+    if _allowed_image(save_name):
+        try:
+            _validate_saved_image(save_path)
+        except ValueError as e:
+            _delete_local_upload(save_path, "非法图片")
+            return jsonify({"code": 400, "msg": str(e)}), 400
 
     try:
         if is_bag_upload:
@@ -2325,6 +2439,11 @@ def workflow_image_upload():
     save_name = f"workflow_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
     save_path = UPLOAD_DIR / save_name
     file.save(save_path)
+    try:
+        _validate_saved_image(save_path)
+    except ValueError as e:
+        _delete_local_upload(save_path, "非法工作流图片")
+        return jsonify({"code": 400, "msg": str(e)}), 400
 
     try:
         from scripts.oss_uploader import OSSUploader
@@ -3067,6 +3186,8 @@ def workflow_orders():
         elif not isinstance(order_images, list):
             order_images = []
         order_images = [str(url).strip() for url in order_images if str(url or "").strip()]
+        is_made = body.get("is_made") if "is_made" in body else None
+        is_delivered = body.get("is_delivered") if "is_delivered" in body else None
 
         result = get_workflow_service().save_order(
             order_id=body.get("id"),
@@ -3076,6 +3197,8 @@ def workflow_orders():
             color=(body.get("goods_color") or body.get("color") or "").strip(),
             order_quantity=int(body.get("order_quantity") or 0),
             is_screen_print=int(body.get("is_screen_print") or 0),
+            is_made=is_made,
+            is_delivered=is_delivered,
             order_type=int(body.get("order_type") or 0),
             order_images=order_images,
             remark=(body.get("remark") or "").strip(),
@@ -3303,6 +3426,33 @@ def miniapp_image_config_update_api():
         return _api_exception_response(e)
 
 
+@app.route("/api/miniapp/image-config/assets", methods=["POST"])
+def miniapp_image_config_asset_create_api():
+    """Create a mini-program image config row, currently used for home banners."""
+    try:
+        body = request.get_json(silent=True)
+        if body is None:
+            body = request.form.to_dict(flat=True)
+        result = get_miniapp_service().create_image_asset(body or {})
+        status = 200 if int(result.get("code") or 0) == 0 else int(result.get("code") or 400)
+        return jsonify(result), status
+    except Exception as e:
+        logger.error(f"小程序图片配置新增异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/miniapp/image-config/assets/<int:asset_id>", methods=["DELETE"])
+def miniapp_image_config_asset_delete_api(asset_id: int):
+    """Delete a home banner image config row."""
+    try:
+        result = get_miniapp_service().delete_image_asset(asset_id)
+        status = 200 if int(result.get("code") or 0) == 0 else int(result.get("code") or 400)
+        return jsonify(result), status
+    except Exception as e:
+        logger.error(f"小程序图片配置删除异常: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/mini/home", methods=["GET", "POST"])
 def mini_home_api():
     """Mini-program home data backed by sjagent_core."""
@@ -3355,14 +3505,9 @@ def mini_home_api():
 @app.route("/api/mini/user/center", methods=["GET", "POST"])
 def mini_user_center_api():
     """Mini-program user center data backed by native auth and order-flow data."""
-    token = _auth_token_from_request()
-    user = None
-    if token:
-        try:
-            user = _verify_native_token(token)
-        except Exception as e:
-            logger.warning(f"mini user center token verify failed: {e}")
-
+    user = _mini_request_user()
+    if not user:
+        return jsonify({"code": 401, "msg": "请先登录账号"}), 401
     return jsonify({"code": 0, "data": get_miniapp_service().user_center_payload(user=user)})
 
 
@@ -3758,6 +3903,8 @@ def _mini_workflow_inventory_payload(keyword: str = "") -> dict:
 
 @app.route("/api/mini/workflow-order/customer-list", methods=["GET", "POST"])
 def mini_workflow_customer_list_api():
+    if not _mini_order_user_can_edit(_mini_request_user()):
+        return _mini_order_edit_denied_response()
     payload = _mini_request_payload()
     nickname = str(_mini_value(payload, "nickname", "customer_name", "keyword", default="")).strip()
     if not nickname:
@@ -3800,6 +3947,8 @@ def mini_workflow_search_api():
 
 @app.route("/api/mini/workflow-order/inventory-search", methods=["GET", "POST"])
 def mini_workflow_inventory_search_api():
+    if not _mini_order_user_can_edit(_mini_request_user()):
+        return _mini_order_edit_denied_response()
     payload = _mini_request_payload()
     keyword = _normalize_inventory_keyword(str(_mini_value(payload, "keyword", "q", "wd", default="")).strip())
     try:
@@ -3937,23 +4086,53 @@ def _open_product_crop_image(source_url: str):
         local_path = UPLOAD_DIR / safe_name
         if not local_path.exists():
             raise ValueError("本地图片不存在")
+        _validate_saved_image(local_path)
         from PIL import Image
 
         return Image.open(local_path)
     if source_url.startswith("/"):
         source_url = urljoin(request.host_url, source_url.lstrip("/"))
     parsed = urlparse(source_url)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("只支持 http/https 图片地址")
+    if not _is_safe_remote_image_url(source_url):
+        raise ValueError("图片地址不在允许的图片域名范围内")
 
     import requests
     from PIL import Image
 
-    response = requests.get(source_url, timeout=20, headers={"User-Agent": "sjagent-admin/1.0"})
-    response.raise_for_status()
-    if len(response.content) > 25 * 1024 * 1024:
-        raise ValueError("图片文件过大")
-    return Image.open(io.BytesIO(response.content))
+    with requests.get(source_url, timeout=20, stream=True, headers={"User-Agent": "sjagent-admin/1.0"}) as response:
+        response.raise_for_status()
+        content_length = response.headers.get("Content-Length")
+        try:
+            if content_length and int(content_length) > MAX_IMAGE_UPLOAD_BYTES:
+                raise ValueError("图片文件过大")
+        except ValueError:
+            raise
+        content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        suffix = Path(parsed.path).suffix.lower().lstrip(".")
+        if content_type and not content_type.startswith("image/") and suffix not in ALLOWED_IMAGE_EXTENSIONS:
+            raise ValueError("图片响应类型无效")
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=1024 * 256):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_IMAGE_UPLOAD_BYTES:
+                raise ValueError("图片文件过大")
+            chunks.append(chunk)
+    content = b"".join(chunks)
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+        image = Image.open(io.BytesIO(content))
+        width, height = image.size
+        if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+            raise ValueError("图片尺寸无效")
+        return image
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("图片文件格式无效") from exc
 
 
 @app.route("/api/product/upload", methods=["POST"])
@@ -3972,8 +4151,11 @@ def product_upload_api():
         save_name = f"product_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
         save_path = UPLOAD_DIR / save_name
         file.save(save_path)
-        if not save_path.exists() or save_path.stat().st_size <= 0:
-            return jsonify({"code": 400, "msg": "图片文件为空"}), 400
+        try:
+            _validate_saved_image(save_path)
+        except ValueError as e:
+            _delete_local_upload(save_path, "非法商品图片")
+            return jsonify({"code": 400, "msg": str(e)}), 400
 
         from scripts.oss_uploader import OSSUploader
         from src.core.config import get_config
@@ -4074,8 +4256,11 @@ def miniapp_image_config_upload_api():
         save_name = f"miniapp_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
         save_path = UPLOAD_DIR / save_name
         file.save(save_path)
-        if not save_path.exists() or save_path.stat().st_size <= 0:
-            return jsonify({"code": 400, "msg": "图片文件为空"}), 400
+        try:
+            _validate_saved_image(save_path)
+        except ValueError as e:
+            _delete_local_upload(save_path, "非法小程序配置图片")
+            return jsonify({"code": 400, "msg": str(e)}), 400
 
         from scripts.oss_uploader import OSSUploader
         from src.core.config import get_config
@@ -4137,6 +4322,23 @@ def product_media_delete_api(media_id: int):
         return jsonify(get_product_service().delete_media(media_id))
     except Exception as e:
         logger.error(f"商品图片资产删除异常: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/media/pending", methods=["DELETE", "POST"])
+def product_pending_media_delete_api():
+    """Batch-disable unbound pending product image assets only."""
+    try:
+        body = request.get_json(silent=True)
+        if body is None:
+            body = request.form.to_dict(flat=True)
+        ids = _payload_id_list((body or {}).get("ids"))
+        if not ids:
+            return jsonify({"code": 400, "msg": "缺少未绑定图片ID"}), 400
+        result = get_product_service().delete_pending_media(ids)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"未绑定商品图片批量删除异常: {e}")
         return _api_exception_response(e)
 
 
@@ -4403,6 +4605,7 @@ def native_customer_sales_api(customer_id: int):
     page, page_size = _page_args(default_size=50, max_size=200)
     period = (request.args.get("period") or "").strip()
     month = (request.args.get("month") or "").strip()
+    pay_status = (request.args.get("pay_status") or "").strip()
     try:
         rows, total, summary = get_customer_service().sales(
             customer_id,
@@ -4410,6 +4613,7 @@ def native_customer_sales_api(customer_id: int):
             page_size=page_size,
             period=period,
             month=month,
+            pay_status=pay_status,
         )
         return jsonify({
             "code": 0,
@@ -4595,9 +4799,16 @@ def native_warehouses_api():
 def native_inventory_balances_api():
     keyword = _normalize_inventory_keyword((request.args.get("keyword") or "").strip())
     warehouse_id = request.args.get("warehouse_id", type=int)
+    stock_status = (request.args.get("stock_status") or "").strip()
     page, page_size = _page_args()
     try:
-        rows, total = get_inventory_service().balances(keyword=keyword, warehouse_id=warehouse_id, page=page, page_size=page_size)
+        rows, total = get_inventory_service().balances(
+            keyword=keyword,
+            warehouse_id=warehouse_id,
+            stock_status=stock_status,
+            page=page,
+            page_size=page_size,
+        )
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
     except Exception as e:
         logger.error(f"自有库库存明细异常: {e}")
@@ -4607,9 +4818,17 @@ def native_inventory_balances_api():
 @app.route("/api/inventory/ledger", methods=["GET"])
 def native_inventory_ledger_api():
     keyword = (request.args.get("keyword") or "").strip()
+    sku_id = request.args.get("sku_id", type=int)
+    warehouse_id = request.args.get("warehouse_id", type=int)
     page, page_size = _page_args()
     try:
-        rows, total = get_inventory_service().ledger(keyword=keyword, page=page, page_size=page_size)
+        rows, total = get_inventory_service().ledger(
+            keyword=keyword,
+            sku_id=sku_id,
+            warehouse_id=warehouse_id,
+            page=page,
+            page_size=page_size,
+        )
         return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
     except Exception as e:
         logger.error(f"自有库库存日志异常: {e}")
@@ -4677,6 +4896,7 @@ def sales_add():
     create_time = body.get("create_time") or ""
     pay_status = body.get("pay_status")
     pay_type = body.get("pay_type")
+    workflow_order_id = body.get("workflow_order_id") or body.get("workflow_id") or body.get("source_workflow_id")
 
     if not customer_id or not products:
         return jsonify({"code": 400, "msg": "customer_id and products are required"}), 400
@@ -4692,6 +4912,7 @@ def sales_add():
             pay_status=pay_status,
             pay_type=pay_type,
             operator_user_id=operator_user_id,
+            workflow_order_id=workflow_order_id,
         )
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400
@@ -4787,13 +5008,11 @@ def auth_wechat_quick_login():
         fallback_code = (body.get("code") or "").strip()
         if fallback_code and fallback_code != phone_code:
             authcode = fallback_code
-    openid = (body.get("openid") or body.get("open_id") or "").strip()
     unionid = (body.get("unionid") or body.get("union_id") or "").strip()
     profile = body.get("userInfo") if isinstance(body.get("userInfo"), dict) else body
     try:
         miniapp_appid = body.get("appid") or os.environ.get("WECHAT_MINIAPP_APPID") or os.environ.get("WX_MINIAPP_APPID") or ""
         result = get_auth_service().wechat_quick_login(
-            openid=openid,
             unionid=unionid,
             profile=profile,
             authcode=authcode,
@@ -4955,6 +5174,7 @@ def health():
     return jsonify({"status": "ok", "agent": "sjagent"})
 
 
-def run_api_server(host: str = "127.0.0.1", port: int = 8080):
+def run_api_server(host: str | None = None, port: int = 8080):
     """启动 HTTP API 服务器"""
-    app.run(host=host, port=port, debug=False)
+    resolved_host = _resolve_http_host(host)
+    app.run(host=resolved_host, port=port, debug=False)

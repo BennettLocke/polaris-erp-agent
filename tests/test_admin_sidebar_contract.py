@@ -131,6 +131,13 @@ class AdminSidebarContractTest(unittest.TestCase):
         self.assertIn("<AppShell", app_source)
         self.assertIn("<PageHeader", app_source)
         self.assertNotIn("function AdminShell", app_source)
+        page_header_source = (layout_dir / "page-header.tsx").read_text(encoding="utf-8")
+        self.assertNotIn("React + Radix", page_header_source)
+        self.assertNotIn("eyebrow", page_header_source)
+        self.assertNotIn("待迁移页面", app_source)
+        self.assertNotIn("后续迁移", app_source)
+        self.assertNotIn("当前接入登录态、工作台、设置页", page_header_source)
+        self.assertIn("商品、库存、订单、设置和工作台已统一接入", page_header_source)
         for sidebar_usage in [
             "<SidebarProvider",
             "<SidebarHeader",

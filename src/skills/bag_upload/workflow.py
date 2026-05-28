@@ -32,6 +32,8 @@ BAG_GENERATE_SCRIPT = BAG_TEMPLATE_DIR / "batch_generate.py"
 BAG_GENERATED_DIR = PROJECT_ROOT / "data" / "generated" / "bag_upload"
 WEB_IMAGE_DIR = PROJECT_ROOT / "data" / "uploads"
 BAG_DEFAULT_PRICE = 18
+BAG_UNIT_NAME = "捆"
+BAG_UNIT_FALLBACK_ID = 1
 BAG_UPLOAD_WORKERS = max(1, min(4, int(os.environ.get("BAG_UPLOAD_WORKERS", "3") or 3)))
 
 
@@ -544,6 +546,7 @@ class BagUploadWorkflow(BaseWorkflow):
         detail_url: str,
         price: int = BAG_DEFAULT_PRICE,
     ) -> dict:
+        unit_id = self._bag_unit_id()
         payload = {
             "title": title,
             "product_type": "bubble_bag",
@@ -562,7 +565,7 @@ class BagUploadWorkflow(BaseWorkflow):
                     "default_warehouse_position": "",
                     "unit": {
                         "new_0": {
-                            "unit_id": 1,
+                            "unit_id": unit_id,
                             "unit_number": 1,
                             "coding": code,
                             "barcode": "",
@@ -612,6 +615,22 @@ class BagUploadWorkflow(BaseWorkflow):
         if simple_desc:
             payload["simple_desc"] = simple_desc
         return get_product_service().save(payload)
+
+    def _bag_unit_id(self) -> int:
+        cached = getattr(self, "_cached_bag_unit_id", None)
+        if cached:
+            return int(cached)
+        try:
+            data = get_product_service().options().get("data") or {}
+            units = data.get("unit_list") or data.get("units") or []
+            for unit in units:
+                if str(unit.get("name") or "").strip() == BAG_UNIT_NAME:
+                    unit_id = int(unit.get("id") or BAG_UNIT_FALLBACK_ID)
+                    self._cached_bag_unit_id = unit_id
+                    return unit_id
+        except Exception as e:
+            logger.warning(f"读取泡袋单位失败，回退到默认单位: {e}")
+        return BAG_UNIT_FALLBACK_ID
 
     def _load_product_for_edit(self, product_id: int) -> dict:
         try:
@@ -688,7 +707,7 @@ class BagUploadWorkflow(BaseWorkflow):
                 "default_warehouse_position": row.get("default_warehouse_position") or "",
                 "unit": {
                     unit_key: {
-                        "unit_id": unit.get("unit_id") or row.get("unit_id") or 1,
+                        "unit_id": unit.get("unit_id") or row.get("unit_id") or self._bag_unit_id(),
                         "unit_number": unit.get("unit_number") or 1,
                         "coding": unit.get("coding") or row_code,
                         "barcode": unit.get("barcode") or "",

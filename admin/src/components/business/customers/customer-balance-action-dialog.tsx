@@ -49,8 +49,9 @@ function CustomerBalanceActionDialog({ action, customer, onClose, onSaved }: Pro
   const months = useMemo(() => monthOptions(), []);
   const title = action ? balanceActionLabels[action] : "";
   const isSettlement = action === "settlement";
+  const isAdjust = action === "adjust";
   const balance = moneyNumber(customer?.balance_amount);
-  const settlementAmount = moneyNumber(preview?.unpaid_amount || preview?.total_amount);
+  const settlementAmount = moneyNumber(preview?.unpaid_amount);
   const incomingAmount = moneyNumber(amount);
   const settlementDiff = incomingAmount - settlementAmount;
 
@@ -73,15 +74,29 @@ function CustomerBalanceActionDialog({ action, customer, onClose, onSaved }: Pro
       .finally(() => setPreviewLoading(false));
   }, [customer?.id, isSettlement, month]);
 
+  function validateAction() {
+    const parsedAmount = Number(amount.trim());
+    if (!Number.isFinite(parsedAmount) || parsedAmount === 0 || (!isAdjust && parsedAmount < 0)) {
+      setError("请输入有效金额");
+      return false;
+    }
+    if (isAdjust && !note.trim()) {
+      setError("请填写调整原因");
+      return false;
+    }
+    return true;
+  }
+
   async function submit() {
     if (!action || !customer) return;
+    if (!validateAction()) return;
     setSaving(true);
     setError("");
     try {
       await api.applyCustomerBalance(customer.id, {
         action,
         amount,
-        pay_type: action === "adjust" ? undefined : payType,
+        pay_type: isAdjust ? undefined : payType,
         month: isSettlement ? month : undefined,
         note
       });
@@ -137,7 +152,7 @@ function CustomerBalanceActionDialog({ action, customer, onClose, onSaved }: Pro
               </div>
               <div>
                 <span>应结金额</span>
-                <strong>{money(preview?.unpaid_amount || preview?.total_amount)}</strong>
+                <strong>{money(settlementAmount)}</strong>
               </div>
               <div>
                 <span>实收差额</span>
@@ -176,8 +191,14 @@ function CustomerBalanceActionDialog({ action, customer, onClose, onSaved }: Pro
           </div>
 
           <Field>
-            <FieldLabel>备注</FieldLabel>
-            <Textarea value={note} rows={3} onChange={(event) => setNote(event.target.value)} />
+            <FieldLabel>{isAdjust ? "调整原因" : "备注"}</FieldLabel>
+            <Textarea
+              value={note}
+              rows={3}
+              required={isAdjust}
+              placeholder={isAdjust ? "必须填写为什么调整余额，方便以后查账" : "可填写备注，方便以后查账"}
+              onChange={(event) => setNote(event.target.value)}
+            />
           </Field>
         </FieldGroup>
 

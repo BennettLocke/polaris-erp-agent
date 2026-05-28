@@ -6,6 +6,7 @@ import {
   SalesDeleteDialog,
   SalesOrderDetailDialog
 } from "@/components/business/sales-list";
+import { hasPermission } from "@/lib/permissions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +34,7 @@ import {
   TableRow
 } from "@/components/ui/table";
 import type {
+  AuthUser,
   CustomerBalanceActionPayload,
   CustomerBalanceLedgerItem,
   CustomerBalanceSummary,
@@ -56,19 +58,25 @@ import {
 } from "./utils";
 
 const ledgerPageSize = 12;
+const salesPageSize = 12;
+type CustomerSalesPayStatus = "all" | "unsettled" | "paid" | "monthly" | "unpaid";
 
 type Props = {
   customer: CustomerItem | null;
+  currentUser?: AuthUser;
   initialTab?: string;
   onClose: () => void;
   onChanged: (customer?: CustomerItem) => void;
 };
 
-function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onChanged }: Props) {
+function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", onClose, onChanged }: Props) {
   const [current, setCurrent] = useState<CustomerItem | null>(customer);
   const [tab, setTab] = useState(initialTab);
   const [sales, setSales] = useState<CustomerSalesItem[]>([]);
   const [salesSummary, setSalesSummary] = useState<CustomerSalesSummary | null>(null);
+  const [salesPage, setSalesPage] = useState(1);
+  const [salesTotal, setSalesTotal] = useState(0);
+  const [salesPayStatus, setSalesPayStatus] = useState<CustomerSalesPayStatus>("all");
   const [ledger, setLedger] = useState<CustomerBalanceLedgerItem[]>([]);
   const [ledgerSummary, setLedgerSummary] = useState<CustomerBalanceSummary | null>(null);
   const [ledgerPage, setLedgerPage] = useState(1);
@@ -88,19 +96,35 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
   const selected = current || customer;
   const selectedName = customerName(selected);
   const balance = moneyNumber(ledgerSummary?.balance_amount || selected?.balance_amount);
+  const canAdjustBalance = hasPermission(currentUser, "调余额");
+  const salesPageCount = Math.max(1, Math.ceil(salesTotal / salesPageSize));
   const ledgerPageCount = Math.max(1, Math.ceil(ledgerTotal / ledgerPageSize));
 
-  async function loadDetail(nextPeriod = period, nextMonth = month, target = selected) {
+  async function loadDetail(
+    nextPeriod = period,
+    nextMonth = month,
+    target = selected,
+    nextSalesPage = 1,
+    nextPayStatus: CustomerSalesPayStatus = salesPayStatus
+  ) {
     if (!target) return;
     setLoading(true);
     setError("");
     try {
       const [salesData, ledgerData] = await Promise.all([
-        api.customerSales(target.id, { page: 1, pageSize: 20, period: nextPeriod, month: nextMonth }),
+        api.customerSales(target.id, {
+          page: nextSalesPage,
+          pageSize: salesPageSize,
+          period: nextPeriod,
+          month: nextMonth,
+          payStatus: nextPayStatus
+        }),
         api.customerBalanceLedger(target.id, 1, ledgerPageSize)
       ]);
       setSales(salesData.list || []);
       setSalesSummary(salesData.summary || null);
+      setSalesPage(salesData.page || nextSalesPage);
+      setSalesTotal(salesData.total || 0);
       setLedger(ledgerData.list || []);
       setLedgerSummary(ledgerData.summary || null);
       setLedgerPage(1);
@@ -114,6 +138,36 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "客户详情加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadSalesPage(
+    nextPage: number,
+    target = selected,
+    nextPeriod = period,
+    nextMonth = month,
+    nextPayStatus: CustomerSalesPayStatus = salesPayStatus
+  ) {
+    if (!target) return;
+    const safePage = Math.max(1, Math.min(salesPageCount, nextPage));
+    setLoading(true);
+    setError("");
+    try {
+      const salesData = await api.customerSales(target.id, {
+        page: safePage,
+        pageSize: salesPageSize,
+        period: nextPeriod,
+        month: nextMonth,
+        payStatus: nextPayStatus
+      });
+      setSales(salesData.list || []);
+      setSalesSummary(salesData.summary || null);
+      setSalesPage(salesData.page || safePage);
+      setSalesTotal(salesData.total || 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "销售记录加载失败");
     } finally {
       setLoading(false);
     }
@@ -152,17 +206,27 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
     setLedger([]);
     setSalesSummary(null);
     setLedgerSummary(null);
+    setSalesPage(1);
+    setSalesTotal(0);
+    setSalesPayStatus("all");
     setLedgerPage(1);
     setLedgerTotal(0);
     setNotice("");
     setTab(initialTab || "overview");
-    if (customer) void loadDetail("", "", customer);
+    if (customer) void loadDetail("", "", customer, 1, "all");
   }, [customer?.id, initialTab]);
 
   function changePeriod(nextPeriod: string, nextMonth = "") {
     setPeriod(nextPeriod);
     setMonth(nextMonth);
-    void loadDetail(nextPeriod, nextMonth);
+    setSalesPage(1);
+    void loadDetail(nextPeriod, nextMonth, selected, 1, salesPayStatus);
+  }
+
+  function changeSalesPayStatus(nextPayStatus: CustomerSalesPayStatus) {
+    setSalesPayStatus(nextPayStatus);
+    setSalesPage(1);
+    void loadDetail(period, month, selected, 1, nextPayStatus);
   }
 
   async function toggleMonthly() {
@@ -222,7 +286,7 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
       setNotice("销售单已删除，库存和余额已按服务层规则回滚");
       setDeleteTarget(null);
       if (detail && Number(detail.id || detail.sales_id || 0) === id) setDetail(null);
-      await loadDetail(period, month);
+      await loadDetail(period, month, selected, salesPage, salesPayStatus);
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "销售单删除失败");
@@ -232,7 +296,7 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
   }
 
   function afterBalanceSaved() {
-    void loadDetail(period, month);
+    void loadDetail(period, month, selected, salesPage, salesPayStatus);
     onChanged();
   }
 
@@ -284,7 +348,7 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
               <Button type="button" variant="outline" onClick={() => setAction("receipt")}>收款</Button>
               <Button type="button" variant="outline" onClick={() => setAction("recharge")}>充值</Button>
               <Button type="button" onClick={() => setAction("settlement")}>结款</Button>
-              <Button type="button" variant="outline" onClick={() => setAction("adjust")}>调余额</Button>
+              <Button type="button" variant="outline" disabled={!canAdjustBalance} onClick={() => setAction("adjust")}>调余额</Button>
               <Button type="button" variant="outline" onClick={toggleMonthly}>
                 {Number(selected?.is_monthly_customer || 0) ? "取消月结" : "设为月结"}
               </Button>
@@ -295,7 +359,7 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
             <div className="customer-tab-header">
               <div>
                 <strong>{salesSummary?.label || "全部销售单"}</strong>
-                <span>共 {salesSummary?.total || 0} 单 · 合计 {money(salesSummary?.total_amount)} · 未结 {money(salesSummary?.unpaid_amount)}</span>
+                <span>共 {salesTotal || salesSummary?.total || 0} 单 · 第 {Math.min(salesPage, salesPageCount)}/{salesPageCount} 页 · 合计 {money(salesSummary?.total_amount)} · 未结 {money(salesSummary?.unpaid_amount)}</span>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={() => setStatementOpen(true)}>
                 导出账单
@@ -305,6 +369,13 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
               <Button size="sm" type="button" variant={!period && !month ? "default" : "outline"} onClick={() => changePeriod("", "")}>全部</Button>
               <Button size="sm" type="button" variant={period === "1m" ? "default" : "outline"} onClick={() => changePeriod("1m", "")}>近1个月</Button>
               <Button size="sm" type="button" variant={period === "3m" ? "default" : "outline"} onClick={() => changePeriod("3m", "")}>近3个月</Button>
+            </div>
+            <div className="customer-filter-row customer-filter-row--compact">
+              <Button size="sm" type="button" variant={salesPayStatus === "all" ? "default" : "outline"} onClick={() => changeSalesPayStatus("all")}>全部状态</Button>
+              <Button size="sm" type="button" variant={salesPayStatus === "unsettled" ? "default" : "outline"} onClick={() => changeSalesPayStatus("unsettled")}>未结</Button>
+              <Button size="sm" type="button" variant={salesPayStatus === "paid" ? "default" : "outline"} onClick={() => changeSalesPayStatus("paid")}>已付款</Button>
+              <Button size="sm" type="button" variant={salesPayStatus === "monthly" ? "default" : "outline"} onClick={() => changeSalesPayStatus("monthly")}>月结</Button>
+              <Button size="sm" type="button" variant={salesPayStatus === "unpaid" ? "default" : "outline"} onClick={() => changeSalesPayStatus("unpaid")}>未付款</Button>
             </div>
             <div className="customer-month-grid customer-month-grid--compact">
               {months.map((item) => (
@@ -362,6 +433,19 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
                 </EmptyHeader>
               </Empty>
             ) : null}
+            <Pagination className="sales-pagination-row">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious disabled={salesPage <= 1 || loading} onClick={() => void loadSalesPage(salesPage - 1)}>上一页</PaginationPrevious>
+                </PaginationItem>
+                <PaginationItem>
+                  <Badge className="sales-page-count" variant="outline">{Math.min(salesPage, salesPageCount)} / {salesPageCount}</Badge>
+                </PaginationItem>
+                <PaginationItem>
+                  <PaginationNext disabled={salesPage >= salesPageCount || loading} onClick={() => void loadSalesPage(salesPage + 1)}>下一页</PaginationNext>
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
           </TabsContent>
 
           <TabsContent value="statement">
@@ -480,7 +564,7 @@ function CustomerDetailDialog({ customer, initialTab = "overview", onClose, onCh
             if (updated) {
               setCurrent(updated);
               onChanged(updated);
-              void loadDetail(period, month, updated);
+              void loadDetail(period, month, updated, salesPage, salesPayStatus);
             }
           }}
         />

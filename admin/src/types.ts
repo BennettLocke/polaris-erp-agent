@@ -6,10 +6,12 @@ export type ApiResult<T> = {
 
 export type AuthUser = {
   id: number;
+  native_user_id?: number;
   username: string;
   display_name: string;
   role: string;
   role_text: string;
+  permissions: string[];
   approval_status: string;
   is_admin: number;
   is_active: number;
@@ -20,6 +22,68 @@ export type DashboardSummary = {
   today_sales_amount: string;
   pending_workflow_count: number;
   updated_at: number;
+};
+
+export type AnalyticsHotProduct = {
+  rank: number;
+  product_id: number;
+  sku_id: number;
+  sku_no?: string;
+  title: string;
+  color?: string;
+  image?: string;
+  image_url?: string;
+  sold_qty: number;
+  amount: string;
+  amount_value?: number;
+  order_count: number;
+  customer_count: number;
+  last_sold_at?: string;
+};
+
+export type AnalyticsHotProductsResult = {
+  period: string;
+  dimension: "product" | "sku" | string;
+  limit: number;
+  category_names?: string[];
+  items: AnalyticsHotProduct[];
+  source: string;
+};
+
+export type AgentMessageHistoryItem = {
+  role: "user" | "assistant" | string;
+  content: string;
+};
+
+export type AgentSessionSnapshot = {
+  has_pending?: boolean;
+  pending_intent?: string | null;
+  pending_action?: string;
+  state?: Record<string, unknown> | null;
+  last_extraction?: Record<string, unknown>;
+  last_order?: Record<string, unknown>;
+};
+
+export type AgentChatResponse = {
+  response: string;
+  session_id: string;
+  session?: AgentSessionSnapshot;
+};
+
+export type AgentHistoryResult = {
+  session_id: string;
+  history: AgentMessageHistoryItem[];
+  session?: AgentSessionSnapshot;
+};
+
+export type AgentImageUploadResult = AgentChatResponse & {
+  image_path?: string;
+  result?: {
+    preview_url?: string;
+    image_path?: string;
+    mode?: string;
+    [key: string]: unknown;
+  };
 };
 
 export type RecentSale = {
@@ -98,6 +162,8 @@ export type ProcessOrderPayload = {
   color?: string;
   order_quantity?: number | string;
   is_screen_print?: number | boolean;
+  is_made?: number;
+  is_delivered?: number;
   order_type?: number;
   order_images?: string[];
   remark?: string;
@@ -404,6 +470,14 @@ export type MiniappImageUpdatePayload = {
   id: number;
   field: "asset_url" | "active_asset_url" | "icon" | "icon_active";
   url: string;
+};
+
+export type MiniappImageCreatePayload = {
+  scene: "home_banner";
+  name?: string;
+  asset_url?: string;
+  link_type?: string;
+  link_value?: string;
 };
 
 export type SalesCard = {

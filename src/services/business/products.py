@@ -113,6 +113,9 @@ class ProductService(BusinessService):
     def delete_media(self, media_id: int) -> dict:
         return self.db.delete_product_media(media_id)
 
+    def delete_pending_media(self, media_ids: Iterable[Any]) -> dict:
+        return self.db.delete_pending_product_media(media_ids)
+
     def update_purchase_policy_by_series(self, series: list[str] | str, purchase_policy: str) -> dict:
         return self.db.update_purchase_policy_by_series(series, purchase_policy)
 

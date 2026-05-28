@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
+﻿import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 
 import { ApiError, api } from "@/api";
@@ -2255,108 +2255,6 @@ export function ProductsPage() {
         onClose={() => setEditingProduct(null)}
         onSaved={afterProductSaved}
       />
-    </section>
-  );
-}
-
-const mediaTypeTabs = [
-  { key: "", label: "全部" },
-  { key: "pending", label: "待绑定" },
-  { key: "main_image", label: "主图" },
-  { key: "detail_image", label: "详情页" },
-  { key: "color_image", label: "颜色图" }
-];
-
-export function MediaPage() {
-  const [mediaType, setMediaType] = useState("");
-  const [items, setItems] = useState<ProductMediaAsset[]>([]);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const pageSize = 24;
-
-  async function loadMedia(nextPage = page, nextType = mediaType) {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await api.productMedia({ page: nextPage, pageSize, mediaType: nextType });
-      setItems(data.list || []);
-      setTotal(data.total || 0);
-      setPage(nextPage);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "图片资产加载失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadMedia(1, "");
-  }, []);
-
-  async function deleteMedia(asset: ProductMediaAsset) {
-    if (!asset.id) return;
-    if (!window.confirm("确认删除这张图片资产？")) return;
-    setError("");
-    try {
-      await api.deleteProductMedia(Number(asset.id));
-      await loadMedia(page, mediaType);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "图片删除失败");
-    }
-  }
-
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-
-  return (
-    <section className="panel data-panel">
-      <div className="data-toolbar">
-        <div>
-          <span className="pill">{page} / {pageCount} · 共 {total} 张</span>
-          <h2>图片资产</h2>
-        </div>
-      </div>
-      <div className="category-strip">
-        {mediaTypeTabs.map((tab) => (
-          <button
-            key={tab.key || "all"}
-            type="button"
-            className={mediaType === tab.key ? "filter-chip active" : "filter-chip"}
-            onClick={() => {
-              setMediaType(tab.key);
-              void loadMedia(1, tab.key);
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      {error ? <div className="form-error">{error}</div> : null}
-      {loading ? <div className="empty-state">图片加载中</div> : null}
-      <div className="media-grid">
-        {items.map((asset, index) => (
-          <article className="media-card" key={`${asset.id || asset.url}-${index}`}>
-            <div className="media-thumb">
-              <img src={asset.url} alt={asset.binding_text || "图片资产"} loading="lazy" />
-              {asset.id ? (
-                <button className="media-delete" type="button" onClick={() => deleteMedia(asset)}>×</button>
-              ) : null}
-            </div>
-            <div className="media-info">
-              <strong>{asset.product_name || asset.binding_text || "待绑定"}</strong>
-              <span>{asset.asset_group_text || asset.category_name || "其他分类"}</span>
-              <span>{[asset.media_type_text, asset.sku_color, asset.source_text].filter(Boolean).join(" · ") || asset.media_type}</span>
-            </div>
-          </article>
-        ))}
-      </div>
-      {!loading && !items.length ? <div className="empty-state">没有图片资产</div> : null}
-      <div className="pager">
-        <button className="ghost-action compact" disabled={page <= 1} onClick={() => loadMedia(page - 1)}>上一页</button>
-        <span>{page} / {pageCount}</span>
-        <button className="ghost-action compact" disabled={page >= pageCount} onClick={() => loadMedia(page + 1)}>下一页</button>
-      </div>
     </section>
   );
 }

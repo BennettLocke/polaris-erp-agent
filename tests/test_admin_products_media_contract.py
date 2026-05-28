@@ -52,9 +52,15 @@ class AdminProductsMediaContractTest(unittest.TestCase):
         self.assertIn("件规：", product_source)
         self.assertIn("product.color_text", product_source)
         self.assertIn("productType", product_source)
-        self.assertIn("export function MediaPage", product_source)
+        self.assertNotIn("export function MediaPage", product_source)
+        self.assertNotIn("function MediaPage", product_source)
+        self.assertNotIn("window.confirm", product_source)
         self.assertIn('loading="lazy"', product_source)
         self.assertIn("media_type", product_source)
+        product_index = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "index.ts"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(product_index.strip(), 'export { ProductsPage } from "./products-page";')
         self.assertIn("待绑定", product_source)
         self.assertNotIn("function ProductsPage", app_source)
         self.assertNotIn("function MediaPage", app_source)

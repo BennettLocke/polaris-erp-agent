@@ -17,6 +17,8 @@ class WorkflowService(BusinessService):
         color: str = "",
         order_images: list[str] | None = None,
         is_screen_print: int = 0,
+        is_made: int | None = None,
+        is_delivered: int | None = None,
         order_type: int = 0,
         remark: str = "",
     ) -> dict:
@@ -29,6 +31,8 @@ class WorkflowService(BusinessService):
             color=color,
             order_images=order_images or [],
             is_screen_print=is_screen_print,
+            is_made=is_made,
+            is_delivered=is_delivered,
             order_type=order_type,
             remark=remark,
         )
@@ -58,6 +62,13 @@ class WorkflowService(BusinessService):
 
     def update_status(self, *, order_id: int, field: str, value: int) -> dict:
         return self.db.update_workflow_status(order_id=order_id, field=field, value=value)
+
+    def link_sales_order(self, workflow_order_id: int, sales_order_id: int, *, operator_user_id=None) -> dict:
+        return self.db.link_workflow_sales_order(
+            workflow_order_id=workflow_order_id,
+            sales_order_id=sales_order_id,
+            operator_user_id=operator_user_id,
+        )
 
 
 def get_workflow_service() -> WorkflowService:
