@@ -1,7 +1,9 @@
 """Cached voice prompts for the Orange Pi desktop robot."""
 from __future__ import annotations
 
+import os
 import random
+import shutil
 import subprocess
 import threading
 import time
@@ -10,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.core.config import get_config
-from src.services.mimo_tts import synthesize
+from src.services.mimo_tts import synthesize as synthesize_mimo
+from src.services.volc_tts import synthesize_stream as synthesize_volc_stream
 from src.utils import get_logger
 
 logger = get_logger("sjagent.services.voice_prompts")
@@ -27,12 +30,9 @@ class VoicePrompt:
 
 PROMPT_GROUPS: dict[str, list[VoicePrompt]] = {
     "wake": [
-        VoicePrompt("wake_zaine", "在呢。", "用户刚刚喊了小星。"),
-        VoicePrompt("wake_wozai", "我在。", "用户刚刚喊了小星。"),
-        VoicePrompt("wake_en_wozai", "嗯，我在。", "用户刚刚喊了小星。"),
-        VoicePrompt("wake_lailai", "来了。", "用户刚刚喊了小星。"),
-        VoicePrompt("wake_tingzhe", "我听着呢。", "用户刚刚喊了小星。"),
-        VoicePrompt("wake_xiaoxing", "小星在。", "用户刚刚喊了小星。"),
+        VoicePrompt("wake_zaine", "在呢", "用户刚刚喊了小星。"),
+        VoicePrompt("wake_wozai", "我在", "用户刚刚喊了小星。"),
+        VoicePrompt("wake_xiaoxing", "小星在", "用户刚刚喊了小星。"),
     ],
     "processing": [
         VoicePrompt("processing_favorite", "收到啦，正在给你处理。", "用户给小星发送了一条中文语音指令。"),
@@ -73,11 +73,38 @@ def pick_prompt(group: str) -> VoicePrompt:
     return random.choice(get_prompts(group))
 
 
+def _prompt_provider() -> str:
+    cfg = get_config().tts_config
+    return (os.getenv("VOICE_PROMPT_TTS_PROVIDER") or cfg.get("provider") or "mimo").strip().lower()
+
+
+def _synthesize_with_volc(text: str, path: Path) -> Path:
+    audio_format = (
+        os.getenv("VOLC_TTS_FORMAT") or get_config().get_with_env("volc_tts.format", "mp3") or "mp3"
+    ).strip().lower()
+    temp_audio = path.with_suffix(f".prompt.{audio_format}")
+    try:
+        audio_path = synthesize_volc_stream(text, temp_audio)
+        if audio_format == "wav":
+            shutil.move(str(audio_path), str(path))
+        else:
+            subprocess.run(["mpg123", "-q", "-w", str(path), str(audio_path)], check=True)
+        return path
+    finally:
+        if temp_audio.exists():
+            try:
+                temp_audio.unlink()
+            except OSError:
+                pass
+
+
 def ensure_prompt(prompt: VoicePrompt, *, force: bool = False) -> Path:
     path = prompt_path(prompt)
     if path.exists() and path.stat().st_size > 0 and not force:
         return path
-    return synthesize(prompt.text, path, context=prompt.context)
+    if _prompt_provider() == "volc":
+        return _synthesize_with_volc(prompt.text, path)
+    return synthesize_mimo(prompt.text, path, context=prompt.context)
 
 
 def ensure_group(group: str, *, force: bool = False) -> list[Path]:
