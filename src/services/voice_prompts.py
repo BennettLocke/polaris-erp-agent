@@ -5,6 +5,7 @@ import random
 import subprocess
 import threading
 import time
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from src.utils import get_logger
 
 logger = get_logger("sjagent.services.voice_prompts")
 _PLAY_LOCK = threading.Lock()
+_SILENCE_TAIL_MS = 220
 
 
 @dataclass(frozen=True)
@@ -89,11 +91,40 @@ def ensure_all_prompts(*, force: bool = False) -> list[Path]:
     return paths
 
 
+def _silence_tail_for_wav(path: Path, *, milliseconds: int = _SILENCE_TAIL_MS) -> Path | None:
+    try:
+        with wave.open(str(path), "rb") as source:
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            frame_rate = source.getframerate()
+    except Exception:
+        return None
+    if channels <= 0 or sample_width <= 0 or frame_rate <= 0:
+        return None
+    frames = max(1, int(frame_rate * milliseconds / 1000))
+    tail_dir = voice_output_dir() / ".tails"
+    tail_dir.mkdir(parents=True, exist_ok=True)
+    tail_path = tail_dir / f"silence_{frame_rate}_{channels}_{sample_width}_{milliseconds}.wav"
+    if tail_path.exists() and tail_path.stat().st_size > 0:
+        return tail_path
+    with wave.open(str(tail_path), "wb") as target:
+        target.setnchannels(channels)
+        target.setsampwidth(sample_width)
+        target.setframerate(frame_rate)
+        target.writeframes(b"\x00" * frames * channels * sample_width)
+    return tail_path
+
+
 def play_file(path: str | Path, *, device: str = "") -> None:
-    args = ["aplay"]
+    audio_path = Path(path)
+    args = ["aplay", "-q"]
     if device:
         args.extend(["-D", device])
-    args.append(str(path))
+    args.append(str(audio_path))
+    if audio_path.suffix.lower() == ".wav":
+        tail_path = _silence_tail_for_wav(audio_path)
+        if tail_path:
+            args.append(str(tail_path))
     with _PLAY_LOCK:
         last_exc: subprocess.CalledProcessError | None = None
         for attempt in range(3):

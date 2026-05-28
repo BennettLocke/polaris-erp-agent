@@ -70,6 +70,23 @@ IGNORABLE_VOICE_COMMANDS = {
     "\u884c",
     "\u53ef\u4ee5",
 }
+CANCEL_VOICE_COMMANDS = {
+    "\u6ca1\u4e8b",
+    "\u6ca1\u4e8b\u4e86",
+    "\u6ca1\u4e8b\u513f",
+    "\u4e0d\u7528",
+    "\u4e0d\u7528\u4e86",
+    "\u4e0d\u7528\u67e5\u4e86",
+    "\u4e0d\u67e5\u4e86",
+    "\u7b97\u4e86",
+    "\u53d6\u6d88",
+    "\u7ed3\u675f",
+    "\u5148\u8fd9\u6837",
+    "\u597d\u4e86",
+    "\u505c",
+    "\u505c\u4e00\u4e0b",
+    "\u9000\u51fa",
+}
 UNCLEAR_VOICE_COMMANDS = {
     "\u770b\u4e00\u4e0b",
     "\u770b\u4e0b",
@@ -171,6 +188,11 @@ def normalize_command_text(text: str) -> str:
 def is_ignorable_voice_command(text: str) -> bool:
     normalized = normalize_text(text)
     return normalized in IGNORABLE_VOICE_COMMANDS or len(normalized) <= 1
+
+
+def is_cancel_voice_command(text: str) -> bool:
+    normalized = normalize_text(text)
+    return normalized in CANCEL_VOICE_COMMANDS
 
 
 def is_unclear_voice_command(text: str) -> bool:
@@ -940,6 +962,10 @@ def handle_command(args, command: str) -> bool:
     if is_wake_text(command):
         print(f"COMMAND_WAKE_IGNORED {command}", flush=True)
         return False
+    if is_cancel_voice_command(command):
+        print(f"COMMAND_CANCELLED {command}", flush=True)
+        screen_notify(args, "idle")
+        return True
     if is_ignorable_voice_command(command):
         print(f"COMMAND_IGNORED {command}", flush=True)
         return False
@@ -978,6 +1004,8 @@ def should_continue_command_window(command: str) -> bool:
     if not command:
         return False
     if is_wake_text(command):
+        return False
+    if is_cancel_voice_command(command):
         return False
     if is_ignorable_voice_command(command):
         return False
