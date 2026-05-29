@@ -628,6 +628,105 @@
   background: var(--sj-soft);
 }
 
+.workbench-inventory-card-scroll {
+  border: 0;
+}
+
+.workbench-inventory-card-scroll .sj-scroll-area-viewport {
+  max-height: min(58vh, 460px);
+}
+
+.workbench-inventory-card-grid {
+  columns: 2 280px;
+  column-gap: 12px;
+}
+
+.workbench-inventory-card {
+  display: inline-grid;
+  width: 100%;
+  break-inside: avoid;
+  gap: 10px;
+  margin: 0 0 12px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--sj-surface);
+}
+
+.workbench-inventory-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.workbench-inventory-card h3 {
+  margin: 0;
+  color: var(--sj-heading);
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.workbench-inventory-card header span,
+.workbench-inventory-color-name span,
+.workbench-inventory-warehouse-grid span {
+  color: var(--sj-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workbench-inventory-color-list {
+  display: grid;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.workbench-inventory-color-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.9fr) minmax(0, 1.4fr);
+  gap: 10px;
+  padding: 10px;
+  border-top: 1px solid var(--sj-border);
+}
+
+.workbench-inventory-color-row:first-child {
+  border-top: 0;
+}
+
+.workbench-inventory-color-name {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+}
+
+.workbench-inventory-color-name strong {
+  color: var(--sj-heading);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.workbench-inventory-warehouse-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.workbench-inventory-warehouse-grid div {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: var(--sj-surface-subtle);
+}
+
+.workbench-inventory-warehouse-grid strong {
+  color: var(--sj-heading);
+  font-size: 14px;
+  line-height: 20px;
+}
+
 @media (max-width: 1280px) {
   .workbench-shell {
     grid-template-columns: minmax(420px, 1fr) minmax(280px, 320px);

@@ -50,6 +50,27 @@ export type AnalyticsHotProductsResult = {
   source: string;
 };
 
+export type WorkbenchInventoryColor = {
+  product_id?: number;
+  color: string;
+  total_stock: number;
+  warehouses: Record<string, number>;
+};
+
+export type WorkbenchInventoryCard = {
+  product_id?: number;
+  title: string;
+  piece_text?: string;
+  total_stock: number;
+  status_text?: string;
+  colors: WorkbenchInventoryColor[];
+};
+
+export type InventoryCardsResult = {
+  list: WorkbenchInventoryCard[];
+  source?: string;
+};
+
 export type AgentMessageHistoryItem = {
   role: "user" | "assistant" | string;
   content: string;

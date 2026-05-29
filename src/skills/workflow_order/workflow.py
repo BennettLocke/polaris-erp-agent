@@ -341,11 +341,15 @@ class WorkflowOrderWorkflow(BaseWorkflow):
         errors = []
         created_ids = []
         for idx, parsed in enumerate(parsed_list, 1):
+            goods_name = str(parsed.get("goods_name") or "").strip()
+            if not goods_name:
+                errors.append(f"{idx}. 未识别到商品，已跳过")
+                continue
             try:
                 result = self.caller.call(
                     "workflow_order_save",
                     customer_name=parsed.get("customer") or "散客",
-                    goods_name=parsed.get("goods_name", ""),
+                    goods_name=goods_name,
                     order_quantity=int(parsed.get("quantity") or 1),
                     color=parsed.get("color", ""),
                     order_images=parsed.get("order_images") or [],
@@ -353,14 +357,14 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                     remark=parsed.get("remark", ""),
                 )
             except Exception as e:
-                errors.append(f"{idx}. {parsed.get('goods_name', '')}：{e}")
+                errors.append(f"{idx}. {goods_name}：{e}")
                 continue
 
             if isinstance(result, dict) and result.get("error"):
-                errors.append(f"{idx}. {parsed.get('goods_name', '')}：{result['error']}")
+                errors.append(f"{idx}. {goods_name}：{result['error']}")
                 continue
             if isinstance(result, dict) and result.get("code") not in (None, 0):
-                errors.append(f"{idx}. {parsed.get('goods_name', '')}：{result.get('msg', result)}")
+                errors.append(f"{idx}. {goods_name}：{result.get('msg', result)}")
                 continue
 
             order_id = ""
@@ -374,7 +378,7 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                 except (TypeError, ValueError):
                     pass
             suffix = f"单号 {order_id}" if order_id else "已提交"
-            ok_lines.append(f"{idx}. {parsed.get('customer') or '散客'} | {parsed.get('goods_name', '')} {parsed.get('color', '')} | {parsed.get('quantity') or 1} | {suffix}")
+            ok_lines.append(f"{idx}. {parsed.get('customer') or '散客'} | {goods_name} {parsed.get('color', '')} | {parsed.get('quantity') or 1} | {suffix}")
 
         lines = []
         if ok_lines:

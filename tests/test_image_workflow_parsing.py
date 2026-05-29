@@ -1,6 +1,17 @@
 import unittest
 
 from src.core.nodes.image_workflow import parse_ocr_text_list, propagate_batch_customer_context
+from src.channels.http_api.__init__ import _sanitize_pending_state
+from src.skills.workflow_order.workflow import WorkflowOrderWorkflow
+
+
+class FakeWorkflowCaller:
+    def __init__(self):
+        self.calls = []
+
+    def call(self, name, **kwargs):
+        self.calls.append((name, kwargs))
+        return {"code": 0, "data": {"id": len(self.calls)}}
 
 
 class ImageWorkflowParsingTest(unittest.TestCase):
@@ -46,6 +57,36 @@ class ImageWorkflowParsingTest(unittest.TestCase):
 
         self.assertEqual(items[1]["parsed"]["customer_name"], "霸枞")
         self.assertEqual(items[1]["workflow_order_payload"]["customer"], "霸枞")
+
+    def test_image_workflow_pending_state_drops_empty_rows(self):
+        cleaned = _sanitize_pending_state(
+            "workflow",
+            {
+                "pending_action": "confirm_image_workflow_orders",
+                "parsed_list": [
+                    {"customer": "", "goods_name": "", "quantity": 1},
+                    {"customer": "齐唯茶业", "goods_name": "岩味3小盒", "quantity": 2},
+                ],
+            },
+            None,
+        )
+
+        self.assertEqual(len(cleaned["parsed_list"]), 1)
+        self.assertEqual(cleaned["parsed_list"][0]["customer"], "齐唯茶业")
+        self.assertEqual(cleaned["parsed_list"][0]["goods_name"], "岩味3小盒")
+
+    def test_workflow_create_many_skips_rows_without_goods_name(self):
+        workflow = WorkflowOrderWorkflow()
+        fake_caller = FakeWorkflowCaller()
+        workflow.caller = fake_caller
+
+        workflow._create_many([
+            {"customer": "散客", "goods_name": "", "quantity": 1},
+            {"customer": "齐唯茶业", "goods_name": "岩味3小盒", "quantity": 2},
+        ])
+
+        self.assertEqual(len(fake_caller.calls), 1)
+        self.assertEqual(fake_caller.calls[0][1]["goods_name"], "岩味3小盒")
 
 
 if __name__ == "__main__":

@@ -220,6 +220,49 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         ]:
             self.assertIn(selector, styles_source)
 
+    def test_workbench_upload_keeps_image_visible_in_user_message(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        upload_section = extract_function_section(workbench_source, "uploadImageFile")
+
+        self.assertIn('const userMessageId = appendMessage("user"', upload_section)
+        self.assertIn("updateMessage(userMessageId", upload_section)
+        self.assertIn("previewUrl", upload_section)
+        self.assertIn("upload_user_text", http_source)
+        self.assertIn("session.save_turn(upload_user_text, response_text)", http_source)
+
+    def test_workbench_inventory_result_uses_inventory_cards(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        types_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        styles_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("WorkbenchInventoryCard", types_source)
+        self.assertIn("InventoryCardsResult", types_source)
+        self.assertIn("inventoryCards", api_source)
+        self.assertIn('"/api/inventory/cards"', api_source)
+        self.assertIn("inventoryKeywordFromMessage", workbench_source)
+        self.assertIn("loadInventoryCardsForMessage", workbench_source)
+        self.assertIn("InventoryCardGrid", workbench_source)
+        self.assertIn("inventoryCards", workbench_source)
+        self.assertIn(".workbench-inventory-card-grid", styles_source)
+        self.assertIn(".workbench-inventory-card", styles_source)
+
+    def test_workbench_image_workflow_confirm_skips_empty_root_section(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        confirm_sections = extract_function_section(workbench_source, "buildConfirmSections")
+
+        self.assertIn("hasWorkflowRows", confirm_sections)
+        self.assertIn("workflowRowSections", confirm_sections)
+        self.assertIn("return workflowRowSections;", confirm_sections)
+        self.assertIn('pendingAction === "confirm_image_workflow_orders"', confirm_sections)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -598,6 +598,8 @@ def _sanitize_pending_state(intent: str | None, new_state: dict, old_state: dict
                 cleaned["goods_name"] = str(cleaned.get("goods_name") or "").strip()
                 cleaned["color"] = str(cleaned.get("color") or "").strip()
                 cleaned["quantity"] = max(1, _pending_number(cleaned.get("quantity"), 1))
+                if not cleaned["goods_name"]:
+                    continue
                 cleaned_rows.append(cleaned)
                 if cleaned["customer"] and cleaned["customer"] not in customers:
                     customers.append(cleaned["customer"])
@@ -2384,7 +2386,10 @@ def image_upload():
                 "image_path": str(save_path),
             },
         })
-        session.save_turn(f"上传图片：{file.filename}", response_text)
+        upload_user_text = f"上传图片：{file.filename}"
+        if result.get("preview_url"):
+            upload_user_text = f"{upload_user_text}\n{result.get('preview_url')}"
+        session.save_turn(upload_user_text, response_text)
 
         return jsonify({
             "code": 0,

@@ -16,6 +16,7 @@ import type {
   InventoryActionPayload,
   InventoryActionResult,
   InventoryBalanceResult,
+  InventoryCardsResult,
   InventoryLedgerItem,
   ListResult,
   MiniappImageCreatePayload,
@@ -81,6 +82,12 @@ export type InventoryListQuery = {
   warehouseId?: number | string;
   page?: number;
   pageSize?: number;
+};
+
+export type InventoryCardsQuery = {
+  keyword?: string;
+  onlyInStock?: boolean;
+  limit?: number;
 };
 
 export type ProcessOrderListQuery = {
@@ -476,6 +483,14 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   warehouses: () => request<ListResult<Warehouse>>("/api/warehouses"),
+  inventoryCards: (query: InventoryCardsQuery = {}) => {
+    const endpoint = "/api/inventory/cards";
+    const params = new URLSearchParams();
+    params.set("keyword", query.keyword || "");
+    params.set("only_in_stock", query.onlyInStock === false ? "0" : "1");
+    params.set("limit", String(query.limit || 12));
+    return request<InventoryCardsResult>(`${endpoint}?${params.toString()}`);
+  },
   inventoryBalances: (query: InventoryListQuery = {}) =>
     request<InventoryBalanceResult>(`/api/inventory/balances?${listParams(query)}`),
   inventoryLedger: (query: InventoryListQuery = {}) =>

@@ -39,7 +39,14 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { AgentMessageHistoryItem, AgentSessionSnapshot, AnalyticsHotProduct, DashboardSummary } from "@/types";
+import type {
+  AgentMessageHistoryItem,
+  AgentSessionSnapshot,
+  AnalyticsHotProduct,
+  DashboardSummary,
+  InventoryCardsResult,
+  WorkbenchInventoryCard
+} from "@/types";
 
 type ChatRole = "user" | "assistant";
 
@@ -61,6 +68,8 @@ type BusinessHistoryItem = {
   response: string;
   createdAt: string;
   businessKey?: string;
+  inventoryCards?: WorkbenchInventoryCard[];
+  inventorySource?: string;
 };
 
 type WorkbenchResultType = "agent" | "inventory" | "image";
@@ -73,9 +82,16 @@ type WorkbenchResult = {
   summary: string;
   response: string;
   createdAt: string;
+  inventoryCards?: WorkbenchInventoryCard[];
+  inventorySource?: string;
 };
 
 type ResultSource = "text" | "image";
+
+type BusinessHistoryExtras = {
+  inventoryCards?: WorkbenchInventoryCard[];
+  inventorySource?: string;
+};
 
 type PendingField = {
   path: string;
@@ -410,6 +426,19 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
   }
 
   if (kind === "workflow") {
+    const workflowRowSections = arrayConfirmSections(state, ["parsed_list", "orders", "workflow_orders"], "工作流订单", [
+      { paths: ["customer_name", "customer"], label: "客户" },
+      { paths: ["goods_name", "product_name", "name"], label: "商品" },
+      { paths: ["goods_color", "color", "spec"], label: "颜色/规格", required: false },
+      { paths: ["order_quantity", "quantity", "qty"], label: "数量", options: { inputMode: "decimal" as const }, required: false },
+      { paths: ["remark", "note"], label: "备注", required: false }
+    ]);
+    const pendingAction = String(state.pending_action || "");
+    const hasWorkflowRows = workflowRowSections.length > 0;
+    if (pendingAction === "confirm_image_workflow_orders" && hasWorkflowRows) {
+      return workflowRowSections;
+    }
+
     const sections = [
       confirmSection("工作流订单", "确认客户、商品、颜色和制作数量。", [
         firstConfirmField(state, ["customer_name", "customer"], "客户"),
@@ -418,13 +447,7 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
         optionalConfirmField(state, ["order_quantity", "quantity", "qty"], "数量", { inputMode: "decimal" }),
         optionalConfirmField(state, ["remark", "note"], "备注")
       ]),
-      ...arrayConfirmSections(state, ["parsed_list", "orders", "workflow_orders"], "工作流订单", [
-        { paths: ["customer_name", "customer"], label: "客户" },
-        { paths: ["goods_name", "product_name", "name"], label: "商品" },
-        { paths: ["goods_color", "color", "spec"], label: "颜色/规格", required: false },
-        { paths: ["order_quantity", "quantity", "qty"], label: "数量", options: { inputMode: "decimal" as const }, required: false },
-        { paths: ["remark", "note"], label: "备注", required: false }
-      ])
+      ...workflowRowSections
     ].filter(Boolean) as ConfirmSection[];
     return sections.length ? sections : fallbackConfirmSections(state, "工作流订单");
   }
@@ -564,7 +587,12 @@ function resultTypeFor(historyType: BusinessHistoryItem["type"], source: ResultS
   return "agent";
 }
 
-function buildHistoryItem(response: string, session?: AgentSessionSnapshot | null, source: ResultSource = "text"): BusinessHistoryItem {
+function buildHistoryItem(
+  response: string,
+  session?: AgentSessionSnapshot | null,
+  source: ResultSource = "text",
+  extras: BusinessHistoryExtras = {}
+): BusinessHistoryItem {
   const type = inferHistoryType(response, session);
   const firstLine = response.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "已处理";
   const lastOrder = session?.last_order || {};
@@ -578,7 +606,8 @@ function buildHistoryItem(response: string, session?: AgentSessionSnapshot | nul
     label: type === "agent" ? "已回复" : "已处理",
     summary: firstLine,
     response,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    ...extras
   };
 }
 
@@ -590,7 +619,9 @@ function resultFromHistory(item: BusinessHistoryItem): WorkbenchResult {
     label: item.label,
     summary: item.summary,
     response: item.response || item.summary,
-    createdAt: item.createdAt
+    createdAt: item.createdAt,
+    inventoryCards: item.inventoryCards,
+    inventorySource: item.inventorySource
   };
 }
 
@@ -603,6 +634,33 @@ function isImageLine(line: string) {
   if (clean.startsWith("/api/images/file/")) return true;
   if (!clean.startsWith("http://") && !clean.startsWith("https://")) return false;
   return /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(clean);
+}
+
+function inventoryKeywordFromMessage(message: string) {
+  return message
+    .replace(/[，。！？、,!?]/g, " ")
+    .replace(/查一下|看一下|查下|看下|查询|搜索|显示|统计/g, " ")
+    .replace(/库存查询|查询库存|查库存|查仓库|仓库查询|查询仓库|库存|仓库/g, " ")
+    .replace(/百鑫|自己店里|自己店|店里|自己|门店/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shouldLoadInventoryCards(message: string, response: string, session?: AgentSessionSnapshot | null) {
+  return inferHistoryType(response, session) === "inventory" || /库存|仓库/.test(message);
+}
+
+async function loadInventoryCardsForMessage(message: string, response: string, session?: AgentSessionSnapshot | null): Promise<InventoryCardsResult | null> {
+  if (!shouldLoadInventoryCards(message, response, session)) return null;
+  try {
+    return await api.inventoryCards({
+      keyword: inventoryKeywordFromMessage(message),
+      onlyInStock: false,
+      limit: 12
+    });
+  } catch {
+    return null;
+  }
 }
 
 function formatTime(value: string) {
@@ -738,8 +796,13 @@ export function WorkbenchPage() {
     }
   }
 
-  function pushBusinessHistory(response: string, nextSession?: AgentSessionSnapshot | null, source: ResultSource = "text") {
-    const item = buildHistoryItem(response, nextSession, source);
+  function pushBusinessHistory(
+    response: string,
+    nextSession?: AgentSessionSnapshot | null,
+    source: ResultSource = "text",
+    extras: BusinessHistoryExtras = {}
+  ) {
+    const item = buildHistoryItem(response, nextSession, source, extras);
     setBusinessHistory((current) => {
       const rest = item.businessKey ? current.filter((row) => row.businessKey !== item.businessKey) : current;
       return [item, ...rest].slice(0, MAX_BUSINESS_HISTORY);
@@ -758,18 +821,25 @@ export function WorkbenchPage() {
       setConfirmOpen(true);
     } else {
       setConfirmOpen(false);
-      const historyItem = pushBusinessHistory(responseText, nextSession);
+      const inventoryResult = await loadInventoryCardsForMessage(message, responseText, nextSession);
+      const historyItem = pushBusinessHistory(responseText, nextSession, "text", {
+        inventoryCards: inventoryResult?.list || [],
+        inventorySource: inventoryResult?.source
+      });
       openResultDialog(historyItem);
     }
   }
 
   async function uploadImageFile(file: File) {
-    appendMessage("user", `上传图片：${file.name || "图片"}`);
+    const userMessageId = appendMessage("user", `上传图片：${file.name || "图片"}`);
     const pendingId = appendMessage("assistant", "正在识别图片...", "sending");
     const data = await api.uploadAgentImage(file, sessionId);
     const previewUrl = data.result?.preview_url;
     const responseText = data.response || "图片已识别";
     const displayText = previewUrl ? `${responseText}\n${previewUrl}` : responseText;
+    if (previewUrl) {
+      updateMessage(userMessageId, `上传图片：${file.name || "图片"}\n${previewUrl}`);
+    }
     updateMessage(pendingId, displayText);
     const nextSession = data.session || null;
     setSessionSnapshot(nextSession);
@@ -1356,13 +1426,14 @@ function AgentResultDialog({ result }: { result: WorkbenchResult }) {
 }
 
 function InventoryResultDialog({ result }: { result: WorkbenchResult }) {
+  const cards = result.inventoryCards || [];
   return (
     <div className="inventory-result-dialog workbench-result-body">
       <div className="workbench-result-summary">
         <Badge>库存查询结果</Badge>
         <p>{result.summary}</p>
       </div>
-      <ResultLineTable response={result.response} />
+      {cards.length ? <InventoryCardGrid cards={cards} /> : <ResultLineTable response={result.response} />}
     </div>
   );
 }
@@ -1401,6 +1472,76 @@ function ResultLineTable({ response }: { response: string }) {
             <p>暂无结果内容</p>
           </div>
         )}
+      </div>
+    </ScrollArea>
+  );
+}
+
+function inventoryQuantityText(value: unknown) {
+  const numberValue = Number(value || 0);
+  if (!Number.isFinite(numberValue)) return "0";
+  return String(Number(numberValue.toFixed(3))).replace(/\.0+$/, "");
+}
+
+function orderedWarehouseEntries(warehouses: Record<string, number>) {
+  const preferred = ["百鑫仓库", "店里仓库"];
+  const entries = Object.entries(warehouses || {});
+  const ordered = preferred
+    .filter((name) => entries.some(([key]) => key === name))
+    .map((name) => [name, warehouses[name]] as [string, number]);
+  entries.forEach(([name, value]) => {
+    if (!preferred.includes(name)) ordered.push([name, value]);
+  });
+  return ordered;
+}
+
+function InventoryCardGrid({ cards }: { cards: WorkbenchInventoryCard[] }) {
+  return (
+    <ScrollArea className="workbench-result-scroll workbench-inventory-card-scroll">
+      <div className="workbench-inventory-card-grid">
+        {cards.map((card) => {
+          const colors = card.colors || [];
+          return (
+            <section key={`${card.product_id || card.title}-${card.title}`} className="workbench-inventory-card">
+              <header>
+                <div>
+                  <h3>{card.title}</h3>
+                  <span>{colors.length} 个颜色/SKU{card.piece_text ? ` · ${card.piece_text}` : ""}</span>
+                </div>
+                <Badge variant={Number(card.total_stock || 0) > 0 ? "outline" : "secondary"}>
+                  合计 {inventoryQuantityText(card.total_stock)}
+                </Badge>
+              </header>
+              <div className="workbench-inventory-color-list">
+                {colors.length ? (
+                  colors.map((color) => (
+                    <div key={`${card.title}-${color.product_id || color.color}-${color.color}`} className="workbench-inventory-color-row">
+                      <div className="workbench-inventory-color-name">
+                        <strong>{color.color || "默认颜色"}</strong>
+                        <span>合计 {inventoryQuantityText(color.total_stock)}</span>
+                      </div>
+                      <div className="workbench-inventory-warehouse-grid">
+                        {orderedWarehouseEntries(color.warehouses).map(([warehouse, qty]) => (
+                          <div key={`${color.color}-${warehouse}`}>
+                            <span>{warehouse}</span>
+                            <strong>{inventoryQuantityText(qty)}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="workbench-inventory-color-row">
+                    <div className="workbench-inventory-color-name">
+                      <strong>暂无颜色</strong>
+                      <span>没有匹配库存记录</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </ScrollArea>
   );
