@@ -14,7 +14,7 @@ httpx==0.28.1
 requests==2.32.3
 
 Pillow==10.4.0
-RapidOCR==2.0.0
+rapidocr_onnxruntime==1.4.4
 onnxruntime==1.25.0
 openwakeword==0.6.0; platform_system == "Linux"
 opencv-python==4.10.0.84

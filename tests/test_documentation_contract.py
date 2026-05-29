@@ -33,6 +33,13 @@ class DocumentationContractTest(unittest.TestCase):
         self.assertIn('openwakeword==0.6.0; platform_system == "Linux"', lock_source)
         self.assertNotIn(">=", lock_source)
 
+    def test_ocr_runtime_dependency_is_pinned_for_server(self):
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        lock_source = (ROOT / "requirements-lock.txt").read_text(encoding="utf-8")
+
+        self.assertIn("rapidocr_onnxruntime", requirements)
+        self.assertIn("rapidocr_onnxruntime==1.4.4", lock_source)
+
 
 if __name__ == "__main__":
     unittest.main()
