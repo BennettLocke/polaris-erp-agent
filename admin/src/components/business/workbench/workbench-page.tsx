@@ -402,6 +402,7 @@ function fallbackConfirmSections(state: Record<string, unknown>, title = "原始
 function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSection[] {
   const state = isPlainRecord(session?.state) ? session.state : {};
   const kind = confirmKindForSession(session);
+  const pendingAction = String(state.pending_action || "");
   const productConfigs = [
     { paths: ["title", "name", "product_name", "goods_name"], label: "商品" },
     { paths: ["color", "goods_color", "spec"], label: "颜色/规格" },
@@ -412,15 +413,22 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
   ];
 
   if (kind === "sales") {
+    const orderParamsPrefix = pendingAction === "confirm_image_sales" ? "order_params." : "";
+    const salesCustomerPaths = pendingAction === "confirm_image_sales"
+      ? ["order_params.customer", "order_params.customer_name", "customer_name", "customer", "customer_id"]
+      : ["customer_name", "customer", "customer_id"];
+    const salesProductPaths = pendingAction === "confirm_image_sales"
+      ? ["order_params.products", "products", "items", "detail"]
+      : ["products", "items", "detail"];
     const sections = [
       confirmSection("销售单明细", "核对客户、仓库和付款信息。", [
-        firstConfirmField(state, ["customer_name", "customer", "customer_id"], "客户"),
-        optionalConfirmField(state, ["warehouse_name", "warehouse_id"], "仓库"),
-        optionalConfirmField(state, ["pay_status", "payment_status"], "付款状态"),
-        optionalConfirmField(state, ["pay_type", "payment_type"], "付款方式"),
-        optionalConfirmField(state, ["remark", "note"], "备注")
+        firstConfirmField(state, salesCustomerPaths, "客户"),
+        optionalConfirmField(state, [`${orderParamsPrefix}warehouse_name`, `${orderParamsPrefix}warehouse_id`, "warehouse_name", "warehouse_id"], "仓库"),
+        optionalConfirmField(state, [`${orderParamsPrefix}pay_status`, `${orderParamsPrefix}payment_status`, "pay_status", "payment_status"], "付款状态"),
+        optionalConfirmField(state, [`${orderParamsPrefix}pay_type`, `${orderParamsPrefix}payment_type`, "pay_type", "payment_type"], "付款方式"),
+        optionalConfirmField(state, [`${orderParamsPrefix}remark`, `${orderParamsPrefix}note`, "remark", "note"], "备注")
       ]),
-      ...arrayConfirmSections(state, ["products", "items", "detail"], "销售商品", productConfigs)
+      ...arrayConfirmSections(state, salesProductPaths, "销售商品", productConfigs)
     ].filter(Boolean) as ConfirmSection[];
     return sections.length ? sections : fallbackConfirmSections(state, "销售单明细");
   }
@@ -433,7 +441,6 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
       { paths: ["order_quantity", "quantity", "qty"], label: "数量", options: { inputMode: "decimal" as const }, required: false },
       { paths: ["remark", "note"], label: "备注", required: false }
     ]);
-    const pendingAction = String(state.pending_action || "");
     const hasWorkflowRows = workflowRowSections.length > 0;
     if (pendingAction === "confirm_image_workflow_orders" && hasWorkflowRows) {
       return workflowRowSections;

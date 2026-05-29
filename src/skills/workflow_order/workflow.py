@@ -48,7 +48,8 @@ class WorkflowOrderWorkflow(BaseWorkflow):
             if not self._is_confirmation(user_input):
                 return self._reply("已取消创建工作流订单，没有写入系统。")
             create_result = self._create_many(state.get("parsed_list") or [])
-            order_params = state.get("order_params") or {}
+            parsed_list = state.get("parsed_list") or []
+            order_params = self._ensure_order_customer(state.get("order_params") or {}, parsed_list)
             created_ids = create_result.get("workflow_order_ids") or []
             if created_ids:
                 order_params = dict(order_params)
@@ -61,7 +62,7 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                     order_result["question"] = create_result.get("reply", "") + "\n\n" + order_result["question"]
                     return order_result
                 return self._reply(create_result.get("reply", "") + "\n\n" + order_result.get("reply", "开单流程已处理。"))
-            optional_order_params = state.get("optional_order_params") or {}
+            optional_order_params = self._ensure_order_customer(state.get("optional_order_params") or {}, parsed_list)
             if created_ids:
                 optional_order_params = dict(optional_order_params)
                 optional_order_params.setdefault("workflow_order_id", created_ids[0])
@@ -116,6 +117,24 @@ class WorkflowOrderWorkflow(BaseWorkflow):
             )
 
         return self._confirm_create(merged)
+
+    def _ensure_order_customer(self, order_params: dict, parsed_list: list[dict]) -> dict:
+        params = dict(order_params or {})
+        customer = str(params.get("customer") or params.get("customer_name") or "").strip()
+        customers = [
+            str(item.get("customer") or item.get("customer_name") or "").strip()
+            for item in parsed_list or []
+            if isinstance(item, dict) and str(item.get("customer") or item.get("customer_name") or "").strip()
+        ]
+        customers = list(dict.fromkeys(customers))
+        if not customer and customers:
+            customer = customers[0]
+        if customer:
+            params["customer"] = customer
+            params.setdefault("customer_name", customer)
+        if customers and not params.get("customers"):
+            params["customers"] = customers
+        return params
 
     def _ask_delete_confirm(self, user_input: str, params: dict) -> dict:
         workflow_ids = self._extract_delete_ids(user_input, params)

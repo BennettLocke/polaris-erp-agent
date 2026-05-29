@@ -61,8 +61,11 @@ class OrderFlowWorkflow(BaseWorkflow):
         if len(inline_products) > len(params.get("products", []) or []):
             params["products"] = inline_products
         params["products"] = self._enrich_order_products(params.get("products", []), user_input)
-        customer_defaulted = bool(params.get("customer_defaulted")) or not bool(str(params.get("customer") or "").strip())
-        customer_name = normalize_customer_name(params.get("customer") or "散客") or "散客"
+        raw_customer = params.get("customer") or params.get("customer_name") or params.get("company_name") or ""
+        customer_defaulted = bool(params.get("customer_defaulted")) or not bool(str(raw_customer or "").strip())
+        customer_name = normalize_customer_name(raw_customer or "散客") or "散客"
+        params["customer"] = customer_name
+        params.setdefault("customer_name", customer_name)
         products = params.get("products", [])
         warehouse_hint = params.get("warehouse") or self._extract_warehouse_hint(user_input)
         skip_inventory = bool(params.get("skip_inventory")) or self._skip_inventory_check(user_input)

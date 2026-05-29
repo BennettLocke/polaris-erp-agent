@@ -91,6 +91,7 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ask")
         self.assertEqual(captured_params[0]["workflow_order_id"], 456)
+        self.assertEqual(captured_params[0]["customer"], "测试客户")
 
 
 if __name__ == "__main__":

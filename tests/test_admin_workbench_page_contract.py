@@ -263,6 +263,18 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("return workflowRowSections;", confirm_sections)
         self.assertIn('pendingAction === "confirm_image_workflow_orders"', confirm_sections)
 
+    def test_workbench_image_sales_confirm_reads_nested_order_params_customer(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        confirm_sections = extract_function_section(workbench_source, "buildConfirmSections")
+
+        self.assertIn('pendingAction === "confirm_image_sales"', confirm_sections)
+        self.assertIn("orderParamsPrefix", confirm_sections)
+        self.assertIn('"order_params.customer"', confirm_sections)
+        self.assertIn('"order_params.customer_name"', confirm_sections)
+        self.assertIn('["order_params.products", "products", "items", "detail"]', confirm_sections)
+
 
 if __name__ == "__main__":
     unittest.main()
