@@ -6,6 +6,29 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AdminInventoryPageContractTest(unittest.TestCase):
+    def test_inventory_stock_number_click_opens_stocktake_with_original_quantity(self):
+        inventory_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "inventory" / "inventory-page.tsx"
+        ).read_text(encoding="utf-8")
+        style_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        matrix_section = inventory_source.split("function InventoryOverviewMatrix", 1)[1].split("function InventoryBalanceTable", 1)[0]
+        balance_section = inventory_source.split("function InventoryBalanceTable", 1)[1].split("function InventoryLedgerTable", 1)[0]
+        dialog_section = inventory_source.split("function InventoryActionDialog", 1)[1].split("function InventoryRiskConfirmDialog", 1)[0]
+
+        self.assertIn('onAction("stocktake", row)', matrix_section)
+        self.assertIn("disabled={!row || !canStocktakeInventory}", matrix_section)
+        self.assertIn('aria-label={`盘点 ${sku.color} ${warehouse.label} 当前库存 ${quantityText(qty)}`}', matrix_section)
+        self.assertIn("inventory-stocktake-link", balance_section)
+        self.assertIn('onAction("stocktake", row)', balance_section)
+        self.assertIn('disabled={!tracksStock || !canStocktakeInventory}', balance_section)
+        self.assertIn("inventory-stocktake-origin", dialog_section)
+        self.assertIn("原库存", dialog_section)
+        self.assertIn("rowQuantity(selectedRow)", dialog_section)
+        self.assertIn("仓库", dialog_section)
+        self.assertIn("新盘点数量", dialog_section)
+        self.assertIn(".inventory-stocktake-origin", style_source)
+
     def test_inventory_ledger_uses_exact_filters_and_risk_confirmation(self):
         api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
         inventory_page_path = ROOT / "admin" / "src" / "components" / "business" / "inventory" / "inventory-page.tsx"

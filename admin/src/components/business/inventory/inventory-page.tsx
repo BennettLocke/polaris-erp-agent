@@ -651,9 +651,10 @@ function InventoryOverviewMatrix({
                         qty < 0 && "is-negative",
                         qty === 0 && "is-zero"
                       )}
-                      disabled={!row}
+                      disabled={!row || !canStocktakeInventory}
+                      aria-label={`盘点 ${sku.color} ${warehouse.label} 当前库存 ${quantityText(qty)}`}
                       onClick={() => {
-                        if (row) onOpenLedger(row);
+                        if (row) onAction("stocktake", row);
                       }}
                     >
                       <strong>{quantityText(qty)}</strong>
@@ -770,7 +771,23 @@ function InventoryBalanceTable({
                 </div>
               </TableCell>
               <TableCell>{row.warehouse_name || "未记录仓库"}</TableCell>
-              <TableCell className="inventory-number-cell"><strong>{quantityText(row.quantity ?? row.inventory ?? row.stock)}</strong></TableCell>
+              <TableCell className="inventory-number-cell">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    "inventory-stocktake-link",
+                    rowQuantity(row) < 0 && "is-negative",
+                    rowQuantity(row) === 0 && "is-zero"
+                  )}
+                  disabled={!tracksStock || !canStocktakeInventory}
+                  aria-label={`盘点 ${rowTitle(row)} ${rowColor(row)} ${row.warehouse_name || "未记录仓库"} 当前库存 ${quantityText(row.quantity ?? row.inventory ?? row.stock)}`}
+                  onClick={() => onAction("stocktake", row)}
+                >
+                  <strong>{quantityText(row.quantity ?? row.inventory ?? row.stock)}</strong>
+                </Button>
+              </TableCell>
               <TableCell className="inventory-number-cell">{quantityText(row.available_qty ?? row.quantity ?? row.inventory)}</TableCell>
               <TableCell className="inventory-number-cell">{quantityText(row.reserved_qty)}</TableCell>
               <TableCell>{rowUnit(row)}</TableCell>
@@ -1174,6 +1191,8 @@ function InventoryActionDialog({
   }
 
   const selectedSummary = selectedRow ? `${rowTitle(selectedRow)} · ${rowColor(selectedRow)} · ${selectedRow.sku_no || rowProductId(selectedRow)}` : "尚未选择 SKU";
+  const selectedOriginalQty = selectedRow ? rowQuantity(selectedRow) : 0;
+  const selectedWarehouseLabel = selectedRow ? rowWarehouseLabel(selectedRow) : "";
 
   return (
     <>
@@ -1192,6 +1211,18 @@ function InventoryActionDialog({
             <div className="inventory-action-selected">
               <strong>{selectedSummary}</strong>
               <span>{selectedRow ? `单位：${rowUnit(selectedRow)}，当前库存：${quantityText(selectedRow.quantity ?? selectedRow.inventory ?? selectedRow.stock)}` : "从库存行进入会自动带入，右上角动作需要先搜索选择。"}</span>
+              {mode === "stocktake" && selectedRow ? (
+                <div className="inventory-stocktake-origin">
+                  <div>
+                    <span>原库存</span>
+                    <strong>{quantityText(selectedOriginalQty)} {rowUnit(selectedRow)}</strong>
+                  </div>
+                  <div>
+                    <span>仓库</span>
+                    <strong>{selectedWarehouseLabel}</strong>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </Field>
           {!action?.row ? (
@@ -1276,7 +1307,7 @@ function InventoryActionDialog({
             </Field>
           )}
           <Field>
-            <FieldLabel>{mode === "stocktake" ? "实盘库存" : "数量"}</FieldLabel>
+            <FieldLabel>{mode === "stocktake" ? "新盘点数量" : "数量"}</FieldLabel>
             <Input
               value={quantity}
               type="number"

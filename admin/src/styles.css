@@ -5701,6 +5701,28 @@ textarea,
   color: var(--sj-danger-foreground);
 }
 
+.inventory-stocktake-link {
+  height: 30px;
+  justify-content: flex-end;
+  padding-inline: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-stocktake-link strong {
+  color: var(--sj-heading);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.inventory-stocktake-link.is-zero strong,
+.inventory-stocktake-link:disabled strong {
+  color: var(--sj-muted);
+}
+
+.inventory-stocktake-link.is-negative strong {
+  color: var(--sj-danger-foreground);
+}
+
 .inventory-matrix-actions {
   justify-content: flex-end;
   gap: 4px;
@@ -5767,6 +5789,28 @@ textarea,
   border-radius: 8px;
   background: var(--sj-surface-subtle);
   padding: 10px 12px;
+}
+
+.inventory-stocktake-origin {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.inventory-stocktake-origin > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  background: var(--sj-surface);
+  padding: 8px 10px;
+}
+
+.inventory-stocktake-origin strong {
+  color: var(--sj-heading);
+  font-size: 14px;
 }
 
 .inventory-action-search,
