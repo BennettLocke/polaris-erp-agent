@@ -3359,6 +3359,10 @@ nav button:hover {
   overflow: hidden;
 }
 
+.sj-dialog-content.sales-payment-edit-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
 .sales-detail-title-row {
   display: flex;
   align-items: flex-start;
@@ -3378,6 +3382,53 @@ nav button:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.sales-payment-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.sales-payment-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sales-payment-panel-header div {
+  display: grid;
+  gap: 3px;
+}
+
+.sales-payment-panel-header strong {
+  font-size: 15px;
+}
+
+.sales-payment-panel-header span,
+.sales-payment-warning {
+  color: var(--sj-muted);
+  font-size: 12px;
+}
+
+.sales-payment-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sales-payment-edit-grid .full {
+  grid-column: 1 / -1;
+}
+
+.sales-payment-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  background: var(--sj-muted-bg);
 }
 
 .sales-detail-metrics,

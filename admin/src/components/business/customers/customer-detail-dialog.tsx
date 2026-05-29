@@ -42,7 +42,8 @@ import type {
   CustomerSalesItem,
   CustomerSalesSummary,
   SalesCard,
-  SalesDetail
+  SalesDetail,
+  SalesPaymentUpdatePayload
 } from "@/types";
 import { CustomerBalanceActionDialog } from "./customer-balance-action-dialog";
 import { CustomerFormDialog } from "./customer-form-dialog";
@@ -273,6 +274,26 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
   function previewSales(id: number) {
     if (!id) return;
     window.open(`/api/sales/${encodeURIComponent(id)}/print-html?auto=0`, "_blank", "noopener");
+  }
+
+  async function updateSalesPayment(id: number, payload: SalesPaymentUpdatePayload) {
+    if (!id) return;
+    setBusySalesId(id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.updateSalesPayment(id, payload);
+      const paymentText = [result.pay_status_text, result.pay_type_text].filter(Boolean).join(" / ") || "已更新";
+      setNotice(`销售单收款方式已更新：${paymentText}`);
+      setDetail(await api.salesDetail(id));
+      await loadDetail(period, month, selected, salesPage, salesPayStatus);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "收款方式更新失败");
+      throw err;
+    } finally {
+      setBusySalesId(null);
+    }
   }
 
   async function confirmDeleteSales() {
@@ -580,6 +601,7 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
           onClose={() => setDetail(null)}
           onPrint={(id) => void printSales(id)}
           onPreview={previewSales}
+          onUpdatePayment={updateSalesPayment}
           onDelete={(order) => setDeleteTarget(order)}
         />
         <SalesDeleteDialog

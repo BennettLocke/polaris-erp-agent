@@ -40,6 +40,7 @@ import type {
   SalesDetail,
   SalesOrderPayload,
   SalesOrderResult,
+  SalesPaymentUpdatePayload,
   SalesPrintTask,
   SalesProduct,
   StockDocumentItem,
@@ -305,6 +306,19 @@ export const api = {
     return request<ListResult<SalesCard>>(`/api/sales/cards?${params.toString()}`);
   },
   salesDetail: (id: number) => request<SalesDetail>(`/api/sales/${id}/detail`),
+  updateSalesPayment: (id: number, payload: SalesPaymentUpdatePayload) =>
+    request<{
+      id: number;
+      sales_id?: number;
+      pay_status: string;
+      pay_status_text: string;
+      pay_type: string;
+      pay_type_text: string;
+      balance_action?: string;
+    }>(`/api/sales/${id}/payment`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
   searchProductsForSales: (keyword: string, pageSize = 20) =>
     request<ListResult<SalesProduct>>(
       `/api/product/list?keyword=${encodeURIComponent(keyword)}&page=1&page_size=${pageSize}&group=1`

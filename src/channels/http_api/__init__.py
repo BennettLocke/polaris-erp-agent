@@ -360,6 +360,7 @@ API_PERMISSION_RULES = [
     ({"POST", "PATCH"}, re.compile(r"^/api/users/\d+$"), "设置"),
     ({"POST"}, re.compile(r"^/api/sales/add$"), "开单"),
     ({"DELETE"}, re.compile(r"^/api/sales/\d+$"), "删单"),
+    ({"PATCH"}, re.compile(r"^/api/sales/\d+/payment$"), "调余额"),
     ({"POST"}, re.compile(r"^/api/sales/\d+/print-task$"), "打印"),
     ({"GET"}, re.compile(r"^/api/sales/\d+/print-html$"), "打印"),
     ({"POST"}, re.compile(r"^/api/inventory/purchase$"), "调库存"),
@@ -2862,6 +2863,34 @@ def sales_detail_api(sales_id: int):
         return jsonify(result), status_code
     except Exception as e:
         logger.error(f"sales detail failed: sales_id={sales_id}, error={e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/sales/<int:sales_id>/payment", methods=["PATCH"])
+def sales_update_payment_api(sales_id: int):
+    """Update a sales order payment state through the sales service boundary."""
+    if sales_id <= 0:
+        return jsonify({"code": 400, "msg": "sales_id is required"}), 400
+    payload = request.get_json(silent=True) or {}
+    try:
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_sales_service().update_payment(
+            sales_id,
+            pay_status=payload.get("pay_status") or "",
+            pay_type=payload.get("pay_type") or "",
+            note=payload.get("note") or "",
+            operator_user_id=operator_user_id,
+        )
+        if isinstance(result, dict) and result.get("code") not in (None, 0):
+            status_code = 404 if int(result.get("code") or 0) == 404 else 400
+            return jsonify(result), status_code
+        return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
+    except DBError as e:
+        logger.warning(f"sales payment update rejected: sales_id={sales_id}, error={e}")
+        return jsonify({"code": 400, "msg": str(e)}), 400
+    except Exception as e:
+        logger.error(f"sales payment update failed: sales_id={sales_id}, error={e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 

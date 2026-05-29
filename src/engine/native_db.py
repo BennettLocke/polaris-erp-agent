@@ -6700,6 +6700,177 @@ class NativeDBClient:
                 )
         return {"code": 0, "data": {"id": sales_id, "sales_id": sales_id, "sales_no": sales_no}}
 
+    def update_sales_order_payment(
+        self,
+        sales_id: int,
+        *,
+        pay_status: str,
+        pay_type: str = "",
+        note: str = "",
+        operator_user_id: Any = None,
+    ) -> dict:
+        self._ensure_operator_columns()
+        self._ensure_sales_delete_columns()
+        operator_user_id = self._operator_user_id(operator_user_id)
+        now = _now()
+        allowed_status = {"paid", "unpaid", "monthly", "partial"}
+        allowed_type = {"wechat", "cash", "balance", "monthly", "account", "bank", "alipay", ""}
+        clean_pay_status = str(pay_status or "").strip()
+        clean_pay_type = str(pay_type or "").strip()
+        clean_note = str(note or "").strip()[:200]
+        if clean_pay_status not in allowed_status:
+            return {"code": 400, "msg": "结款状态不正确"}
+        if clean_pay_type not in allowed_type:
+            return {"code": 400, "msg": "收款方式不正确"}
+        if clean_pay_status == "monthly":
+            clean_pay_type = "monthly"
+        elif clean_pay_status == "unpaid":
+            clean_pay_type = ""
+        elif clean_pay_status == "paid" and not clean_pay_type:
+            clean_pay_type = "wechat"
+        elif clean_pay_status == "paid" and clean_pay_type == "monthly":
+            clean_pay_type = "wechat"
+
+        with self.transaction() as cursor:
+            cursor.execute("SELECT * FROM sales_order WHERE id=%s FOR UPDATE", (int(sales_id),))
+            sale = cursor.fetchone()
+            if not sale:
+                return {"code": 404, "msg": "销售单不存在"}
+            if sale.get("status") in ("canceled", "deleted"):
+                return {"code": 400, "msg": "已取消或已删除的销售单不能修改收款方式"}
+            if sale.get("settlement_ledger_id") and not (
+                sale.get("pay_status") == "paid" and sale.get("pay_type") == "balance"
+            ):
+                return {"code": 400, "msg": "已参与月结结款的销售单不能单独修改收款方式"}
+
+            customer_id = int(sale.get("customer_id") or 0)
+            sales_no = str(sale.get("sales_no") or sales_id)
+            sales_at = str(sale.get("sales_at") or now)
+            amount = Decimal(str(sale.get("receivable_amount") or "0")).quantize(Decimal("0.01"))
+            old_pay_status = str(sale.get("pay_status") or "")
+            old_pay_type = str(sale.get("pay_type") or "")
+            old_is_balance_paid = old_pay_status == "paid" and old_pay_type == "balance"
+            new_is_balance_paid = clean_pay_status == "paid" and clean_pay_type == "balance"
+
+            balance_action = ""
+            if new_is_balance_paid and not old_is_balance_paid and amount > 0:
+                cursor.execute("SELECT id FROM party WHERE id=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE", (customer_id,))
+                if not cursor.fetchone():
+                    raise DBError("客户不存在")
+                cursor.execute(
+                    """
+                    SELECT
+                      COALESCE((
+                        SELECT SUM(balance_delta)
+                        FROM customer_balance_ledger
+                        WHERE customer_id=%s
+                      ), 0) AS wallet_amount,
+                      COALESCE((
+                        SELECT SUM(receivable_amount)
+                        FROM sales_order
+                        WHERE customer_id=%s
+                          AND id<>%s
+                          AND status NOT IN ('canceled', 'deleted')
+                          AND pay_status IN ('unpaid', 'monthly', 'partial')
+                      ), 0) AS debt_amount
+                    """,
+                    (customer_id, customer_id, int(sales_id)),
+                )
+                wallet_row = cursor.fetchone() or {}
+                wallet_amount = Decimal(str(wallet_row.get("wallet_amount") or "0")).quantize(Decimal("0.01"))
+                debt_amount = Decimal(str(wallet_row.get("debt_amount") or "0")).quantize(Decimal("0.01"))
+                available_amount = wallet_amount - debt_amount
+                if available_amount < amount:
+                    raise DBError(f"客户余额不足，当前可用余额{_money(available_amount)}")
+                ledger_note = f"销售单 {sales_no} 改为余额付款"
+                if clean_note:
+                    ledger_note = f"{ledger_note}；{clean_note}"
+                cursor.execute(
+                    """
+                    INSERT INTO customer_balance_ledger
+                        (ledger_no, customer_id, entry_type, pay_type, amount, applied_amount,
+                         balance_delta, related_month, note, created_by_user_id, created_at)
+                    VALUES (%s, %s, 'balance_pay', 'balance', %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        self._ledger_no("CB"),
+                        customer_id,
+                        amount,
+                        amount,
+                        -amount,
+                        sales_at[:7],
+                        ledger_note[:500],
+                        operator_user_id,
+                        now,
+                    ),
+                )
+                balance_action = "balance_pay"
+            elif old_is_balance_paid and not new_is_balance_paid and amount > 0:
+                cursor.execute("SELECT id FROM party WHERE id=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE", (customer_id,))
+                if not cursor.fetchone():
+                    raise DBError("客户不存在")
+                ledger_note = f"销售单 {sales_no} 收款方式改出余额，退回余额"
+                if clean_note:
+                    ledger_note = f"{ledger_note}；{clean_note}"
+                cursor.execute(
+                    """
+                    INSERT INTO customer_balance_ledger
+                        (ledger_no, customer_id, entry_type, pay_type, amount, applied_amount,
+                         balance_delta, related_month, note, created_by_user_id, created_at)
+                    VALUES (%s, %s, 'balance_refund', 'balance', %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        self._ledger_no("CB"),
+                        customer_id,
+                        amount,
+                        amount,
+                        amount,
+                        sales_at[:7],
+                        ledger_note[:500],
+                        operator_user_id,
+                        now,
+                    ),
+                )
+                balance_action = "balance_refund"
+
+            old_payment_text = " / ".join(
+                text for text in [_pay_status_text(old_pay_status), _pay_type_text(old_pay_type)] if text
+            )
+            new_payment_text = " / ".join(
+                text for text in [_pay_status_text(clean_pay_status), _pay_type_text(clean_pay_type)] if text
+            )
+            payment_note = f"{now} 收款修改：{old_payment_text or '-'} -> {new_payment_text or '-'}"
+            if clean_note:
+                payment_note = f"{payment_note}；{clean_note}"
+            cursor.execute(
+                """
+                UPDATE sales_order
+                SET pay_status=%s,
+                    pay_type=%s,
+                    settlement_ledger_id=NULL,
+                    settled_at=NULL,
+                    note=CASE
+                        WHEN note IS NULL OR note='' THEN %s
+                        ELSE CONCAT(note, '\n', %s)
+                    END,
+                    updated_at=%s
+                WHERE id=%s
+                """,
+                (clean_pay_status, clean_pay_type, payment_note, payment_note, now, int(sales_id)),
+            )
+        return {
+            "code": 0,
+            "data": {
+                "id": int(sales_id),
+                "sales_id": int(sales_id),
+                "pay_status": clean_pay_status,
+                "pay_status_text": _pay_status_text(clean_pay_status),
+                "pay_type": clean_pay_type,
+                "pay_type_text": _pay_type_text(clean_pay_type),
+                "balance_action": balance_action,
+            },
+        }
+
     def delete_sales_order(self, sales_id: int, operator_user_id: Any = None) -> dict:
         self._ensure_operator_columns()
         self._ensure_sales_delete_columns()

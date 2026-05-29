@@ -543,6 +543,12 @@ export type SalesOrderPayload = {
   products: SalesOrderLinePayload[];
 };
 
+export type SalesPaymentUpdatePayload = {
+  pay_status: "paid" | "monthly" | "unpaid" | "partial";
+  pay_type?: string;
+  note?: string;
+};
+
 export type SalesOrderResult = {
   id?: number;
   sales_id?: number;

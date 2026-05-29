@@ -97,6 +97,23 @@ class SalesService(BusinessService):
     def delete_order(self, sales_id: int, *, operator_user_id: Any = None) -> dict:
         return self.db.delete_sales_order(sales_id, operator_user_id=operator_user_id)
 
+    def update_payment(
+        self,
+        sales_id: int,
+        *,
+        pay_status: str,
+        pay_type: str = "",
+        note: str = "",
+        operator_user_id: Any = None,
+    ) -> dict:
+        return self.db.update_sales_order_payment(
+            sales_id,
+            pay_status=pay_status,
+            pay_type=pay_type,
+            note=note,
+            operator_user_id=operator_user_id,
+        )
+
     def detail(self, sales_id: int) -> dict:
         return self.db.sales_detail(sales_id)
 

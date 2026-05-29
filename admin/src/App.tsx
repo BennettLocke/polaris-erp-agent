@@ -86,6 +86,7 @@ import type {
   SalesCard,
   SalesDetail,
   SalesOrderPayload,
+  SalesPaymentUpdatePayload,
   SalesProduct,
   Warehouse
 } from "./types";
@@ -807,6 +808,25 @@ function SalesPage() {
     setDeleteTarget(order);
   }
 
+  async function handleUpdatePayment(id: number, payload: SalesPaymentUpdatePayload) {
+    if (!id) return;
+    setError("");
+    setNotice("");
+    setBusySalesId(id);
+    try {
+      const result = await api.updateSalesPayment(id, payload);
+      const paymentText = [result.pay_status_text, result.pay_type_text].filter(Boolean).join(" / ") || "已更新";
+      setNotice(`销售单收款方式已更新：${paymentText}`);
+      setDetail(await api.salesDetail(id));
+      await load(page, filters);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "收款方式更新失败");
+      throw err;
+    } finally {
+      setBusySalesId(null);
+    }
+  }
+
   async function confirmDeleteSales() {
     const id = Number(deleteTarget?.id || deleteTarget?.sales_id || 0);
     if (!id) return;
@@ -908,6 +928,7 @@ function SalesPage() {
         busySalesId={busySalesId}
         onPrint={handlePrint}
         onPreview={handlePreview}
+        onUpdatePayment={handleUpdatePayment}
         onDelete={handleDelete}
       />
       <SalesDeleteDialog
