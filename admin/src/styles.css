@@ -1606,7 +1606,7 @@ nav button:hover {
 
 .products-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 560px);
+  grid-template-columns: minmax(0, 1fr) minmax(480px, 680px);
   align-items: end;
   gap: 16px;
 }
@@ -1631,7 +1631,7 @@ nav button:hover {
 
 .products-search-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 8px;
 }

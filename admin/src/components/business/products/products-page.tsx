@@ -546,6 +546,33 @@ function productSpecRows(product: ProductItem | null, units: ProductUnit[]) {
   }];
 }
 
+function createProductDraft(
+  categories: ProductCategory[],
+  productType: string,
+  categoryId: string | number
+): ProductItem {
+  const cleanCategoryId = Number(categoryId || 0);
+  const selectedCategory = categories.find((category) => Number(category.id || 0) === cleanCategoryId);
+  const draftType = productType || (selectedCategory ? categoryProductType(selectedCategory) : "gift_box");
+  return {
+    title: "",
+    name: "",
+    product_type: draftType,
+    product_category_ids: cleanCategoryId ? [cleanCategoryId] : [],
+    is_stock_item: 1,
+    is_listed: 0,
+    system_goods_is_shelves: 0,
+    product_group_data: [
+      {
+        spec: "默认颜色",
+        color: "默认颜色",
+        is_stock_item: 1,
+        unit_id: 1
+      }
+    ]
+  } as ProductItem;
+}
+
 function uploadedImageUrl(result: { url?: string; full_url?: string; images?: string; path?: string } | string) {
   if (typeof result === "string") return result;
   return result.url || result.full_url || result.images || result.path || "";
@@ -1099,6 +1126,7 @@ function ProductEditorDialog({
   const [cropSaving, setCropSaving] = useState(false);
   const [cropError, setCropError] = useState("");
   const productId = Number(product?.id || product?.product_id || 0);
+  const isCreate = open && !productId;
   const forcedNonStock = productEditorForcedNonStock(productType, categories, categoryIds);
   const effectiveStockItem = forcedNonStock ? false : stockItem;
 
@@ -1235,7 +1263,7 @@ function ProductEditorDialog({
       };
     });
     return {
-      id: productId || undefined,
+      id: isCreate ? undefined : productId || undefined,
       title: title.trim(),
       product_type: productType,
       product_category_id: categoryIds,
@@ -1281,8 +1309,8 @@ function ProductEditorDialog({
           <DialogHeader>
             <div className="product-editor-header">
               <div>
-                <DialogTitle>编辑商品</DialogTitle>
-                <DialogDescription className="sj-sr-only">编辑商品基础资料、分类、规格颜色、图片和上架起订规则。</DialogDescription>
+                <DialogTitle>{isCreate ? "新增商品" : "编辑商品"}</DialogTitle>
+                <DialogDescription className="sj-sr-only">维护商品基础资料、分类、规格颜色、图片和上架起订规则。</DialogDescription>
                 <div className="product-editor-subtitle">
                   <Badge variant="secondary">{productStatusName(statuses, status)}</Badge>
                   <span>{title || "未命名商品"}</span>
@@ -1615,7 +1643,8 @@ function ProductToolbar({
   loading,
   onKeywordChange,
   onSearch,
-  onReset
+  onReset,
+  onCreate
 }: {
   keyword: string;
   page: number;
@@ -1626,6 +1655,7 @@ function ProductToolbar({
   onKeywordChange: (value: string) => void;
   onSearch: () => void;
   onReset: () => void;
+  onCreate: () => void;
 }) {
   return (
     <div className="products-toolbar">
@@ -1648,6 +1678,10 @@ function ProductToolbar({
         <Button type="button" variant="ghost" disabled={loading} onClick={onReset}>
           <RefreshCw data-icon="inline-start" />
           重置
+        </Button>
+        <Button type="button" disabled={loading} onClick={onCreate}>
+          <Plus data-icon="inline-start" />
+          新增商品
         </Button>
       </form>
     </div>
@@ -2187,6 +2221,10 @@ export function ProductsPage() {
         onKeywordChange={setKeyword}
         onSearch={() => void loadProducts(1, keyword, categoryId, productType, listedState, stockMode, quality)}
         onReset={resetFilters}
+        onCreate={() => {
+          setNotice("");
+          setEditingProduct(createProductDraft(categories, productType, categoryId));
+        }}
       />
       <ProductCategoryTabs
         categories={categories}

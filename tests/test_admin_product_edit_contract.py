@@ -6,6 +6,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AdminProductEditContractTest(unittest.TestCase):
+    def test_product_page_has_create_product_entrypoint(self):
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+        toolbar_source = product_source.split("function ProductToolbar", 1)[1].split(
+            "function ProductQuickFilters", 1
+        )[0]
+        editor_source = product_source.split("function ProductEditorDialog", 1)[1].split(
+            "function ProductToolbar", 1
+        )[0]
+
+        self.assertIn("createProductDraft", product_source)
+        self.assertIn("onCreate", toolbar_source)
+        self.assertIn("新增商品", toolbar_source)
+        self.assertIn("<Plus data-icon=\"inline-start\" />", toolbar_source)
+        self.assertIn("const isCreate = open && !productId", editor_source)
+        self.assertIn('{isCreate ? "新增商品" : "编辑商品"}', editor_source)
+        self.assertIn("id: isCreate ? undefined : productId || undefined", editor_source)
+
     def test_react_product_editor_uses_product_service_contract(self):
         api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
         app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")
