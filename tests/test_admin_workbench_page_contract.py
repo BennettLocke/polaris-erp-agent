@@ -97,6 +97,17 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("workbench-hot-products", workbench_source)
         self.assertIn(".workbench-hot-products", styles_source)
 
+    def test_workbench_only_renders_real_image_urls_as_images(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        image_line_section = extract_function_section(workbench_source, "isImageLine")
+
+        self.assertIn('if (clean.startsWith("/api/images/file/")) return true;', image_line_section)
+        self.assertIn('if (!clean.startsWith("http://") && !clean.startsWith("https://")) return false;', image_line_section)
+        self.assertIn('/\\.(png|jpe?g|webp|gif)(\\?.*)?$/i.test(clean)', image_line_section)
+        self.assertNotIn('return clean.startsWith("/api/images/file/") || /\\.(png|jpe?g|webp|gif)(\\?.*)?$/i.test(clean);', image_line_section)
+
     def test_workbench_uses_dialog_input_and_agent_sections(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

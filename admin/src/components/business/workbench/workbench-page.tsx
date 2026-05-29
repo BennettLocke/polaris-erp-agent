@@ -600,7 +600,9 @@ function shouldOpenResultDialog(item: BusinessHistoryItem) {
 
 function isImageLine(line: string) {
   const clean = line.trim();
-  return clean.startsWith("/api/images/file/") || /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(clean);
+  if (clean.startsWith("/api/images/file/")) return true;
+  if (!clean.startsWith("http://") && !clean.startsWith("https://")) return false;
+  return /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(clean);
 }
 
 function formatTime(value: string) {
