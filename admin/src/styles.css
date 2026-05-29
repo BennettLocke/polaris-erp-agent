@@ -2567,13 +2567,24 @@ nav button:hover {
   object-fit: cover;
 }
 
-.edit-image-tile .sj-button {
+.edit-image-tile-actions {
   position: absolute;
   top: 6px;
   right: 6px;
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+}
+
+.edit-image-tile-actions .sj-button {
+  position: static;
   color: #ffffff;
   background: rgba(24, 24, 27, 0.82);
   border-color: transparent;
+}
+
+.edit-image-tile-actions .sj-button:disabled {
+  opacity: 0.45;
 }
 
 .edit-image-tile span {
@@ -2688,12 +2699,16 @@ nav button:hover {
 }
 
 .spec-table-image .edit-image-tile .sj-button {
-  top: 3px;
-  right: 3px;
   width: 18px;
   min-height: 18px;
   height: 18px;
   border-radius: 999px;
+}
+
+.spec-table-image .edit-image-tile-actions {
+  top: 3px;
+  right: 3px;
+  gap: 2px;
 }
 
 .spec-table-image .edit-image-tile .sj-button svg {
@@ -2778,6 +2793,24 @@ nav button:hover {
   color: #71717a;
   font-size: 12px;
   font-style: normal;
+}
+
+.asset-picker-card--selected {
+  border-color: var(--sj-foreground);
+  box-shadow: inset 0 0 0 1px var(--sj-foreground);
+}
+
+.asset-picker-footer {
+  align-items: center;
+  border-top: 1px solid var(--sj-border);
+  padding-top: 12px;
+}
+
+.asset-picker-footer span {
+  margin-right: auto;
+  color: var(--sj-muted);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .sales-new-layout {
@@ -6385,6 +6418,13 @@ textarea,
 
 .asset-picker-dialog .asset-picker-card:hover {
   background: var(--sj-soft);
+}
+
+.asset-picker-dialog .asset-picker-card--selected,
+.asset-picker-dialog .asset-picker-card--selected:hover {
+  border-color: var(--sj-foreground);
+  background: var(--sj-soft);
+  box-shadow: inset 0 0 0 1px var(--sj-foreground);
 }
 
 .square-crop-dialog {

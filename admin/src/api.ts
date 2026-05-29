@@ -413,12 +413,13 @@ export const api = {
     request<{ id: number; affected?: number }>(`/api/miniapp/image-config/assets/${id}`, {
       method: "DELETE"
     }),
-  productMedia: (options: { page?: number; pageSize?: number; mediaType?: string; productId?: number } = {}) => {
+  productMedia: (options: { page?: number; pageSize?: number; mediaType?: string; productId?: number; includePending?: boolean } = {}) => {
     const params = new URLSearchParams();
     params.set("page", String(options.page || 1));
     params.set("page_size", String(options.pageSize || 24));
     if (options.mediaType) params.set("media_type", options.mediaType);
     if (options.productId) params.set("product_id", String(options.productId));
+    if (options.includePending !== undefined) params.set("include_pending", options.includePending ? "1" : "0");
     return request<ListResult<ProductMediaAsset>>(`/api/product/media?${params.toString()}`);
   },
   deleteProductMedia: (id: number) =>

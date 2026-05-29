@@ -4299,6 +4299,12 @@ def product_media_api():
         limit = max(1, min(request.args.get("limit", 500, type=int), 6000))
         fetch_limit = 6000 if has_page_size else limit
         media_type = (request.args.get("media_type") or "").strip()
+        include_pending_arg = request.args.get("include_pending")
+        include_pending = (
+            str(include_pending_arg or "").strip().lower() in {"1", "true", "yes", "on"}
+            if include_pending_arg is not None
+            else not bool(product_id)
+        )
         if product_id:
             product = get_product_service().info(product_id)
             if not product:
@@ -4307,11 +4313,11 @@ def product_media_api():
                 spu_id=int(product.get("spu_id") or 0),
                 sku_ids=[int(product.get("id") or product_id)],
                 media_type=media_type,
-                include_pending=True,
+                include_pending=include_pending,
                 limit=fetch_limit,
             )
         else:
-            rows = get_product_service().media_assets(media_type=media_type, include_pending=True, limit=fetch_limit)
+            rows = get_product_service().media_assets(media_type=media_type, include_pending=include_pending, limit=fetch_limit)
         total = len(rows)
         if has_page_size:
             start = (page - 1) * page_size

@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
-import { ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 
 import { ApiError, api } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -648,13 +648,61 @@ function currentEditorAssets(
   return uniqueAssets(current.concat(mediaAssets.filter((asset) => String(asset.media_type || "") !== "pending")));
 }
 
-function ImageTile({ url, label, onRemove }: { url: string; label?: string; onRemove: () => void }) {
+function isPendingAsset(asset: ProductMediaAsset) {
+  return String(asset.media_type || "") === "pending" && !asset.sku_id && !asset.spu_id;
+}
+
+function uploadedProductAsset(url: string, index: number): ProductMediaAsset {
+  return {
+    id: null,
+    sku_id: null,
+    spu_id: null,
+    media_type: "pending",
+    media_type_text: "未绑定",
+    url,
+    product_name: `新上传图片 ${index + 1}`,
+    binding_text: "刚上传，保存商品后会绑定",
+    asset_group_key: "pending",
+    asset_group_text: "未绑定",
+    source_text: "刚上传"
+  };
+}
+
+function ImageTile({
+  url,
+  label,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+  moveUpDisabled,
+  moveDownDisabled
+}: {
+  url: string;
+  label?: string;
+  onRemove: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  moveUpDisabled?: boolean;
+  moveDownDisabled?: boolean;
+}) {
   return (
     <div className="edit-image-tile">
       <img src={url} alt={label || "商品图片"} loading="lazy" />
-      <Button variant="secondary" size="icon-xs" aria-label="移除图片" onClick={onRemove}>
-        <X data-icon="inline-start" />
-      </Button>
+      <div className="edit-image-tile-actions">
+        {onMoveUp ? (
+          <Button variant="secondary" size="icon-xs" aria-label="详情图上移" disabled={moveUpDisabled} onClick={onMoveUp}>
+            <ArrowUp data-icon="inline-start" />
+          </Button>
+        ) : null}
+        {onMoveDown ? (
+          <Button variant="secondary" size="icon-xs" aria-label="详情图下移" disabled={moveDownDisabled} onClick={onMoveDown}>
+            <ArrowDown data-icon="inline-start" />
+          </Button>
+        ) : null}
+        <Button variant="secondary" size="icon-xs" aria-label="移除图片" onClick={onRemove}>
+          <X data-icon="inline-start" />
+        </Button>
+      </div>
       {label ? <span>{label}</span> : null}
     </div>
   );
@@ -665,21 +713,31 @@ function ImageAssetPickerDialog({
   productId,
   currentAssets,
   onClose,
-  onSelect
+  onSelect,
+  selectionMode = "single"
 }: {
   open: boolean;
   productId: number;
   currentAssets: ProductMediaAsset[];
   onClose: () => void;
-  onSelect: (url: string) => void;
+  onSelect: (urls: string[]) => void;
+  selectionMode?: "single" | "multiple";
 }) {
   const [tab, setTab] = useState<"pending" | "product_assets" | "all">("pending");
   const [keyword, setKeyword] = useState("");
   const [assets, setAssets] = useState<ProductMediaAsset[]>([]);
+  const [uploadedAssets, setUploadedAssets] = useState<ProductMediaAsset[]>([]);
+  const [selectedAssetUrls, setSelectedAssetUrls] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   async function loadAssets(nextTab = tab) {
+    if (nextTab === "product_assets" && !productId) {
+      setLoading(false);
+      setError("");
+      setAssets([]);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -687,7 +745,8 @@ function ImageAssetPickerDialog({
         page: 1,
         pageSize: 80,
         mediaType: nextTab === "pending" ? "pending" : "",
-        productId: nextTab === "product_assets" && productId ? productId : undefined
+        productId: nextTab === "product_assets" && productId ? productId : undefined,
+        ...(nextTab === "product_assets" ? { includePending: false } : { includePending: true })
       });
       setAssets(data.list || []);
     } catch (err) {
@@ -701,6 +760,8 @@ function ImageAssetPickerDialog({
     if (!open) return;
     setTab(productId || currentAssets.length ? "product_assets" : "pending");
     setKeyword("");
+    setSelectedAssetUrls([]);
+    setUploadedAssets([]);
   }, [open, productId, currentAssets.length]);
 
   useEffect(() => {
@@ -708,9 +769,24 @@ function ImageAssetPickerDialog({
     void loadAssets(tab);
   }, [open, tab, productId]);
 
+  function toggleSelectedAsset(url: string) {
+    if (!url) return;
+    setSelectedAssetUrls((prev) => prev.includes(url) ? prev.filter((item) => item !== url) : prev.concat(url));
+  }
+
+  function confirmSelectedAssets() {
+    if (!selectedAssetUrls.length) return;
+    onSelect(selectedAssetUrls);
+    onClose();
+  }
+
   function pick(url: string) {
     if (!url) return;
-    onSelect(url);
+    if (selectionMode === "multiple") {
+      toggleSelectedAsset(url);
+      return;
+    }
+    onSelect([url]);
     onClose();
   }
 
@@ -718,17 +794,29 @@ function ImageAssetPickerDialog({
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
+    input.multiple = true;
     input.addEventListener("change", async () => {
-      const file = input.files?.[0];
+      const files = Array.from(input.files || []).filter((file) => file.type.startsWith("image/"));
       input.remove();
-      if (!file) return;
+      if (!files.length) return;
       setLoading(true);
       setError("");
       try {
-        const result = await api.uploadProductImage(file);
-        const url = uploadedImageUrl(result);
-        if (!url) throw new Error("上传成功但没有返回图片地址");
-        pick(url);
+        const uploadedUrls: string[] = [];
+        for (const file of files) {
+          const result = await api.uploadProductImage(file);
+          const url = uploadedImageUrl(result);
+          if (url) uploadedUrls.push(url);
+        }
+        if (!uploadedUrls.length) throw new Error("上传成功但没有返回图片地址");
+        const nextAssets = uploadedUrls.map(uploadedProductAsset);
+        setUploadedAssets((prev) => uniqueAssets(nextAssets.concat(prev)));
+        if (selectionMode === "multiple") {
+          setSelectedAssetUrls((prev) => Array.from(new Set(prev.concat(uploadedUrls))));
+        } else {
+          onSelect([uploadedUrls[0]]);
+          onClose();
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "图片上传失败");
       } finally {
@@ -739,7 +827,11 @@ function ImageAssetPickerDialog({
     input.click();
   }
 
-  const source = tab === "product_assets" ? uniqueAssets(currentAssets.concat(assets)) : assets;
+  const source = tab === "product_assets"
+    ? uniqueAssets(currentAssets.concat(assets.filter((asset) => !isPendingAsset(asset))).concat(uploadedAssets))
+    : tab === "pending"
+      ? uniqueAssets(assets.concat(uploadedAssets).filter(isPendingAsset))
+      : uniqueAssets(assets.concat(uploadedAssets));
   const filtered = keyword.trim()
     ? source.filter((asset) => imageAssetKeyword(asset).includes(keyword.trim().toLowerCase()))
     : source;
@@ -789,9 +881,10 @@ function ImageAssetPickerDialog({
             <div className="asset-picker-grid">
               {filtered.slice(0, 80).map((asset, index) => (
                 <Button
-                  className="asset-picker-card"
+                  className={cn("asset-picker-card", selectedAssetUrls.includes(asset.url) && "asset-picker-card--selected")}
                   variant="outline"
                   key={`${asset.url}-${index}`}
+                  aria-pressed={selectionMode === "multiple" ? selectedAssetUrls.includes(asset.url) : undefined}
                   onClick={() => pick(asset.url)}
                 >
                   <img src={asset.url} alt={assetTitle(asset)} loading="lazy" />
@@ -808,9 +901,21 @@ function ImageAssetPickerDialog({
           <Empty className="products-empty">
             <EmptyHeader>
               <EmptyTitle>暂无可选图片</EmptyTitle>
-              <EmptyDescription>可以切换分组，或者上传新图片后直接选择。</EmptyDescription>
+              <EmptyDescription>可以切换分组，或者上传新图片后在这里选择。</EmptyDescription>
             </EmptyHeader>
           </Empty>
+        ) : null}
+
+        {selectionMode === "multiple" ? (
+          <DialogFooter className="asset-picker-footer">
+            <span>已选 {selectedAssetUrls.length} 张</span>
+            <Button type="button" variant="outline" disabled={!selectedAssetUrls.length || loading} onClick={() => setSelectedAssetUrls([])}>
+              清空
+            </Button>
+            <Button type="button" disabled={!selectedAssetUrls.length || loading} onClick={confirmSelectedAssets}>
+              确认添加
+            </Button>
+          </DialogFooter>
         ) : null}
       </DialogContent>
     </Dialog>
@@ -1197,20 +1302,32 @@ function ProductEditorDialog({
     if (target.type === "main") {
       setMainImages(url ? [url] : []);
     } else if (target.type === "detail") {
-      setDetailImages((prev) => prev.concat(url));
+      setDetailImages((prev) => url && !prev.includes(url) ? prev.concat(url) : prev);
     } else {
       updateSpec(target.specIndex || 0, { image: url });
     }
   }
 
-  function selectImage(url: string) {
+  function selectImages(urls: string[]) {
     if (!pickerTarget) return;
+    const cleanUrls = urls.filter(Boolean);
+    if (!cleanUrls.length) return;
     if (pickerTarget.type !== "detail") {
       setCropError("");
-      setPendingSquareCrop({ url, target: pickerTarget });
+      setPendingSquareCrop({ url: cleanUrls[0], target: pickerTarget });
       return;
     }
-    applySelectedImage(pickerTarget, url);
+    setDetailImages((prev) => Array.from(new Set(prev.concat(cleanUrls))));
+  }
+
+  function moveDetailImage(index: number, direction: -1 | 1) {
+    setDetailImages((prev) => {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= prev.length) return prev;
+      const next = prev.slice();
+      [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+      return next;
+    });
   }
 
   async function confirmSquareCrop(crop: SquareCropResult) {
@@ -1549,7 +1666,16 @@ function ProductEditorDialog({
                   <CardContent>
                     <div className="edit-image-row detail-images">
                       {detailImages.map((url, index) => (
-                        <ImageTile key={`${url}-${index}`} url={url} onRemove={() => setDetailImages((prev) => prev.filter((_, itemIndex) => itemIndex !== index))} />
+                        <ImageTile
+                          key={`${url}-${index}`}
+                          url={url}
+                          label={`详情 ${index + 1}`}
+                          onMoveUp={() => moveDetailImage(index, -1)}
+                          onMoveDown={() => moveDetailImage(index, 1)}
+                          moveUpDisabled={index === 0}
+                          moveDownDisabled={index === detailImages.length - 1}
+                          onRemove={() => setDetailImages((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
+                        />
                       ))}
                       <Button variant="outline" className="edit-upload-tile" onClick={() => setPickerTarget({ type: "detail" })}>
                         <ImagePlus data-icon="inline-start" />
@@ -1619,7 +1745,8 @@ function ProductEditorDialog({
         productId={productId}
         currentAssets={currentAssets}
         onClose={() => setPickerTarget(null)}
-        onSelect={selectImage}
+        onSelect={selectImages}
+        selectionMode={pickerTarget?.type === "detail" ? "multiple" : "single"}
       />
       <SquareImageCropDialog
         cropTarget={pendingSquareCrop}

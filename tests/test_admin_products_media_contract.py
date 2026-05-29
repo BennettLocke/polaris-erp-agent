@@ -70,6 +70,16 @@ class AdminProductsMediaContractTest(unittest.TestCase):
         self.assertIn("section=media", app_source)
         self.assertNotIn("MediaPage", app_source)
 
+    def test_product_media_scope_does_not_leak_pending_assets_into_product_tab(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+
+        self.assertIn("includePending", api_source)
+        self.assertIn('params.set("include_pending", options.includePending ? "1" : "0")', api_source)
+        self.assertIn("include_pending_arg = request.args.get(\"include_pending\")", http_source)
+        self.assertIn("else not bool(product_id)", http_source)
+        self.assertIn("include_pending=include_pending", http_source)
+
 
 if __name__ == "__main__":
     unittest.main()
