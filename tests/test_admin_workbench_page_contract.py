@@ -275,6 +275,24 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn('"order_params.customer_name"', confirm_sections)
         self.assertIn('["order_params.products", "products", "items", "detail"]', confirm_sections)
 
+    def test_workbench_confirm_dialog_displays_warehouse_names_instead_of_numeric_ids(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        confirm_sections = extract_function_section(workbench_source, "buildConfirmSections")
+        dialog_section = extract_function_section(workbench_source, "AgentConfirmDialog")
+
+        self.assertIn("warehouseNameFromId", workbench_source)
+        self.assertIn("isWarehousePath", workbench_source)
+        self.assertIn("displayConfirmValue", workbench_source)
+        self.assertIn("coerceConfirmValue", workbench_source)
+        self.assertIn("valueLabel(row.value, row.path)", workbench_source)
+        self.assertIn('["warehouse_name", "warehouse_id"]', confirm_sections)
+        self.assertIn('["warehouse_name", "purchase_warehouse_id", "warehouse_id"]', confirm_sections)
+        self.assertNotIn('["purchase_warehouse_id", "warehouse_id", "warehouse_name"]', confirm_sections)
+        self.assertIn("displayConfirmValue(field)", dialog_section)
+        self.assertIn("coerceConfirmValue(nextValue, field)", dialog_section)
+
 
 if __name__ == "__main__":
     unittest.main()

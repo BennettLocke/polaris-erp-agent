@@ -221,7 +221,34 @@ function pendingTitle(session?: AgentSessionSnapshot | null) {
   return "AI 业务确认";
 }
 
-function valueLabel(value: unknown) {
+function isWarehousePath(path = "") {
+  return /(^|\.)(warehouse_id|purchase_warehouse_id|out_warehouse_id|enter_warehouse_id|from_wh|to_wh)$/.test(path);
+}
+
+function warehouseNameFromId(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "未填写";
+  if (text === "1") return "自己店里";
+  if (text === "2") return "百鑫仓库";
+  return text;
+}
+
+function warehouseIdFromName(value: string) {
+  const text = value.trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) return Number(text);
+  if (text.includes("自己") || text.includes("店里") || text.includes("门店")) return 1;
+  if (text.includes("百鑫")) return 2;
+  return null;
+}
+
+function displayConfirmValue(field: ConfirmField) {
+  if (isWarehousePath(field.path)) return warehouseNameFromId(field.value);
+  return field.value === undefined || field.value === null ? "" : String(field.value);
+}
+
+function valueLabel(value: unknown, path = "") {
+  if (isWarehousePath(path)) return warehouseNameFromId(value);
   if (value === null || value === undefined || value === "") return "未填写";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
@@ -409,7 +436,7 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
     { paths: ["qty", "quantity", "order_quantity", "buy_number"], label: "数量", options: { inputMode: "decimal" as const } },
     { paths: ["unit", "unit_name"], label: "单位", required: false },
     { paths: ["price", "unit_price"], label: "单价", options: { inputMode: "decimal" as const }, required: false },
-    { paths: ["warehouse_id", "warehouse_name"], label: "仓库", required: false }
+    { paths: ["warehouse_name", "warehouse_id"], label: "仓库", required: false }
   ];
 
   if (kind === "sales") {
@@ -472,7 +499,7 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
   if (kind === "purchase") {
     const sections = [
       confirmSection("进货信息", "确认入库仓库和备注。", [
-        firstConfirmField(state, ["purchase_warehouse_id", "warehouse_id", "warehouse_name"], "入库仓库"),
+        firstConfirmField(state, ["warehouse_name", "purchase_warehouse_id", "warehouse_id"], "入库仓库"),
         optionalConfirmField(state, ["supplier_name", "supplier"], "供应商"),
         optionalConfirmField(state, ["remark", "note"], "备注")
       ]),
@@ -541,6 +568,14 @@ function coerceValue(raw: string, original: unknown) {
     return ["1", "true", "是", "已"].includes(raw.trim().toLowerCase());
   }
   return raw;
+}
+
+function coerceConfirmValue(raw: string, field: ConfirmField) {
+  if (isWarehousePath(field.path)) {
+    const warehouseId = warehouseIdFromName(raw);
+    if (warehouseId) return warehouseId;
+  }
+  return coerceValue(raw, field.value);
 }
 
 function setValueByPath(target: Record<string, unknown>, path: string, value: unknown) {
@@ -1238,7 +1273,7 @@ function PendingStatusCard({
           rows.map((row) => (
             <div className="pending-field-row" key={row.path}>
               <span>{row.label}</span>
-              <strong>{valueLabel(row.value)}</strong>
+              <strong>{valueLabel(row.value, row.path)}</strong>
             </div>
           ))
         ) : (
@@ -1576,7 +1611,7 @@ function AgentConfirmDialog({
   const [values, setValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    const next = Object.fromEntries(fields.map((field) => [field.path, field.value === undefined || field.value === null ? "" : String(field.value)]));
+    const next = Object.fromEntries(fields.map((field) => [field.path, displayConfirmValue(field)]));
     setValues(next);
   }, [stateKey, fieldKey]);
 
@@ -1584,8 +1619,9 @@ function AgentConfirmDialog({
     const nextState = cloneState(session?.state);
     fields.forEach((field) => {
       const nextValue = values[field.path] ?? "";
-      if (nextValue !== String(field.value ?? "")) {
-        setValueByPath(nextState, field.path, coerceValue(nextValue, field.value));
+      const originalDisplay = displayConfirmValue(field);
+      if (nextValue !== String(field.value ?? "") && nextValue !== originalDisplay) {
+        setValueByPath(nextState, field.path, coerceConfirmValue(nextValue, field));
       }
     });
     onConfirm(nextState);

@@ -1400,6 +1400,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "customer_name": customer_name,
                 "products": products,
                 "warehouse_id": warehouse_id,
+                "warehouse_name": self._warehouse_name(warehouse_id),
                 "auto_purchase": auto_purchase,
                 "skip_inventory": skip_inventory,
                 "customer_defaulted": customer_defaulted,

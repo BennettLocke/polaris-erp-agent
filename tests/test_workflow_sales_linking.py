@@ -1,8 +1,11 @@
 import unittest
 from unittest.mock import patch
+from pathlib import Path
 
 from src.skills.order_flow.workflow import OrderFlowWorkflow
 from src.skills.workflow_order.workflow import WorkflowOrderWorkflow
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeOrderCaller:
@@ -92,6 +95,12 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
         self.assertEqual(result["status"], "ask")
         self.assertEqual(captured_params[0]["workflow_order_id"], 456)
         self.assertEqual(captured_params[0]["customer"], "测试客户")
+
+    def test_order_flow_confirm_state_includes_warehouse_name_for_ui(self):
+        source = (ROOT / "src" / "skills" / "order_flow" / "workflow.py").read_text(encoding="utf-8")
+        confirm_source = source.split("def _confirm_create_order", 1)[1].split("def _create_order", 1)[0]
+
+        self.assertIn('"warehouse_name": self._warehouse_name(warehouse_id)', confirm_source)
 
 
 if __name__ == "__main__":
