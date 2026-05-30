@@ -1,21 +1,26 @@
 {
   "vocab_id": "149e5b9124704792abec894f3e466cec",
-  "md5": "ca6d5544ddd0f3fd3940f67feceded09",
-  "word_count": 439,
+  "md5": "ea48912a94ed59774a75983e665f3c6d",
+  "word_count": 447,
   "source_counts": {
     "business": 25,
-    "products": 237,
-    "recent_sales": 90,
+    "products": 240,
+    "recent_sales": 92,
     "colors": 23,
     "warehouses": 2,
-    "customers": 62
+    "customers": 65
   },
-  "synced_at": 1779854402,
-  "synced_at_text": "2026-05-27 12:00:02",
+  "synced_at": 1780113601,
+  "synced_at_text": "2026-05-30 12:00:01",
   "last_action": "UpdateAsrVocab",
-  "request_id": "1B51960D-C563-5118-A6C2-5364E0492531",
+  "request_id": "FC5D40D8-527C-53D6-AD44-16200F772CF6",
   "sample_words": [
     "三小盒",
+    "岭秀半斤",
+    "标签",
+    "见喜二三两",
+    "云岭二三两",
+    "岩彩二三两",
     "多韵小盒子2泡盒",
     "提袋",
     "七彩4泡2泡",
@@ -31,19 +36,14 @@
     "喜悦二三两",
     "山川两大盒",
     "岭秀两大盒",
-    "云岭二三两",
     "茶派半斤",
     "艺二两",
     "喜物六小盒",
     "大红袍短泡袋",
     "纯色泡袋红色",
     "纯色泡袋火星橙",
-    "标签",
     "喜悦半斤",
     "山川半斤",
-    "内衬",
-    "颜序六小盒",
-    "岩彩一两",
-    "喜悦三小盒"
+    "内衬"
   ]
 }

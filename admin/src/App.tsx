@@ -296,6 +296,18 @@ function SalesNewPage() {
       .catch(() => undefined);
   }, []);
 
+  // 默认选中"散客"
+  useEffect(() => {
+    api.quickCustomers("散客")
+      .then((list) => {
+        const defaultCustomer = (list || []).find((c) => c.name === "散客" || c.company_name === "散客");
+        if (defaultCustomer && !selectedCustomer) {
+          selectCustomer(defaultCustomer);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   function selectCustomer(customer: CustomerItem) {
     setSelectedCustomer(customer);
     setCustomerKeyword(customerDisplayName(customer));
