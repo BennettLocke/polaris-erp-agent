@@ -897,8 +897,16 @@ def _play_mp3_file(path: Path, args) -> None:
             pass
 
 
-def play_prompt_async(group: str, *, device: str = "") -> None:
-    threading.Thread(target=lambda: play_prompt(group, device=device), name=f"voice-prompt-{group}", daemon=True).start()
+def play_prompt_async(group: str, *, device: str = "", requested_at: float | None = None) -> None:
+    queued_at = time.monotonic() if requested_at is None else requested_at
+
+    def _play() -> None:
+        started_at = time.monotonic()
+        print(f"PROMPT_START group={group} queue_ms={(started_at - queued_at) * 1000:.0f}", flush=True)
+        play_prompt(group, device=device)
+        print(f"PROMPT_DONE group={group} total_ms={(time.monotonic() - queued_at) * 1000:.0f}", flush=True)
+
+    threading.Thread(target=_play, name=f"voice-prompt-{group}", daemon=True).start()
 
 
 def screen_notify(args, status: str, *, role: str | None = None, text: str | None = None) -> None:
@@ -1397,7 +1405,7 @@ def main() -> None:
     parser.add_argument("--sherpa-keywords-threshold", type=float, default=0.15)
     parser.add_argument("--sherpa-num-trailing-blanks", type=int, default=1)
     parser.add_argument("--sherpa-min-rms", type=int, default=60)
-    parser.add_argument("--vad-frame-ms", type=int, default=30, choices=[10, 20, 30])
+    parser.add_argument("--vad-frame-ms", type=int, default=20, choices=[10, 20, 30])
     parser.add_argument("--vad-use-webrtc", action="store_true")
     parser.add_argument("--vad-mode", type=int, default=2, choices=[0, 1, 2, 3])
     parser.add_argument("--vad-pre-roll-ms", type=int, default=300)

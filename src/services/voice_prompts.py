@@ -19,6 +19,7 @@ logger = get_logger("sjagent.services.voice_prompts")
 _PLAY_LOCK = threading.Lock()
 _PROMPT_CYCLE_LOCK = threading.Lock()
 _PROMPT_CYCLE_INDEX: dict[str, int] = {}
+_PROMPT_PATH_CACHE: dict[str, Path] = {}
 _SILENCE_TAIL_MS = 220
 _TARGET_PROMPT_RMS = 2200
 _PROMPT_PEAK_LIMIT = 26000
@@ -190,11 +191,19 @@ def _synthesize_with_volc(text: str, path: Path) -> Path:
 
 def ensure_prompt(prompt: VoicePrompt, *, force: bool = False) -> Path:
     path = prompt_path(prompt)
+    cached = _PROMPT_PATH_CACHE.get(prompt.key)
+    if cached and cached.exists() and not force:
+        return cached
     if path.exists() and path.stat().st_size > 0 and not force:
-        return normalize_prompt_wav(path)
+        path = normalize_prompt_wav(path)
+        _PROMPT_PATH_CACHE[prompt.key] = path
+        return path
     if _prompt_provider() == "volc":
-        return normalize_prompt_wav(_synthesize_with_volc(prompt.text, path))
-    return normalize_prompt_wav(synthesize_mimo(prompt.text, path, context=prompt.context))
+        path = normalize_prompt_wav(_synthesize_with_volc(prompt.text, path))
+    else:
+        path = normalize_prompt_wav(synthesize_mimo(prompt.text, path, context=prompt.context))
+    _PROMPT_PATH_CACHE[prompt.key] = path
+    return path
 
 
 def ensure_group(group: str, *, force: bool = False) -> list[Path]:
@@ -232,17 +241,59 @@ def _silence_tail_for_wav(path: Path, *, milliseconds: int = _SILENCE_TAIL_MS) -
     return tail_path
 
 
+def _play_wav_with_alsa(path: Path, *, device: str = "") -> bool:
+    try:
+        import alsaaudio
+    except ImportError:
+        return False
+    try:
+        with wave.open(str(path), "rb") as source:
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            frame_rate = source.getframerate()
+            frames = source.readframes(source.getnframes())
+    except Exception as exc:
+        logger.debug(f"Fast ALSA prompt playback skipped for {path}: {exc}")
+        return False
+    if channels <= 0 or sample_width != 2 or frame_rate <= 0:
+        return False
+    tail_frames = max(1, int(frame_rate * _SILENCE_TAIL_MS / 1000))
+    frames += b"\x00" * tail_frames * channels * sample_width
+    try:
+        output = alsaaudio.PCM(
+            type=alsaaudio.PCM_PLAYBACK,
+            mode=alsaaudio.PCM_NORMAL,
+            device=device or "default",
+        )
+        output.setchannels(channels)
+        output.setrate(frame_rate)
+        output.setformat(alsaaudio.PCM_FORMAT_S16_LE)
+        period_frames = max(256, min(2048, frame_rate // 50))
+        output.setperiodsize(period_frames)
+        chunk_size = period_frames * channels * sample_width
+        for offset in range(0, len(frames), chunk_size):
+            chunk = frames[offset : offset + chunk_size]
+            if chunk:
+                output.write(chunk)
+        return True
+    except Exception as exc:
+        logger.warning(f"Fast ALSA prompt playback failed for {path}: {exc}")
+        return False
+
+
 def play_file(path: str | Path, *, device: str = "") -> None:
     audio_path = Path(path)
-    args = ["aplay", "-q"]
-    if device:
-        args.extend(["-D", device])
-    args.append(str(audio_path))
-    if audio_path.suffix.lower() == ".wav":
-        tail_path = _silence_tail_for_wav(audio_path)
-        if tail_path:
-            args.append(str(tail_path))
     with _PLAY_LOCK:
+        if audio_path.suffix.lower() == ".wav" and _play_wav_with_alsa(audio_path, device=device):
+            return
+        args = ["aplay", "-q"]
+        if device:
+            args.extend(["-D", device])
+        args.append(str(audio_path))
+        if audio_path.suffix.lower() == ".wav":
+            tail_path = _silence_tail_for_wav(audio_path)
+            if tail_path:
+                args.append(str(tail_path))
         last_exc: subprocess.CalledProcessError | None = None
         for attempt in range(3):
             try:
