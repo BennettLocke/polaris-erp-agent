@@ -42,7 +42,6 @@ DEFAULT_HOTWORDS = (
     "小星",
     "晓星",
     "小新",
-    "小宁",
     "查询",
     "查库存",
     "查一下库存",
@@ -76,6 +75,7 @@ DEFAULT_HOTWORDS = (
 )
 
 _HOTWORD_CACHE: dict[str, Any] = {"expires_at": 0.0, "words": ()}
+_HOTWORD_BLOCKLIST = {"小宁", "晓宁"}
 _GIFT_KEYWORDS = (
     "半斤",
     "长半斤",
@@ -132,6 +132,8 @@ def _is_gift_box_title(title: str) -> bool:
 
 def _add_hotword(words: list[str], seen: set[str], value: Any) -> None:
     word = _clean_hotword(value)
+    if word in _HOTWORD_BLOCKLIST:
+        return
     if len(word) < 2 or word in seen or not re.search(r"[\u4e00-\u9fff]", word):
         return
     seen.add(word)
@@ -157,7 +159,7 @@ def _fetch_dynamic_hotwords(limit: int) -> tuple[str, ...]:
         SELECT name, contact_name
         FROM party
         WHERE deleted_at IS NULL
-          AND is_enabled = 1
+          AND status = 'active'
           AND kind IN ('customer', 'both')
         ORDER BY id DESC
         LIMIT %s
@@ -217,7 +219,7 @@ def _split_hotwords(value: Any) -> tuple[str, ...]:
     result: list[str] = []
     seen: set[str] = set()
     for word in [*DEFAULT_HOTWORDS, *words]:
-        if word and word not in seen:
+        if word and word not in _HOTWORD_BLOCKLIST and word not in seen:
             seen.add(word)
             result.append(word)
     return tuple(result)
