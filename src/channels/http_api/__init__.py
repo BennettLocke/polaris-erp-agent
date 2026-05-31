@@ -3850,6 +3850,8 @@ def mini_orderflow_list_api():
     """Mini-program order flow backed by existing workflow and sales order data."""
     payload = _mini_request_payload()
     keyword = str(_mini_value(payload, "keyword", "wd", "q", default="")).strip()
+    status_arg = str(_mini_value(payload, "status", "filter", default="")).strip()
+    workflow_status_filter = "all" if keyword or status_arg in {"all", "done", "completed", "delivered"} else "active"
     page, page_size = _mini_page_payload(payload)
     user = _mini_request_user()
     customer_id = _mini_order_customer_id(user)
@@ -3869,7 +3871,7 @@ def mini_orderflow_list_api():
             keyword,
             page,
             page_size,
-            "active",
+            workflow_status_filter,
             customer_id=None if internal_user else customer_id,
         )
         if public_exact_search:

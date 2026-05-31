@@ -127,6 +127,39 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 401)
 
+    def test_mini_orderflow_keyword_searches_all_workflow_statuses(self):
+        captured = {}
+        original_db_workflow_orders = api_module._db_workflow_orders
+        original_db_sales_cards = api_module._db_sales_cards
+        original_verify_native_token = api_module._verify_native_token
+        try:
+            api_module._verify_native_token = lambda token: {
+                "role": "staff",
+                "id": 7,
+                "is_active": 1,
+                "approval_status": "approved",
+                "miniapp_allowed": True,
+            }
+
+            def fake_db_workflow_orders(keyword, page, page_size, status_filter, customer_id=None):
+                captured["status_filter"] = status_filter
+                return [{"id": 1000024, "order_no": "1000024", "status": "completed"}], 1
+
+            api_module._db_workflow_orders = fake_db_workflow_orders
+            api_module._db_sales_cards = lambda *args, **kwargs: ([], 0)
+            with api_module.app.test_client() as client:
+                response = client.get(
+                    "/api/mini/orderflow/list?keyword=1000024",
+                    headers={"X-SJ-Token": "valid-token"},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(captured["status_filter"], "all")
+        finally:
+            api_module._db_workflow_orders = original_db_workflow_orders
+            api_module._db_sales_cards = original_db_sales_cards
+            api_module._verify_native_token = original_verify_native_token
+
     def test_unbound_customer_cannot_use_exact_order_number_as_public_lookup(self):
         original_db_workflow_orders = api_module._db_workflow_orders
         original_db_sales_cards = api_module._db_sales_cards
