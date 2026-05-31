@@ -252,6 +252,28 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn(".workbench-inventory-card-grid", styles_source)
         self.assertIn(".workbench-inventory-card", styles_source)
 
+    def test_workbench_inventory_result_uses_dedicated_lookup_dialog(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        types_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        styles_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("WorkbenchInventoryLookupRow", types_source)
+        self.assertIn("InventoryLookupResult", types_source)
+        self.assertIn("type InventoryLookupQuery", api_source)
+        self.assertIn("inventoryLookup", api_source)
+        self.assertIn('"/api/inventory/lookup"', api_source)
+        self.assertIn("inventoryLookupQueryFromMessage", workbench_source)
+        self.assertIn("loadInventoryLookupForMessage", workbench_source)
+        self.assertIn("InventoryLookupTable", workbench_source)
+        self.assertIn("inventoryLookup", workbench_source)
+        self.assertIn("自己店里", workbench_source)
+        self.assertIn("百鑫仓库", workbench_source)
+        self.assertIn(".workbench-inventory-lookup-table", styles_source)
+        self.assertIn(".workbench-inventory-lookup-zero", styles_source)
+
     def test_workbench_image_workflow_confirm_skips_empty_root_section(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

@@ -727,6 +727,80 @@
   line-height: 20px;
 }
 
+.workbench-inventory-lookup-scroll {
+  overflow: hidden;
+}
+
+.workbench-inventory-lookup-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: var(--sj-foreground);
+  font-size: 13px;
+}
+
+.workbench-inventory-lookup-table th,
+.workbench-inventory-lookup-table td {
+  border-bottom: 1px solid var(--sj-border);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.workbench-inventory-lookup-table th {
+  color: var(--sj-muted);
+  font-weight: 700;
+  background: var(--sj-surface-subtle);
+}
+
+.workbench-inventory-lookup-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.workbench-inventory-lookup-table td {
+  line-height: 20px;
+}
+
+.workbench-inventory-lookup-table td strong,
+.workbench-inventory-lookup-table td span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-inventory-lookup-table td strong {
+  color: var(--sj-heading);
+  font-size: 14px;
+}
+
+.workbench-inventory-lookup-table td span {
+  color: var(--sj-muted);
+  font-size: 12px;
+}
+
+.workbench-inventory-lookup-table th:not(:first-child),
+.workbench-inventory-lookup-table td:not(:first-child) {
+  width: 120px;
+}
+
+.workbench-inventory-lookup-table th:first-child,
+.workbench-inventory-lookup-table td:first-child {
+  width: 280px;
+}
+
+.workbench-inventory-lookup-zero {
+  color: var(--sj-muted);
+  background: var(--sj-surface-subtle);
+}
+
+.workbench-inventory-lookup-empty {
+  border: 1px solid var(--sj-border);
+  border-radius: 10px;
+  padding: 24px;
+}
+
 @media (max-width: 1280px) {
   .workbench-shell {
     grid-template-columns: minmax(420px, 1fr) minmax(280px, 320px);

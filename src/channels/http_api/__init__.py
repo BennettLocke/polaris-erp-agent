@@ -1578,6 +1578,83 @@ def _inventory_cards(
     return result[:limit]
 
 
+def _inventory_lookup_qty(value) -> int | float:
+    try:
+        number = float(str(value or 0).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0
+    return int(number) if number.is_integer() else round(number, 3)
+
+
+def _inventory_lookup_warehouse_name(row: dict) -> str:
+    warehouse_id = row.get("warehouse_id")
+    name = str(row.get("warehouse_name") or row.get("【仓库】") or row.get("warehouse") or "").strip()
+    try:
+        parsed_id = int(warehouse_id) if warehouse_id not in (None, "") else 0
+    except (TypeError, ValueError):
+        parsed_id = 0
+    if parsed_id == 1 or "自己" in name or "店" in name or "门店" in name:
+        return "自己店里"
+    if parsed_id == 2 or "百鑫" in name:
+        return "百鑫仓库"
+    return name or (f"仓库{parsed_id}" if parsed_id else "仓库")
+
+
+def _inventory_lookup_rows(rows: list[dict]) -> dict:
+    warehouses: dict[str, dict] = {}
+    lookup: dict[str, dict] = {}
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        product_id = row.get("product_id") or row.get("id")
+        sku_no = str(row.get("sku_no") or "").strip()
+        title = row.get("产品名称") or row.get("title") or row.get("name") or "商品"
+        color = row.get("【颜色】") or row.get("spec") or row.get("color") or "默认颜色"
+        key = str(product_id or sku_no or f"{title}-{color}")
+        warehouse_name = _inventory_lookup_warehouse_name(row)
+        warehouse_id = row.get("warehouse_id")
+        quantity = _inventory_lookup_qty(row.get("quantity") or row.get("库存数量") or row.get("inventory") or row.get("stock"))
+
+        if warehouse_name not in warehouses:
+            warehouses[warehouse_name] = {"id": warehouse_id, "name": warehouse_name}
+        if key not in lookup:
+            lookup[key] = {
+                "product_id": product_id,
+                "sku_id": product_id,
+                "spu_id": row.get("spu_id"),
+                "sku_no": sku_no,
+                "title": title,
+                "color": color,
+                "unit_name": row.get("unit_name") or "单位",
+                "piece_text": row.get("simple_desc") or "",
+                "is_stock_item": int(row.get("is_stock_item") if row.get("is_stock_item") not in (None, "") else 1),
+                "warehouses": {},
+                "warehouse_ids": {},
+                "total_stock": 0,
+            }
+        item = lookup[key]
+        item["warehouses"][warehouse_name] = _inventory_lookup_qty(item["warehouses"].get(warehouse_name, 0)) + quantity
+        item["warehouse_ids"][warehouse_name] = warehouse_id
+        item["total_stock"] = _inventory_lookup_qty(item.get("total_stock", 0)) + quantity
+
+    warehouse_list = sorted(
+        warehouses.values(),
+        key=lambda item: (
+            0 if item.get("name") == "自己店里" else 1 if item.get("name") == "百鑫仓库" else 9,
+            int(item.get("id") or 0),
+            str(item.get("name") or ""),
+        ),
+    )
+    for item in lookup.values():
+        for warehouse in warehouse_list:
+            item["warehouses"].setdefault(warehouse["name"], 0)
+    return {
+        "list": list(lookup.values()),
+        "warehouses": warehouse_list,
+    }
+
+
 def _merge_product_color_options(card: dict, products: list[dict]) -> None:
     """Add same-product color options that currently have no stock rows."""
     color_map = {item.get("color"): item for item in card.get("colors", [])}
@@ -2973,6 +3050,40 @@ def inventory_cards():
         except Exception as api_error:
             logger.error(f"库存卡片查询失败: {api_error}")
             return jsonify({"code": 500, "msg": str(api_error)}), 500
+
+
+@app.route("/api/inventory/lookup", methods=["GET"])
+def inventory_lookup_api():
+    """
+    Precise inventory lookup for the AI workbench result dialog.
+    Includes zero stock rows by using SKU x warehouse balances.
+    """
+    keyword = _normalize_inventory_keyword((request.args.get("keyword") or "").strip())
+    color = (request.args.get("color") or "").strip()
+    warehouse_id = request.args.get("warehouse_id", type=int)
+    limit = request.args.get("limit", 40, type=int)
+    limit = max(1, min(limit, 200))
+    try:
+        rows, total = get_inventory_service().balances(
+            keyword=keyword,
+            color=color,
+            warehouse_id=warehouse_id,
+            stock_status="",
+            page=1,
+            page_size=limit,
+        )
+        data = _inventory_lookup_rows(rows if isinstance(rows, list) else [])
+        data.update({
+            "total": total,
+            "keyword": keyword,
+            "color": color,
+            "warehouse_id": warehouse_id,
+            "source": "native",
+        })
+        return jsonify({"code": 0, "data": _safe_json(data)})
+    except Exception as e:
+        logger.error(f"AI 库存明细查询失败: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
 
 
 @app.route("/api/product/color-options", methods=["GET"])

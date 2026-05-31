@@ -71,6 +71,36 @@ export type InventoryCardsResult = {
   source?: string;
 };
 
+export type WorkbenchInventoryLookupWarehouse = {
+  id?: number | string | null;
+  name: string;
+};
+
+export type WorkbenchInventoryLookupRow = {
+  product_id?: number | string | null;
+  sku_id?: number | string | null;
+  spu_id?: number | string | null;
+  sku_no?: string;
+  title: string;
+  color?: string;
+  unit_name?: string;
+  piece_text?: string;
+  is_stock_item?: number;
+  warehouses: Record<string, number>;
+  warehouse_ids?: Record<string, number | string | null>;
+  total_stock: number;
+};
+
+export type InventoryLookupResult = {
+  list: WorkbenchInventoryLookupRow[];
+  warehouses: WorkbenchInventoryLookupWarehouse[];
+  total?: number;
+  keyword?: string;
+  color?: string;
+  warehouse_id?: number | string | null;
+  source?: string;
+};
+
 export type AgentMessageHistoryItem = {
   role: "user" | "assistant" | string;
   content: string;

@@ -18,6 +18,7 @@ import type {
   InventoryBalanceResult,
   InventoryCardsResult,
   InventoryLedgerItem,
+  InventoryLookupResult,
   ListResult,
   MiniappImageCreatePayload,
   MiniappImageConfig,
@@ -87,6 +88,13 @@ export type InventoryListQuery = {
 export type InventoryCardsQuery = {
   keyword?: string;
   onlyInStock?: boolean;
+  limit?: number;
+};
+
+export type InventoryLookupQuery = {
+  keyword?: string;
+  color?: string;
+  warehouseId?: number | string | null;
   limit?: number;
 };
 
@@ -491,6 +499,17 @@ export const api = {
     params.set("only_in_stock", query.onlyInStock === false ? "0" : "1");
     params.set("limit", String(query.limit || 12));
     return request<InventoryCardsResult>(`${endpoint}?${params.toString()}`);
+  },
+  inventoryLookup: (query: InventoryLookupQuery = {}) => {
+    const endpoint = "/api/inventory/lookup";
+    const params = new URLSearchParams();
+    params.set("keyword", query.keyword || "");
+    if (query.color) params.set("color", query.color);
+    if (query.warehouseId !== undefined && query.warehouseId !== null && query.warehouseId !== "") {
+      params.set("warehouse_id", String(query.warehouseId));
+    }
+    params.set("limit", String(query.limit || 40));
+    return request<InventoryLookupResult>(`${endpoint}?${params.toString()}`);
   },
   inventoryBalances: (query: InventoryListQuery = {}) =>
     request<InventoryBalanceResult>(`/api/inventory/balances?${listParams(query)}`),

@@ -45,7 +45,9 @@ import type {
   AnalyticsHotProduct,
   DashboardSummary,
   InventoryCardsResult,
-  WorkbenchInventoryCard
+  InventoryLookupResult,
+  WorkbenchInventoryCard,
+  WorkbenchInventoryLookupRow
 } from "@/types";
 
 type ChatRole = "user" | "assistant";
@@ -69,6 +71,7 @@ type BusinessHistoryItem = {
   createdAt: string;
   businessKey?: string;
   inventoryCards?: WorkbenchInventoryCard[];
+  inventoryLookup?: InventoryLookupResult | null;
   inventorySource?: string;
 };
 
@@ -83,6 +86,7 @@ type WorkbenchResult = {
   response: string;
   createdAt: string;
   inventoryCards?: WorkbenchInventoryCard[];
+  inventoryLookup?: InventoryLookupResult | null;
   inventorySource?: string;
 };
 
@@ -90,6 +94,7 @@ type ResultSource = "text" | "image";
 
 type BusinessHistoryExtras = {
   inventoryCards?: WorkbenchInventoryCard[];
+  inventoryLookup?: InventoryLookupResult | null;
   inventorySource?: string;
 };
 
@@ -663,6 +668,7 @@ function resultFromHistory(item: BusinessHistoryItem): WorkbenchResult {
     response: item.response || item.summary,
     createdAt: item.createdAt,
     inventoryCards: item.inventoryCards,
+    inventoryLookup: item.inventoryLookup,
     inventorySource: item.inventorySource
   };
 }
@@ -688,8 +694,52 @@ function inventoryKeywordFromMessage(message: string) {
     .trim();
 }
 
+function textParam(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+}
+
+function recordParam(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function inventoryWarehouseIdFromMessage(message: string) {
+  if (/自己店里|自己店|店里|自己|门店/.test(message)) return 1;
+  if (/百鑫仓库|百鑫仓|百鑫/.test(message)) return 2;
+  return undefined;
+}
+
+function inventoryColorFromMessage(message: string) {
+  const colors = ["橄榄绿", "深咖色", "香槟金", "古铜色", "卡其色", "红色", "黄色", "橙色", "蓝色", "绿色", "咖色", "黑色", "白色", "紫色", "粉色"];
+  return colors.find((color) => message.includes(color)) || "";
+}
+
+function inventoryLookupQueryFromMessage(message: string, session?: AgentSessionSnapshot | null) {
+  const extraction = recordParam(session?.last_extraction);
+  const params = recordParam(extraction.params);
+  const keyword = textParam(params.product_name || params.keyword) || inventoryKeywordFromMessage(message);
+  const color = textParam(params.color) || inventoryColorFromMessage(message);
+  const warehouseId = textParam(params.warehouse_id) || inventoryWarehouseIdFromMessage(message);
+  return {
+    keyword,
+    color,
+    warehouseId,
+    limit: 40
+  };
+}
+
 function shouldLoadInventoryCards(message: string, response: string, session?: AgentSessionSnapshot | null) {
   return inferHistoryType(response, session) === "inventory" || /库存|仓库/.test(message);
+}
+
+async function loadInventoryLookupForMessage(message: string, response: string, session?: AgentSessionSnapshot | null): Promise<InventoryLookupResult | null> {
+  if (!shouldLoadInventoryCards(message, response, session)) return null;
+  const query = inventoryLookupQueryFromMessage(message, session);
+  if (!query.keyword && !query.color) return null;
+  try {
+    return await api.inventoryLookup(query);
+  } catch {
+    return null;
+  }
 }
 
 async function loadInventoryCardsForMessage(message: string, response: string, session?: AgentSessionSnapshot | null): Promise<InventoryCardsResult | null> {
@@ -863,10 +913,12 @@ export function WorkbenchPage() {
       setConfirmOpen(true);
     } else {
       setConfirmOpen(false);
-      const inventoryResult = await loadInventoryCardsForMessage(message, responseText, nextSession);
+      const inventoryLookup = await loadInventoryLookupForMessage(message, responseText, nextSession);
+      const inventoryResult = inventoryLookup ? null : await loadInventoryCardsForMessage(message, responseText, nextSession);
       const historyItem = pushBusinessHistory(responseText, nextSession, "text", {
         inventoryCards: inventoryResult?.list || [],
-        inventorySource: inventoryResult?.source
+        inventoryLookup,
+        inventorySource: inventoryLookup?.source || inventoryResult?.source
       });
       openResultDialog(historyItem);
     }
@@ -1469,13 +1521,20 @@ function AgentResultDialog({ result }: { result: WorkbenchResult }) {
 
 function InventoryResultDialog({ result }: { result: WorkbenchResult }) {
   const cards = result.inventoryCards || [];
+  const lookup = result.inventoryLookup || null;
   return (
     <div className="inventory-result-dialog workbench-result-body">
       <div className="workbench-result-summary">
         <Badge>库存查询结果</Badge>
         <p>{result.summary}</p>
       </div>
-      {cards.length ? <InventoryCardGrid cards={cards} /> : <ResultLineTable response={result.response} />}
+      {lookup ? (
+        <InventoryLookupTable lookup={lookup} />
+      ) : cards.length ? (
+        <InventoryCardGrid cards={cards} />
+      ) : (
+        <ResultLineTable response={result.response} />
+      )}
     </div>
   );
 }
@@ -1523,6 +1582,70 @@ function inventoryQuantityText(value: unknown) {
   const numberValue = Number(value || 0);
   if (!Number.isFinite(numberValue)) return "0";
   return String(Number(numberValue.toFixed(3))).replace(/\.0+$/, "");
+}
+
+function inventoryLookupWarehousesFromRows(rows: WorkbenchInventoryLookupRow[]) {
+  const names = new Set<string>();
+  rows.forEach((row) => Object.keys(row.warehouses || {}).forEach((name) => names.add(name)));
+  return Array.from(names).map((name) => ({ name }));
+}
+
+function InventoryLookupTable({ lookup }: { lookup: InventoryLookupResult }) {
+  const rows = lookup.list || [];
+  const warehouses = lookup.warehouses?.length ? lookup.warehouses : inventoryLookupWarehousesFromRows(rows);
+  if (!rows.length) {
+    return (
+      <Empty className="workbench-inventory-lookup-empty">
+        <EmptyHeader>
+          <EmptyTitle>没有匹配库存</EmptyTitle>
+          <EmptyDescription>当前查询没有找到对应的库存 SKU。</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+  return (
+    <ScrollArea className="workbench-result-scroll workbench-inventory-lookup-scroll">
+      <table className="workbench-inventory-lookup-table">
+        <thead>
+          <tr>
+            <th>商品/SKU</th>
+            <th>颜色/规格</th>
+            {warehouses.map((warehouse) => (
+              <th key={warehouse.name}>{warehouse.name}</th>
+            ))}
+            <th>合计</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.product_id || row.sku_no || row.title}-${row.color || ""}`}>
+              <td>
+                <strong>{row.title}</strong>
+                <span>{row.sku_no || "未编号"}</span>
+              </td>
+              <td>
+                <strong>{row.color || "默认颜色"}</strong>
+                <span>{row.piece_text || row.unit_name || "单位"}</span>
+              </td>
+              {warehouses.map((warehouse) => {
+                const qty = Number(row.warehouses?.[warehouse.name] || 0);
+                return (
+                  <td key={`${row.product_id || row.sku_no}-${warehouse.name}`} className={qty === 0 ? "workbench-inventory-lookup-zero" : ""}>
+                    {inventoryQuantityText(qty)}
+                    <span>{row.unit_name || "套"}</span>
+                  </td>
+                );
+              })}
+              <td>
+                <strong>{inventoryQuantityText(row.total_stock)}</strong>
+                <span>{row.unit_name || "套"}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </ScrollArea>
+  );
 }
 
 function orderedWarehouseEntries(warehouses: Record<string, number>) {
