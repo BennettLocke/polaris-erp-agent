@@ -78,6 +78,8 @@ class LocalPrintAgentContractTest(unittest.TestCase):
         self.assertIn("ShopXOAutoPrint", installer)
         self.assertIn("https://ai.513sjbz.com", installer)
         self.assertIn("SJAGENT_PRINT_CONFIG", installer)
+        self.assertIn("Get-CimInstance Win32_Process", installer)
+        self.assertIn("auto_print.py", installer)
 
         config = json.loads((service_dir / "config.example.json").read_text(encoding="utf-8"))
         self.assertEqual(config["base_url"], "https://ai.513sjbz.com")

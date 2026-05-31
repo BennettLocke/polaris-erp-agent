@@ -34,6 +34,16 @@ function Remove-NssmService([string]$Name) {
     }
 }
 
+function Stop-ExistingPrintAgents {
+    $agents = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*auto_print.py*" }
+
+    foreach ($agent in $agents) {
+        Write-Host "Stopping existing auto_print.py process $($agent.ProcessId) ..."
+        Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if (-not (Test-IsAdmin)) {
     throw "Please run this installer from an elevated PowerShell window."
 }
@@ -83,6 +93,7 @@ if ($OldServiceName -and $OldServiceName -ne $ServiceName) {
     Remove-NssmService $OldServiceName
 }
 Remove-NssmService $ServiceName
+Stop-ExistingPrintAgents
 
 & $NssmPath install $ServiceName $PythonPath (Join-Path $InstallDir "auto_print.py") | Out-Host
 & $NssmPath set $ServiceName AppDirectory $InstallDir | Out-Host
