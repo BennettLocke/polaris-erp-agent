@@ -5921,8 +5921,8 @@ class NativeDBClient:
             params.append(int(customer_id))
         if keyword:
             like = f"%{keyword}%"
-            where.append("(wo.customer_name_snapshot LIKE %s OR wo.customer_phone_snapshot LIKE %s OR wo.goods_name_snapshot LIKE %s OR wo.color_snapshot LIKE %s)")
-            params.extend([like, like, like, like])
+            where.append("(CAST(wo.id AS CHAR) LIKE %s OR wo.workflow_no LIKE %s OR wo.customer_name_snapshot LIKE %s OR wo.customer_phone_snapshot LIKE %s OR wo.goods_name_snapshot LIKE %s OR wo.color_snapshot LIKE %s)")
+            params.extend([like, like, like, like, like, like])
         where_sql = " AND ".join(where)
         total_rows = self.query(f"SELECT COUNT(*) AS total FROM workflow_order wo WHERE {where_sql}", params)
         rows = self.query(
@@ -5941,6 +5941,9 @@ class NativeDBClient:
             images = _json_loads(row.get("order_image_urls"), [])
             cards.append({
                 "id": row.get("id"),
+                "order_no": str(row.get("id") or "").strip(),
+                "workflow_order_id": row.get("id"),
+                "workflow_no": row.get("workflow_no") or "",
                 "customer_name": row.get("customer_name_snapshot") or "客户未填写",
                 "customer_phone": row.get("customer_phone_snapshot") or "",
                 "goods_name": row.get("goods_name_snapshot") or "商品未填写",

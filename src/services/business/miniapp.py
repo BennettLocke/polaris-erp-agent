@@ -513,9 +513,13 @@ class MiniAppService(BusinessService):
                 continue
             images = self._workflow_order_images(row.get("order_image_urls"))
             status_key, status_text = self._workflow_status(row)
+            order_id = row.get("id")
+            workflow_no = str(row.get("workflow_no") or "").strip()
             items.append({
-                "id": row.get("id"),
-                "order_no": str(row.get("workflow_no") or row.get("id") or "").strip(),
+                "id": order_id,
+                "workflow_order_id": order_id,
+                "order_no": str(order_id or workflow_no or "").strip(),
+                "workflow_no": workflow_no,
                 "customer_name": str(row.get("customer_name_snapshot") or "").strip(),
                 "product_name": str(row.get("goods_name_snapshot") or "").strip(),
                 "color": str(row.get("color_snapshot") or "").strip(),
