@@ -127,6 +127,26 @@ class AdminInventoryPageContractTest(unittest.TestCase):
         self.assertIn(".inventory-action-result-main", style_source)
         self.assertIn(".inventory-action-result-meta", style_source)
 
+    def test_inventory_overview_pages_by_product_to_keep_colors_together(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        inventory_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "inventory" / "inventory-page.tsx"
+        ).read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        service_source = (ROOT / "src" / "services" / "business" / "inventory.py").read_text(encoding="utf-8")
+        db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+
+        self.assertIn("groupByProduct?: boolean", api_source)
+        self.assertIn('params.set("group_by_product", "1")', api_source)
+        self.assertIn('groupByProduct: nextTab === "overview"', inventory_source)
+        self.assertIn('group_by_product = request.args.get("group_by_product", "0")', http_source)
+        self.assertIn("group_by_product=group_by_product", http_source)
+        self.assertIn("group_by_product: bool = False", service_source)
+        self.assertIn("group_by_product=group_by_product", service_source)
+        self.assertIn("group_by_product: bool = False", db_source)
+        self.assertIn("page_spu", db_source)
+        self.assertIn("sp.id IN", db_source)
+
     def test_react_inventory_page_follows_inventory_handbook_contract(self):
         app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")
         api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")

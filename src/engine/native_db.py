@@ -4323,6 +4323,7 @@ class NativeDBClient:
         color: str = "",
         warehouse_id: int | None = None,
         stock_status: str = "",
+        group_by_product: bool = False,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[dict], int]:
@@ -4347,7 +4348,76 @@ class NativeDBClient:
             status_where = f"{quantity_expr} = 0"
         elif stock_status == "negative":
             status_where = f"{quantity_expr} < 0"
-        if status_where:
+        if group_by_product:
+            scoped_where_sql = f"{where_sql} AND {warehouse_where_sql}"
+            if status_where:
+                scoped_where_sql = f"{scoped_where_sql} AND {status_where}"
+            scoped_params = params + warehouse_params
+            count_rows = self.query(
+                f"""
+                SELECT COUNT(*) AS total
+                FROM (
+                    SELECT sp.id
+                    FROM product_sku s
+                    JOIN product_spu sp ON sp.id=s.spu_id
+                    CROSS JOIN warehouse w
+                    LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+                    WHERE {scoped_where_sql}
+                    GROUP BY sp.id
+                ) page_spu_count
+                """,
+                scoped_params,
+            )
+            total = int(count_rows[0].get("total") or 0) if count_rows else 0
+            page_spu = self.query(
+                f"""
+                SELECT sp.id
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id=s.spu_id
+                CROSS JOIN warehouse w
+                LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+                WHERE {scoped_where_sql}
+                GROUP BY sp.id, sp.title
+                ORDER BY sp.title ASC, sp.id ASC
+                LIMIT %s OFFSET %s
+                """,
+                scoped_params + [page_size, (max(1, page) - 1) * page_size],
+            )
+            spu_ids = [int(row.get("id") or 0) for row in page_spu if row.get("id")]
+            if not spu_ids:
+                return [], total
+            placeholders = ",".join(["%s"] * len(spu_ids))
+            fetch_where_sql = f"{where_sql} AND {warehouse_where_sql} AND sp.id IN ({placeholders})"
+            if status_where:
+                fetch_where_sql = f"{fetch_where_sql} AND {status_where}"
+            rows = self.query(
+                f"""
+                SELECT
+                    s.id AS product_id,
+                    sp.id AS spu_id,
+                    s.sku_no,
+                    s.is_stock_item,
+                    sp.title,
+                    s.color,
+                    sp.case_pack_qty,
+                    w.id AS warehouse_id,
+                    w.name AS warehouse_name,
+                    COALESCE(b.unit_id, s.unit_id) AS unit_id,
+                    u.name AS unit_name,
+                    COALESCE(b.quantity, 0) AS quantity,
+                    COALESCE(b.available_qty, b.quantity, 0) AS available_qty,
+                    COALESCE(b.reserved_qty, 0) AS reserved_qty
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id=s.spu_id
+                CROSS JOIN warehouse w
+                LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+                LEFT JOIN product_unit u ON u.id=COALESCE(b.unit_id, s.unit_id)
+                WHERE {fetch_where_sql}
+                ORDER BY sp.title ASC, s.color ASC, w.id ASC
+                """,
+                params + warehouse_params + spu_ids,
+            )
+        elif status_where:
             scoped_where_sql = f"{where_sql} AND {warehouse_where_sql} AND {status_where}"
             scoped_params = params + warehouse_params
             count_rows = self.query(

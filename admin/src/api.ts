@@ -81,6 +81,7 @@ export type InventoryListQuery = {
   skuId?: number | string;
   stockStatus?: string;
   warehouseId?: number | string;
+  groupByProduct?: boolean;
   page?: number;
   pageSize?: number;
 };
@@ -183,6 +184,9 @@ function listParams(options: InventoryListQuery = {}) {
   }
   if (options.stockStatus && options.stockStatus !== "all") {
     params.set("stock_status", options.stockStatus);
+  }
+  if (options.groupByProduct) {
+    params.set("group_by_product", "1");
   }
   return params.toString();
 }

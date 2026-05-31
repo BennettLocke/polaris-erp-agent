@@ -38,6 +38,7 @@ class InventoryService(BusinessService):
         color: str = "",
         warehouse_id: int | None = None,
         stock_status: str = "",
+        group_by_product: bool = False,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[dict], int]:
@@ -46,6 +47,7 @@ class InventoryService(BusinessService):
             color=color,
             warehouse_id=warehouse_id,
             stock_status=stock_status,
+            group_by_product=group_by_product,
             page=page,
             page_size=page_size,
         )

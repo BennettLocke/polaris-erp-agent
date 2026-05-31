@@ -1493,6 +1493,7 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
           keyword: nextKeyword,
           warehouseId: nextWarehouseId,
           stockStatus: nextStatus,
+          groupByProduct: nextTab === "overview",
           page: nextPage,
           pageSize: nextPageSize
         });
