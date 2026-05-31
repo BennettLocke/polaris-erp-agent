@@ -19,7 +19,7 @@ def pcm16_peak(frames: bytes) -> int:
 
 class VoicePromptsTests(unittest.TestCase):
     def test_wake_prompts_are_the_three_approved_replies(self) -> None:
-        self.assertEqual([prompt.text for prompt in get_prompts("wake")], ["在呢", "我在", "小星在"])
+        self.assertEqual([prompt.text for prompt in get_prompts("wake")], ["我在", "在呢", "小星在"])
 
     def test_wake_prompts_play_in_round_robin_order(self) -> None:
         voice_prompts.reset_prompt_cycle("wake")
@@ -27,11 +27,11 @@ class VoicePromptsTests(unittest.TestCase):
         keys = [voice_prompts.pick_prompt("wake").key for _ in range(5)]
 
         self.assertEqual(keys, [
-            "wake_zaine",
             "wake_wozai",
+            "wake_zaine",
             "wake_xiaoxing",
-            "wake_zaine",
             "wake_wozai",
+            "wake_zaine",
         ])
 
     def test_prompt_wav_normalization_raises_quiet_audio_to_target_rms(self) -> None:

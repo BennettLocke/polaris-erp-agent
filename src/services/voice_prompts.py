@@ -33,8 +33,8 @@ class VoicePrompt:
 
 PROMPT_GROUPS: dict[str, list[VoicePrompt]] = {
     "wake": [
-        VoicePrompt("wake_zaine", "在呢", "用户刚刚喊了小星。"),
         VoicePrompt("wake_wozai", "我在", "用户刚刚喊了小星。"),
+        VoicePrompt("wake_zaine", "在呢", "用户刚刚喊了小星。"),
         VoicePrompt("wake_xiaoxing", "小星在", "用户刚刚喊了小星。"),
     ],
     "processing": [
