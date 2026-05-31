@@ -6288,8 +6288,6 @@ class NativeDBClient:
             return "状态不是正常"
         if not self._db_enabled_flag(sku.get("is_sellable"), default=True):
             return "不可售"
-        if not self._db_enabled_flag(sku.get("is_listed"), default=True):
-            return "未上架"
         return ""
 
     def _get_sku_for_update(self, cursor, sku_id: int, *, require_sellable: bool = False) -> dict:

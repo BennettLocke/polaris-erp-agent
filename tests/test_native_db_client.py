@@ -25,7 +25,7 @@ class NativeDBClientSmokeTest(unittest.TestCase):
             "礼盒和泡袋统一从 SJ1570 往后自动编号",
         )
 
-    def test_sales_sku_lookup_rejects_unlisted_sku_when_required(self):
+    def test_sales_sku_lookup_allows_unlisted_sku_when_required(self):
         class FakeCursor:
             def __init__(self):
                 self.sql = ""
@@ -47,8 +47,10 @@ class NativeDBClientSmokeTest(unittest.TestCase):
 
         client = object.__new__(NativeDBClient)
 
-        with self.assertRaisesRegex(DBError, "未上架"):
-            client._get_sku_for_update(FakeCursor(), 88, require_sellable=True)
+        sku = client._get_sku_for_update(FakeCursor(), 88, require_sellable=True)
+
+        self.assertEqual(sku["id"], 88)
+        self.assertEqual(sku["is_listed"], 0)
 
     def test_sales_sku_lookup_rejects_unsellable_sku_when_required(self):
         class FakeCursor:
