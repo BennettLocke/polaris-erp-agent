@@ -23,6 +23,16 @@ class WakeListenerVoiceControlTests(unittest.TestCase):
                 self.assertTrue(wake_listener.is_ignorable_voice_command(phrase))
                 self.assertFalse(wake_listener.should_continue_command_window(phrase))
 
+    def test_wake_reply_ignore_time_extends_command_window(self) -> None:
+        args = types.SimpleNamespace(command_window_seconds=2.0, wake_reply_ignore_seconds=1.2)
+        original = wake_listener.time.monotonic
+        wake_listener.time.monotonic = lambda: 100.0
+        try:
+            self.assertEqual(wake_listener.command_window_deadline(args), 102.0)
+            self.assertEqual(wake_listener.command_window_deadline(args, after_wake_reply=True), 103.2)
+        finally:
+            wake_listener.time.monotonic = original
+
 
 if __name__ == "__main__":
     unittest.main()

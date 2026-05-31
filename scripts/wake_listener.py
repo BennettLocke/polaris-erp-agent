@@ -1020,6 +1020,11 @@ def should_continue_command_window(command: str) -> bool:
     return True
 
 
+def command_window_deadline(args, *, after_wake_reply: bool = False) -> float:
+    extra = args.wake_reply_ignore_seconds if after_wake_reply else 0.0
+    return time.monotonic() + max(0.0, extra) + args.command_window_seconds
+
+
 def run_once(args) -> bool:
     with tempfile.TemporaryDirectory(prefix="sjagent-wake-") as tmp:
         wav_path = Path(tmp) / "chunk.wav"
@@ -1136,7 +1141,7 @@ def run_stream(args) -> None:
                     ignore_audio_until = time.monotonic() + max(args.wake_reply_ignore_seconds, args.cooldown)
                     time.sleep(args.cooldown)
                     continue
-                waiting_command_until = time.monotonic() + args.command_window_seconds
+                waiting_command_until = command_window_deadline(args, after_wake_reply=True)
                 print("command_window=opened", flush=True)
                 screen_notify(args, "listen", role="assistant", text="listening")
                 if not args.no_wake_prompt:
@@ -1184,7 +1189,7 @@ def run_stream(args) -> None:
                         ignore_audio_until = time.monotonic() + max(args.wake_reply_ignore_seconds, args.cooldown)
                         time.sleep(args.cooldown)
                         continue
-                    waiting_command_until = time.monotonic() + args.command_window_seconds
+                    waiting_command_until = command_window_deadline(args, after_wake_reply=True)
                     print("command_window=opened", flush=True)
                     screen_notify(args, "listen", role="assistant", text="我在听。")
                     if not args.no_wake_prompt:
@@ -1217,7 +1222,7 @@ def run_stream(args) -> None:
                             ignore_audio_until = time.monotonic() + max(args.wake_reply_ignore_seconds, args.cooldown)
                             time.sleep(args.cooldown)
                             continue
-                        waiting_command_until = time.monotonic() + args.command_window_seconds
+                        waiting_command_until = command_window_deadline(args, after_wake_reply=True)
                         print("command_window=opened", flush=True)
                         screen_notify(args, "listen", role="assistant", text="我在听。")
                         if not args.no_wake_prompt:
@@ -1316,7 +1321,7 @@ def run_stream(args) -> None:
             elif not should_continue_command_window(text):
                 print("command_window=kept", flush=True)
             else:
-                waiting_command_until = time.monotonic() + args.command_window_seconds
+                waiting_command_until = command_window_deadline(args)
                 print("command_window=continued", flush=True)
             continue
 
@@ -1331,7 +1336,7 @@ def run_stream(args) -> None:
                 ignore_audio_until = time.monotonic() + args.wake_reply_ignore_seconds
                 handle_command(args, command_tail)
             elif args.assistant_mode:
-                waiting_command_until = time.monotonic() + args.command_window_seconds
+                waiting_command_until = command_window_deadline(args, after_wake_reply=True)
                 print("command_window=opened", flush=True)
                 screen_notify(args, "listen", role="assistant", text="我在听。")
                 if not args.no_wake_prompt:
