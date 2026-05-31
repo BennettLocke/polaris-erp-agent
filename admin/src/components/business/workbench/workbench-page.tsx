@@ -1590,6 +1590,17 @@ function inventoryLookupWarehousesFromRows(rows: WorkbenchInventoryLookupRow[]) 
   return Array.from(names).map((name) => ({ name }));
 }
 
+function inventoryLookupWarehouseName(lookup: InventoryLookupResult) {
+  if (String(lookup.warehouse_id || "") === "1") return "自己店里";
+  if (String(lookup.warehouse_id || "") === "2") return "百鑫仓库";
+  return lookup.warehouses?.length === 1 ? lookup.warehouses[0].name : "";
+}
+
+function inventoryLookupEmptyTitle(lookup: InventoryLookupResult) {
+  const warehouse = inventoryLookupWarehouseName(lookup);
+  return warehouse ? `${warehouse}暂无匹配库存` : "没有匹配库存";
+}
+
 function InventoryLookupTable({ lookup }: { lookup: InventoryLookupResult }) {
   const rows = lookup.list || [];
   const warehouses = lookup.warehouses?.length ? lookup.warehouses : inventoryLookupWarehousesFromRows(rows);
@@ -1597,7 +1608,7 @@ function InventoryLookupTable({ lookup }: { lookup: InventoryLookupResult }) {
     return (
       <Empty className="workbench-inventory-lookup-empty">
         <EmptyHeader>
-          <EmptyTitle>没有匹配库存</EmptyTitle>
+          <EmptyTitle>{inventoryLookupEmptyTitle(lookup)}</EmptyTitle>
           <EmptyDescription>当前查询没有找到对应的库存 SKU。</EmptyDescription>
         </EmptyHeader>
       </Empty>

@@ -1600,7 +1600,7 @@ def _inventory_lookup_warehouse_name(row: dict) -> str:
     return name or (f"仓库{parsed_id}" if parsed_id else "仓库")
 
 
-def _inventory_lookup_rows(rows: list[dict]) -> dict:
+def _inventory_lookup_rows(rows: list[dict], *, include_zero: bool = True) -> dict:
     warehouses: dict[str, dict] = {}
     lookup: dict[str, dict] = {}
 
@@ -1615,6 +1615,8 @@ def _inventory_lookup_rows(rows: list[dict]) -> dict:
         warehouse_name = _inventory_lookup_warehouse_name(row)
         warehouse_id = row.get("warehouse_id")
         quantity = _inventory_lookup_qty(row.get("quantity") or row.get("库存数量") or row.get("inventory") or row.get("stock"))
+        if not include_zero and quantity <= 0:
+            continue
 
         if warehouse_name not in warehouses:
             warehouses[warehouse_name] = {"id": warehouse_id, "name": warehouse_name}
@@ -3072,7 +3074,7 @@ def inventory_lookup_api():
             page=1,
             page_size=limit,
         )
-        data = _inventory_lookup_rows(rows if isinstance(rows, list) else [])
+        data = _inventory_lookup_rows(rows if isinstance(rows, list) else [], include_zero=warehouse_id is None)
         data.update({
             "total": total,
             "keyword": keyword,

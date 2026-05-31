@@ -271,6 +271,8 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("inventoryLookup", workbench_source)
         self.assertIn("自己店里", workbench_source)
         self.assertIn("百鑫仓库", workbench_source)
+        self.assertIn("inventoryLookupEmptyTitle", workbench_source)
+        self.assertIn("暂无匹配库存", workbench_source)
         self.assertIn(".workbench-inventory-lookup-table", styles_source)
         self.assertIn(".workbench-inventory-lookup-zero", styles_source)
 
