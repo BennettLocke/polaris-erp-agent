@@ -4301,6 +4301,7 @@ class NativeDBClient:
         self,
         keyword: str = "",
         color: str = "",
+        warehouse_id: int | None = None,
         only_in_stock: bool = False,
         limit: int = 100,
     ) -> list[dict]:
@@ -4309,6 +4310,9 @@ class NativeDBClient:
         if color:
             where.append("s.color LIKE %s")
             params.append(f"%{color}%")
+        if warehouse_id:
+            where.append("b.warehouse_id = %s")
+            params.append(int(warehouse_id))
         if only_in_stock:
             where.append("b.quantity > 0")
         return self._inventory_rows(" AND ".join(where), params, limit=max(limit, 100))

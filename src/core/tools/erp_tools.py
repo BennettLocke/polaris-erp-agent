@@ -57,16 +57,23 @@ def inventory_query_by_warehouse(warehouse_id: int) -> list[dict]:
 
 
 @tool("inventory_search", "按商品名/颜色查询库存")
-def inventory_search(keyword: str, color: str = "", only_in_stock: bool = False, limit: int = 100) -> list[dict]:
+def inventory_search(
+    keyword: str,
+    color: str = "",
+    warehouse_id: int | None = None,
+    only_in_stock: bool = False,
+    limit: int = 100,
+) -> list[dict]:
     keyword = normalize_product_name(keyword, specs=PRODUCT_SPECS)
     try:
         rows = _inventory_service().search(
             keyword=keyword,
             color=color,
+            warehouse_id=warehouse_id,
             only_in_stock=only_in_stock,
             limit=limit,
         )
-        logger.info(f"native inventory search: keyword={keyword}, color={color}, rows={len(rows)}")
+        logger.info(f"native inventory search: keyword={keyword}, color={color}, warehouse_id={warehouse_id}, rows={len(rows)}")
         return rows
     except Exception as e:
         logger.error(f"native inventory search failed: {e}")

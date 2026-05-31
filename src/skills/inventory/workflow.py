@@ -58,7 +58,32 @@ class InventoryWorkflow(BaseWorkflow):
             text = text.replace(raw, normalized)
         return text
 
+    def _warehouse_filter_from_text(self, text: str) -> tuple[str, int | None]:
+        if any(word in text for word in ("自己店里", "自己", "店里", "本店")):
+            return "自己店里", 1
+        if any(word in text for word in ("百鑫仓库", "百鑫仓", "百鑫")):
+            return "百鑫仓库", 2
+        return "", None
+
+    def _warehouse_filter_from_params(self, params: dict | None, user_input: str) -> tuple[str, int | None]:
+        params = params or {}
+        warehouse_id = params.get("warehouse_id")
+        warehouse = str(params.get("warehouse") or "").strip()
+        try:
+            parsed_id = int(warehouse_id) if warehouse_id not in (None, "") else None
+        except (TypeError, ValueError):
+            parsed_id = None
+        if parsed_id in (1, 2):
+            return ("自己店里" if parsed_id == 1 else "百鑫仓库"), parsed_id
+        if warehouse:
+            if "自己" in warehouse or "店里" in warehouse or "本店" in warehouse:
+                return "自己店里", 1
+            if "百鑫" in warehouse:
+                return "百鑫仓库", 2
+        return self._warehouse_filter_from_text(user_input)
+
     def execute(self, user_input: str, params: dict = None) -> dict:
+        warehouse_name, warehouse_id = self._warehouse_filter_from_params(params, user_input)
         # 优先使用 LLM 预提取的参数
         if params and params.get("product_name"):
             product_name = params["product_name"]
@@ -100,6 +125,7 @@ class InventoryWorkflow(BaseWorkflow):
                 "inventory_search",
                 keyword=product_name,
                 color=color_filter,
+                warehouse_id=warehouse_id,
                 only_in_stock=True,
                 limit=100,
             )
@@ -129,6 +155,8 @@ class InventoryWorkflow(BaseWorkflow):
                         wh = inv.get("【仓库】", "")
                         qty = int(inv.get("库存数量", 0)) if inv.get("库存数量") else 0
                         color = inv.get("【颜色】", "") or spec
+                        if warehouse_id and int(inv.get("warehouse_id") or 0) != int(warehouse_id):
+                            continue
                         # 如果指定了颜色，过滤不匹配的
                         if color_filter and color_filter not in color:
                             continue

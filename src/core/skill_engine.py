@@ -494,7 +494,7 @@ class SkillEngine:
         if not fast or learned.get("intent") != fast.get("intent"):
             return learned
         merged = {k: v for k, v in fast.items() if v is not None}
-        prefer_fast_keys = {"products", "product_name", "color", "warehouse", "from", "to", "workflow_ids", "order_id"}
+        prefer_fast_keys = {"products", "product_name", "color", "warehouse", "warehouse_id", "from", "to", "workflow_ids", "order_id"}
         for key, value in learned.items():
             if value is None:
                 continue
@@ -961,14 +961,32 @@ class SkillEngine:
     def _extract_color_from_text(self, text: str) -> str:
         return extract_known_color(text)
 
+    def _extract_inventory_warehouse(self, text: str) -> tuple[str, int | None]:
+        if any(word in text for word in ("自己店里", "自己", "店里", "本店")):
+            return "自己店里", 1
+        if any(word in text for word in ("百鑫仓库", "百鑫仓", "百鑫")):
+            return "百鑫仓库", 2
+        return "", None
+
     def _extract_inventory_params(self, user_input: str) -> dict:
         result = {"intent": "inventory"}
         text = user_input
+        warehouse, warehouse_id = self._extract_inventory_warehouse(text)
+        if warehouse:
+            result["warehouse"] = warehouse
+            result["warehouse_id"] = warehouse_id
+            for word in ("自己店里", "百鑫仓库", "百鑫仓", "自己", "店里", "本店", "百鑫"):
+                text = text.replace(word, "")
         color = self._extract_color_from_text(text)
         if color:
             result["color"] = color
             text = text.replace(color, "")
-        cleanup_words = ["帮我", "帮看看", "看看", "查询", "查一下", "查下", "查", "库存", "有货", "有库存", "有什么", "哪些", "礼盒", "盒子", "的", "吗", "嘛", "呢"]
+        cleanup_words = [
+            "帮我", "帮看看", "看看", "查询", "查一下", "查下", "查",
+            "库存", "有货", "有库存", "还有没有", "有没有", "还有", "还剩",
+            "剩多少", "剩几", "多少", "够不够", "够吗", "有吗", "有么",
+            "有什么", "哪些", "礼盒", "盒子", "的", "吗", "嘛", "呢",
+        ]
         for word in cleanup_words:
             text = text.replace(word, "")
         text = self._normalize_inventory_query_keyword(text)

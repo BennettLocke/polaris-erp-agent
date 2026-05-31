@@ -14,8 +14,22 @@ class InventoryService(BusinessService):
     def warehouse_inventory(self, warehouse_id: int) -> list[dict]:
         return self.db.get_warehouse_inventory(warehouse_id)
 
-    def search(self, *, keyword: str = "", color: str = "", only_in_stock: bool = False, limit: int = 100) -> list[dict]:
-        return self.db.search_inventory(keyword=keyword, color=color, only_in_stock=only_in_stock, limit=limit)
+    def search(
+        self,
+        *,
+        keyword: str = "",
+        color: str = "",
+        warehouse_id: int | None = None,
+        only_in_stock: bool = False,
+        limit: int = 100,
+    ) -> list[dict]:
+        return self.db.search_inventory(
+            keyword=keyword,
+            color=color,
+            warehouse_id=warehouse_id,
+            only_in_stock=only_in_stock,
+            limit=limit,
+        )
 
     def balances(
         self,
