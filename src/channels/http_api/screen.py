@@ -263,6 +263,45 @@ def get_screen_html() -> str:
       word-break: break-word;
     }
     .log-item.latest span { font-size: 10px; line-height: 1.28; }
+    .inventory-display, .price-display { display: grid; gap: 4px; }
+    .inventory-display strong, .price-display strong { font-size: 9px; }
+    .inventory-display .display-summary, .price-display .display-summary {
+      color: rgba(233,255,255,.96);
+      font-size: 10px;
+      line-height: 1.18;
+      font-weight: 900;
+    }
+    .inventory-display .display-rows, .price-display .display-rows { display: grid; gap: 3px; }
+    .inventory-display .display-row, .price-display .display-row {
+      min-height: 17px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 5px;
+      border: 1px solid rgba(0, 216, 255, .18);
+      border-radius: 4px;
+      background: rgba(0, 35, 70, .34);
+      color: rgba(233,255,255,.9);
+      font-size: 9px;
+      line-height: 1.05;
+      font-weight: 850;
+    }
+    .inventory-display .display-row span, .price-display .display-row span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 9px;
+      line-height: 1.05;
+    }
+    .inventory-display .display-row em, .price-display .display-row em {
+      color: #7dd3fc;
+      font-style: normal;
+      font-size: 10px;
+      font-weight: 950;
+      white-space: nowrap;
+    }
 
     .standby-scene { position: absolute; inset: 0; transform: none; transform-origin: 50% 50%; }
     .standby-star {
@@ -665,7 +704,31 @@ def get_screen_html() -> str:
       mainTimer = setTimeout(showStandby, 15000);
     }
 
-    function renderMessages(messages) {
+    function renderDisplayPayload(display) {
+      const mode = display && display.mode;
+      if (mode !== "inventory_result" && mode !== "inventory_empty" && mode !== "price_result" && mode !== "price_empty") return "";
+      const isPrice = mode === "price_result" || mode === "price_empty";
+      const title = display.title || (isPrice ? "价格查询" : "库存查询");
+      const summary = display.summary || (mode === "inventory_empty" ? "没有查到有库存记录" : mode === "price_empty" ? "没有查到价格" : "");
+      const rows = Array.isArray(display.items) ? display.items : [];
+      const rowsHtml = rows.map((item) => {
+        const warehouse = item.warehouse_label || item.warehouse || "仓库";
+        const color = item.color || "默认";
+        const qty = item.qty ?? "";
+        const valueText = isPrice ? (item.price_text || "") : (qty === "" ? "" : `${qty}套`);
+        const label = isPrice ? color : `${warehouse} / ${color}`;
+        return `<div class="display-row"><span>${escapeHtml(label)}</span><em>${escapeHtml(valueText)}</em></div>`;
+      }).join("");
+      const detailHtml = rowsHtml ? `<div class="display-rows">${rowsHtml}</div>` : "";
+      return `<div class="log-item latest ${isPrice ? "price-display" : "inventory-display"}"><strong>${escapeHtml(title)}</strong><span class="display-summary">${escapeHtml(summary)}</span>${detailHtml}</div>`;
+    }
+
+    function renderMessages(messages, display = {}) {
+      const displayHtml = renderDisplayPayload(display);
+      if (displayHtml) {
+        $("screenLog").innerHTML = displayHtml;
+        return;
+      }
       const items = (messages || []).slice(-2);
       if (!items.length) {
         $("screenLog").innerHTML = '<div class="log-item"><strong>小星</strong><span>等待唤醒，查询结果会显示在这里。</span></div>';
@@ -682,7 +745,8 @@ def get_screen_html() -> str:
       const expression = state.expression || state.status || "idle";
       standby.dataset.expression = expression;
       const latest = state.latest || {};
-      renderMessages(state.messages || []);
+      const display = state.display || latest.display || {};
+      renderMessages(state.messages || [], display);
       latestVersion = Number(state.version || 0);
       clearTimeout(expressionTimer);
       if (expression === "talk") {

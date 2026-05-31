@@ -19,6 +19,7 @@ _state: dict[str, Any] = {
     "expression": "idle",
     "message": "",
     "latest": {},
+    "display": {},
     "messages": [],
     "updated_at": int(time.time()),
     "version": 0,
@@ -42,6 +43,7 @@ def update_screen_state(
     status: str | None = None,
     role: str | None = None,
     text: str | None = None,
+    display: dict[str, Any] | None = None,
     source: str = "api",
     reset: bool = False,
 ) -> dict[str, Any]:
@@ -53,6 +55,7 @@ def update_screen_state(
     normalized_status = _normalize_status(status)
     clean_text = (text or "").strip()
     clean_role = (role or "").strip().lower()
+    clean_display = display if isinstance(display, dict) else None
     if normalized_status == "processing":
         clean_text = ""
         clean_role = ""
@@ -63,8 +66,12 @@ def update_screen_state(
             "source": source,
             "time": now,
         }
+        if clean_display is not None:
+            item["display"] = clean_display
         _messages.append(item)
         _state["latest"] = item
+    if clean_display is not None:
+        _state["display"] = clean_display
     _state.update(
         {
             "status": normalized_status,
@@ -89,6 +96,7 @@ def notify_screen_state(
     *,
     role: str | None = None,
     text: str | None = None,
+    display: dict[str, Any] | None = None,
     url: str | None = None,
     timeout: float = 0.35,
 ) -> bool:
@@ -100,7 +108,7 @@ def notify_screen_state(
     try:
         response = requests.post(
             target,
-            json={"status": status, "role": role, "text": text},
+            json={"status": status, "role": role, "text": text, "display": display},
             timeout=timeout,
         )
         return response.status_code < 400

@@ -34,6 +34,8 @@ from src.services.business import (
     get_user_service,
     get_workflow_service,
 )
+from src.services.device_voice import build_device_voice_command_response
+from src.services.device_hotwords import build_device_asr_hotwords_response
 from src.utils import get_logger
 
 logger = get_logger("sjagent.http_api")
@@ -462,6 +464,7 @@ def _admin_auth_guard():
         path in public_paths
         or path.startswith("/api/auth/")
         or path.startswith("/api/screen/")
+        or path.startswith("/api/device/")
         or path.startswith("/api/miniapp-design/assets/")
         or path == "/api/miniapp/config"
         or path.startswith("/api/mini/")
@@ -2141,13 +2144,55 @@ def screen_state_api():
     status = body.get("status") or body.get("expression") or "idle"
     role = body.get("role")
     text = body.get("text") or body.get("message")
+    display = body.get("display") if isinstance(body.get("display"), dict) else None
     reset = bool(body.get("reset"))
     return jsonify(
         {
             "code": 0,
-            "data": update_screen_state(status=status, role=role, text=text, source="screen-api", reset=reset),
+            "data": update_screen_state(
+                status=status,
+                role=role,
+                text=text,
+                display=display,
+                source="screen-api",
+                reset=reset,
+            ),
         }
     )
+
+
+@app.route("/api/device/voice/command", methods=["POST"])
+def device_voice_command_api():
+    """Device command endpoint for the Orange Pi voice loop."""
+    body = request.get_json(silent=True) or {}
+    text = str(body.get("text") or body.get("message") or "").strip()
+    if not text:
+        return jsonify({"code": 400, "msg": "text is required"}), 400
+    try:
+        result = build_device_voice_command_response(
+            text=text,
+            device_id=str(body.get("device_id") or body.get("deviceId") or ""),
+            session_id=str(body.get("session_id") or body.get("sessionId") or ""),
+            trace_id=str(body.get("trace_id") or body.get("traceId") or ""),
+            asr_confidence=body.get("asr_confidence") if "asr_confidence" in body else body.get("asrConfidence"),
+        )
+        return jsonify({"code": 0, "data": _safe_json(result)})
+    except Exception as e:
+        logger.error(f"设备语音命令处理失败: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/device/asr/hotwords", methods=["GET"])
+def device_asr_hotwords_api():
+    """Versioned ASR hotwords for Orange Pi devices."""
+    try:
+        result = build_device_asr_hotwords_response(
+            device_id=str(request.args.get("device_id") or request.args.get("deviceId") or "")
+        )
+        return jsonify({"code": 0, "data": _safe_json(result)})
+    except Exception as e:
+        logger.error(f"设备 ASR 热词生成失败: {e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
 
 
 def _screen_dashboard_payload() -> dict:

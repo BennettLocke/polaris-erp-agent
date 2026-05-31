@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import wave
 from pathlib import Path
 from array import array
@@ -338,6 +339,30 @@ def run_agent_command(command: str, *, session_id: str) -> str:
 
         _AGENT = Agent()
     return _AGENT.run(command, user_id="orangepi_voice", session_id=session_id)
+
+
+def post_device_command(args, command: str) -> dict:
+    payload = {
+        "device_id": getattr(args, "device_id", "") or "",
+        "session_id": getattr(args, "agent_session_id", "") or "orangepi_voice",
+        "trace_id": f"voice-{int(time.time() * 1000)}",
+        "source": "voice",
+        "text": command,
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        getattr(args, "device_command_url"),
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=getattr(args, "device_command_timeout", 8)) as response:
+        raw = response.read().decode("utf-8", "replace")
+    body = json.loads(raw or "{}")
+    if int(body.get("code") or 0) != 0:
+        raise RuntimeError(body.get("msg") or "device command api failed")
+    result = body.get("data") if isinstance(body.get("data"), dict) else {}
+    return result
 
 
 def record_wav(path: Path, *, device: str, seconds: float) -> None:
@@ -901,12 +926,12 @@ def play_prompt_async(group: str, *, device: str = "", requested_at: float | Non
     threading.Thread(target=_play, name=f"voice-prompt-{group}", daemon=True).start()
 
 
-def screen_notify(args, status: str, *, role: str | None = None, text: str | None = None) -> None:
+def screen_notify(args, status: str, *, role: str | None = None, text: str | None = None, display: dict | None = None) -> None:
     url = getattr(args, "screen_state_url", "") or ""
     if not url:
         return
     threading.Thread(
-        target=lambda: notify_screen_state(status, role=role, text=text, url=url),
+        target=lambda: notify_screen_state(status, role=role, text=text, display=display, url=url),
         name="screen-state-update",
         daemon=True,
     ).start()
@@ -985,6 +1010,23 @@ def handle_command(args, command: str) -> bool:
     screen_notify(args, "processing")
     if args.processing_prompt:
         play_prompt_async("processing", device=args.output_device)
+    if getattr(args, "device_command_url", ""):
+        try:
+            device_result = post_device_command(args, command)
+            print(f"DEVICE_COMMAND {json.dumps(device_result, ensure_ascii=False)}", flush=True)
+        except Exception as exc:
+            print(f"DEVICE_COMMAND_ERROR {exc}", flush=True)
+            result = "服务器没连上，稍后再试。"
+            screen_notify(args, "error", role="assistant", text=result)
+            speak_text(args, result)
+            return True
+        speak = str(device_result.get("speak") or "处理完成。")
+        display = device_result.get("display") if isinstance(device_result.get("display"), dict) else {}
+        action = device_result.get("device_action") if isinstance(device_result.get("device_action"), dict) else {}
+        screen_text = display.get("summary") or display.get("title") or speak
+        screen_notify(args, "talk", role="assistant", text=str(screen_text or ""), display=display)
+        speak_text(args, speak)
+        return not bool(action.get("listen_again"))
     try:
         result = run_agent_command(command, session_id=args.agent_session_id)
     except Exception as exc:
@@ -1374,6 +1416,9 @@ def main() -> None:
     parser.add_argument("--command-window-seconds", type=float, default=8.0)
     parser.add_argument("--wake-reply-ignore-seconds", type=float, default=0.8)
     parser.add_argument("--agent-session-id", default="orangepi_voice")
+    parser.add_argument("--device-id", default=os.getenv("SJ_DEVICE_ID", "orangepi-xiaoxing-01"))
+    parser.add_argument("--device-command-url", default=os.getenv("SJ_DEVICE_COMMAND_URL", ""))
+    parser.add_argument("--device-command-timeout", type=int, default=int(os.getenv("SJ_DEVICE_COMMAND_TIMEOUT", "8") or 8))
     parser.add_argument("--speak-results", action="store_true")
     parser.add_argument("--processing-prompt", action="store_true")
     parser.add_argument("--tts-provider", choices=["mimo", "volc"], default="mimo")
