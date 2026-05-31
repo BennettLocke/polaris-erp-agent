@@ -1,0 +1,9 @@
+{
+  "base_url": "https://ai.513sjbz.com",
+  "print_token": "",
+  "check_interval": 3,
+  "printer_name": "Kyocera TASKalfa 1800",
+  "chromium_path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "agent_name": "sjAutoPrint",
+  "service_name": "sjAutoPrint"
+}

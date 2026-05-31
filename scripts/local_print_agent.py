@@ -17,20 +17,78 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
 
-BASE_URL = os.environ.get("SJAGENT_PRINT_BASE_URL", "http://127.0.0.1:8081").rstrip("/")
-PRINT_TOKEN = os.environ.get("SJAGENT_PRINT_AGENT_TOKEN", "").strip()
-CHECK_INTERVAL = max(1, int(os.environ.get("SJAGENT_PRINT_CHECK_INTERVAL", "3") or 3))
-PRINTER_NAME = os.environ.get("SJAGENT_PRINTER_NAME", "Kyocera TASKalfa 1800").strip()
-CHROMIUM_PATH = os.environ.get(
-    "CHROMIUM_PATH",
-    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-).strip()
-
 SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "config.json"
+DEFAULT_CONFIG = {
+    "base_url": "https://ai.513sjbz.com",
+    "print_token": "",
+    "check_interval": 3,
+    "printer_name": "Kyocera TASKalfa 1800",
+    "chromium_path": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "agent_name": "sjAutoPrint",
+    "service_name": "sjAutoPrint",
+}
+
+
+def _as_positive_int(value: object, fallback: int = 3) -> int:
+    try:
+        parsed = int(str(value or fallback).strip())
+    except (TypeError, ValueError):
+        parsed = fallback
+    return max(1, parsed)
+
+
+def load_print_agent_config(
+    config_path: str | Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict:
+    env = os.environ if environ is None else environ
+    selected_path = Path(env.get("SJAGENT_PRINT_CONFIG") or config_path or DEFAULT_CONFIG_PATH)
+    config = dict(DEFAULT_CONFIG)
+
+    if selected_path.exists():
+        try:
+            loaded = json.loads(selected_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                config.update({str(key): value for key, value in loaded.items()})
+        except Exception as exc:
+            print(f"[sjAutoPrint] Failed to read config {selected_path}: {exc}", file=sys.stderr)
+
+    env_overrides = {
+        "base_url": env.get("SJAGENT_PRINT_BASE_URL"),
+        "print_token": env.get("SJAGENT_PRINT_AGENT_TOKEN"),
+        "check_interval": env.get("SJAGENT_PRINT_CHECK_INTERVAL"),
+        "printer_name": env.get("SJAGENT_PRINTER_NAME"),
+        "chromium_path": env.get("CHROMIUM_PATH"),
+        "agent_name": env.get("SJAGENT_PRINT_AGENT_NAME"),
+        "service_name": env.get("SJAGENT_PRINT_SERVICE_NAME"),
+    }
+    for key, value in env_overrides.items():
+        if value not in (None, ""):
+            config[key] = value
+
+    config["base_url"] = str(config.get("base_url") or DEFAULT_CONFIG["base_url"]).rstrip("/")
+    config["print_token"] = str(config.get("print_token") or "").strip()
+    config["check_interval"] = _as_positive_int(config.get("check_interval"), DEFAULT_CONFIG["check_interval"])
+    config["printer_name"] = str(config.get("printer_name") or "").strip()
+    config["chromium_path"] = str(config.get("chromium_path") or "").strip()
+    config["agent_name"] = str(config.get("agent_name") or DEFAULT_CONFIG["agent_name"]).strip()
+    config["service_name"] = str(config.get("service_name") or DEFAULT_CONFIG["service_name"]).strip()
+    config["config_path"] = str(selected_path)
+    return config
+
+
+CONFIG = load_print_agent_config()
+BASE_URL = CONFIG["base_url"]
+PRINT_TOKEN = CONFIG["print_token"]
+CHECK_INTERVAL = CONFIG["check_interval"]
+PRINTER_NAME = CONFIG["printer_name"]
+CHROMIUM_PATH = CONFIG["chromium_path"]
 NODE_SCRIPT = SCRIPT_DIR / "local_print_render_pdf.js"
 PDF_DIR = SCRIPT_DIR / "pdf_output"
 LOG_DIR = SCRIPT_DIR / "logs"
@@ -40,15 +98,20 @@ SUMATRA_PATH = SCRIPT_DIR / "SumatraPDF" / "SumatraPDF-3.5.2-64.exe"
 def _setup_logging() -> logging.Logger:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / f"sjagent_print_{datetime.now().strftime('%Y%m%d')}.log"
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
-    return logging.getLogger("sjagent_print")
+    agent_logger = logging.getLogger("sjagent_print")
+    agent_logger.setLevel(logging.INFO)
+    agent_logger.propagate = False
+    if agent_logger.handlers:
+        return agent_logger
+
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    agent_logger.addHandler(file_handler)
+    agent_logger.addHandler(stream_handler)
+    return agent_logger
 
 
 logger = _setup_logging()
@@ -253,6 +316,8 @@ def process_task(task: dict) -> None:
 
 def main() -> None:
     logger.info("=== sjagent 本地自动打印启动 ===")
+    logger.info("Agent: %s", CONFIG.get("agent_name") or "sjAutoPrint")
+    logger.info("Config: %s", CONFIG.get("config_path") or DEFAULT_CONFIG_PATH)
     logger.info("API: %s", BASE_URL)
     logger.info("Node脚本: %s", NODE_SCRIPT)
     logger.info("检查间隔: %s秒", CHECK_INTERVAL)
