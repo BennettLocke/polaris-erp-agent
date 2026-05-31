@@ -23,7 +23,7 @@
 | 工作流订单 | `sxo_workflow_order`、API `WorkflowOrder*` | `src/core/tools/order_tools.py` | 设计稿订单依赖 ShopXO 表 | 自有 `workflow_order` |
 | 打印任务 | ERP API `SalesPrintTask*` | `src/core/tools/order_tools.py` | 打印队列受 ERP 页面影响 | 自有 `print_task` |
 | 小程序登录 | ShopXO `user/login`、`tokenuserinfo` | `src/channels/http_api/__init__.py` | 用户认证绑定商城账号 | 自有 `auth_user` + token/session |
-| 语音热词 | 直查 ERP 商品、客户、仓库、销售明细 | `src/services/aliyun_asr.py` | 热词来源跟旧表绑定 | 从自有商品/客户/仓库生成 |
+| 语音热词 | 直查 ERP 商品、客户、仓库、销售明细 | `src/services/volc_realtime_asr.py` | 火山 ASR 请求动态携带热词 | 从自有商品/客户/仓库生成 |
 
 ## 2. 目标数据模型总表
 
@@ -95,7 +95,7 @@
 | `erp_tools.sales_add` | 开销售单 | `SalesService.create_order` | 新库试运行，不扣旧库 | 新库事务开单扣库存 |
 | `erp_tools.sales_delete` | 删除销售单 | `SalesService.delete_order` | 新库软删除对账 | 反向流水回滚库存 |
 | `order_tools.workflow_order_save` | 保存工作流订单 | `WorkflowService.save_order` | 切新库，保留字段兼容 | 完全自有 |
-| `aliyun_asr.collect_hotwords` | 从旧 ERP 取热词 | `HotwordService.collect` | 改读新商品/客户/仓库 | 旧库无依赖 |
+| `volc_realtime_asr._fetch_dynamic_hotwords` | 从自有库取热词 | 火山 ASR `corpus.context` 动态热词 | 改读新商品/客户/仓库 | 旧库无依赖 |
 | `auth_login/auth_me` | ShopXO 登录和 token 校验 | `AuthService` | 先桥接旧 token | 自有用户体系 |
 
 ## 6. 分阶段迁移排期

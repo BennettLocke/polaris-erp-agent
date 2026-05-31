@@ -26,7 +26,6 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.services.aliyun_short_asr import recognize_pcm16 as recognize_pcm16_aliyun  # noqa: E402
 from src.services.local_robot_features import handle_local_robot_command, is_local_robot_command  # noqa: E402
 from src.services.mimo_tts import synthesize  # noqa: E402
 from src.services.volc_tts import synthesize_stream as synthesize_volc_stream  # noqa: E402
@@ -840,13 +839,6 @@ def _capture_alsa(args, period_size: int):
 
 
 def recognize(args, pcm: bytes) -> str:
-    if args.asr_provider == "aliyun":
-        return recognize_pcm16_aliyun(
-            pcm,
-            sample_rate=16000,
-            timeout=args.asr_timeout,
-            enable_voice_detection=not args.no_cloud_vad,
-        )
     return recognize_pcm16_volc(pcm, timeout=args.asr_timeout)
 
 
@@ -1355,8 +1347,7 @@ def main() -> None:
     parser.add_argument("--cooldown", type=float, default=2.5)
     parser.add_argument("--rms-threshold", type=int, default=120)
     parser.add_argument("--gain", type=float, default=8.0, help="PCM gain before ASR")
-    parser.add_argument("--no-cloud-vad", action="store_true", help="Disable Aliyun endpoint VAD")
-    parser.add_argument("--asr-provider", choices=["volc", "aliyun"], default="volc")
+    parser.add_argument("--asr-provider", choices=["volc"], default="volc")
     parser.add_argument("--asr-timeout", type=int, default=15)
     parser.add_argument("--stream-command-asr", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--asr-preprocess", action=argparse.BooleanOptionalAction, default=True)

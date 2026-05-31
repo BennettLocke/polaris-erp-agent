@@ -20,7 +20,6 @@ openwakeword==0.6.0; platform_system == "Linux"
 opencv-python==4.10.0.84
 
 oss2==2.19.0
-aliyun-python-sdk-core==2.16.0
 
 pyyaml==6.0.2
 

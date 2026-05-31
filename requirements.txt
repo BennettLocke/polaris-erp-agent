@@ -22,7 +22,6 @@ opencv-python>=4.10.0
 
 # OSS
 oss2>=2.19.0
-aliyun-python-sdk-core>=2.16.0
 
 # YAML 配置
 pyyaml>=6.0.2

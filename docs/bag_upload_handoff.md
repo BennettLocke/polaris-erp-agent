@@ -85,5 +85,5 @@ systemctl restart sjagent.service
 ## 注意事项
 
 - 不要把 Windows 的微软雅黑字体直接提交或复制到服务器作为项目字体，授权不稳。服务器使用 `fonts-noto-cjk`。
-- `data/aliyun_asr_hotwords.json` 是 ASR 热词同步运行时文件，不属于泡袋模板功能文档，不建议跟泡袋改动一起提交。
+- 泡袋模板交接只包含泡袋相关脚本、模板和示例图。
 - `data/generated/` 和 `data/uploads/` 里的泡袋测试图属于临时产物，不应作为功能提交的一部分。

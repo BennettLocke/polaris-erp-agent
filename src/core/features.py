@@ -9,7 +9,6 @@ FALSE_VALUES = {"0", "false", "no", "off", "disable", "disabled"}
 LITE_PROFILES = {"lite", "orangepi", "orangepi_desktop", "desktop_robot"}
 LITE_DEFAULT_DISABLED = {
     "bag_upload",
-    "asr_hotword_scheduler",
 }
 
 
@@ -69,7 +68,6 @@ def feature_enabled(feature: str, default: bool = True) -> bool:
 def disabled_feature_reply(feature: str) -> str:
     labels = {
         "bag_upload": "泡袋上传处理",
-        "asr_hotword_scheduler": "阿里云 ASR 热词后台同步",
     }
     label = labels.get(feature, feature)
     return (

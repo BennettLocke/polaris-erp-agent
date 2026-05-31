@@ -383,7 +383,6 @@ API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/product/\d+/shelves$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customer/create$"), "开单"),
     ({"POST"}, re.compile(r"^/api/workflow/orders$"), "开单"),
-    ({"POST"}, re.compile(r"^/api/asr/hotwords/sync$"), "设置"),
 ]
 
 def _web_auth_required_response():
@@ -1912,15 +1911,6 @@ def init_api(agent: Agent):
     """初始化 HTTP API"""
     global _agent
     _agent = agent
-    if not feature_enabled("asr_hotword_scheduler"):
-        logger.info("Aliyun ASR hotword scheduler disabled by device feature switch")
-        return
-    try:
-        from src.services.aliyun_asr import start_hotword_scheduler
-        if start_hotword_scheduler():
-            logger.info("阿里云 ASR 热词每日同步任务已启动")
-    except Exception as e:
-        logger.warning(f"阿里云 ASR 热词同步任务未启动: {e}")
 
 
 
@@ -5135,53 +5125,6 @@ def auth_me():
     except Exception as e:
         logger.error(f"北极星用户信息校验异常: {e}")
         return jsonify({"code": 500, "msg": f"北极星用户信息校验异常: {e}"}), 500
-
-
-@app.route("/api/asr/aliyun-token", methods=["GET"])
-def aliyun_asr_token():
-    """Return a short-lived Aliyun NLS token for mini-program ASR."""
-    try:
-        from src.services.aliyun_asr import create_aliyun_token
-        token = create_aliyun_token(force=request.args.get("force") in ("1", "true", "True"))
-        return jsonify({
-            "code": 0,
-            "data": {
-                "token": token.get("token"),
-                "expire_time": token.get("expire_time"),
-                "appkey": token.get("appkey"),
-                "vocabulary_id": token.get("vocabulary_id") or "",
-            }
-        })
-    except Exception as e:
-        logger.error(f"阿里云 ASR Token 获取失败: {e}")
-        return jsonify({"code": 500, "msg": str(e)}), 500
-
-
-@app.route("/api/asr/hotwords/status", methods=["GET"])
-def aliyun_asr_hotwords_status():
-    """Return local hotword sync status."""
-    try:
-        from src.services.aliyun_asr import get_hotword_state
-        return jsonify({"code": 0, "data": get_hotword_state()})
-    except Exception as e:
-        logger.error(f"阿里云 ASR 热词状态获取失败: {e}")
-        return jsonify({"code": 500, "msg": str(e)}), 500
-
-
-@app.route("/api/asr/hotwords/sync", methods=["POST"])
-def aliyun_asr_hotwords_sync():
-    """Manually sync ERP hotwords to Aliyun ASR."""
-    try:
-        from src.services.aliyun_asr import sync_hotwords
-        force = request.args.get("force") in ("1", "true", "True")
-        body = request.get_json(silent=True) or {}
-        if body.get("force") is not None:
-            force = bool(body.get("force"))
-        result = sync_hotwords(force=force)
-        return jsonify({"code": 0, "data": result})
-    except Exception as e:
-        logger.error(f"阿里云 ASR 热词同步失败: {e}")
-        return jsonify({"code": 500, "msg": str(e)}), 500
 
 
 @app.route("/health", methods=["GET"])
