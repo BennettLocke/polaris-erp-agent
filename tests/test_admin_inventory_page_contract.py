@@ -104,6 +104,29 @@ class AdminInventoryPageContractTest(unittest.TestCase):
         self.assertIn("stock_status == \"zero\"", db_source)
         self.assertIn("stock_status == \"negative\"", db_source)
 
+    def test_inventory_action_dialog_searches_product_level_sku_candidates(self):
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        inventory_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "inventory" / "inventory-page.tsx"
+        ).read_text(encoding="utf-8")
+        style_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+        dialog_section = inventory_source.split("function InventoryActionDialog", 1)[1].split("function InventoryRiskConfirmDialog", 1)[0]
+
+        self.assertIn("pageSize?: number", api_source)
+        self.assertIn("INVENTORY_ACTION_LOOKUP_PAGE_SIZE", inventory_source)
+        self.assertIn("function inventoryActionLookupKeyword", inventory_source)
+        self.assertIn('const nextLookupKeyword = row ? inventoryActionLookupKeyword(row) : ""', dialog_section)
+        self.assertIn("setLookupKeyword(nextLookupKeyword)", dialog_section)
+        self.assertIn("pageSize: INVENTORY_ACTION_LOOKUP_PAGE_SIZE", dialog_section)
+        self.assertIn('stockStatus: "all"', dialog_section)
+        self.assertNotIn("rowTitle(row)} ${rowColor(row)", dialog_section)
+        self.assertNotIn("!action?.row ?", dialog_section)
+        self.assertIn("rowWarehouseLabel(row)", dialog_section)
+        self.assertIn("inventory-action-result-main", dialog_section)
+        self.assertIn("inventory-action-result-meta", dialog_section)
+        self.assertIn(".inventory-action-result-main", style_source)
+        self.assertIn(".inventory-action-result-meta", style_source)
+
     def test_react_inventory_page_follows_inventory_handbook_contract(self):
         app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")
         api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")

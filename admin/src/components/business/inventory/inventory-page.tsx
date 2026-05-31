@@ -132,6 +132,7 @@ const INVENTORY_PAGE_SIZE_MIN = 20;
 const INVENTORY_PAGE_SIZE_MAX = 80;
 const INVENTORY_TABLE_ROW_HEIGHT = 46;
 const INVENTORY_PAGE_SIZE_RESIZE_DELAY = 160;
+const INVENTORY_ACTION_LOOKUP_PAGE_SIZE = 120;
 const STOCKTAKE_RISK_ABSOLUTE = 20;
 const STOCKTAKE_RISK_RATIO = 0.5;
 
@@ -191,6 +192,10 @@ function rowTitle(row?: InventoryBalance | null) {
 
 function rowColor(row?: InventoryBalance | null) {
   return row?.color || row?.spec || "默认颜色";
+}
+
+function inventoryActionLookupKeyword(row?: InventoryBalance | null) {
+  return row ? rowTitle(row) : "";
 }
 
 function rowUnit(row?: InventoryBalance | null) {
@@ -1083,9 +1088,10 @@ function InventoryActionDialog({
     const row = action.row || null;
     const defaultWarehouseId = String(row?.warehouse_id || warehouseOptions[0]?.id || 2);
     const nextEnterWarehouse = String(warehouseOptions.find((warehouse) => String(warehouse.id) !== defaultWarehouseId)?.id || defaultWarehouseId);
+    const nextLookupKeyword = row ? inventoryActionLookupKeyword(row) : "";
     setSelectedRow(row);
-    setLookupKeyword(row ? `${rowTitle(row)} ${rowColor(row)}` : "");
-    setLookupRows([]);
+    setLookupKeyword(nextLookupKeyword);
+    setLookupRows(row ? [row] : []);
     setWarehouseId(defaultWarehouseId);
     setOutWarehouseId(defaultWarehouseId);
     setEnterWarehouseId(nextEnterWarehouse);
@@ -1093,13 +1099,26 @@ function InventoryActionDialog({
     setNote("");
     setError("");
     setRiskConfirm(null);
+    if (nextLookupKeyword) {
+      void searchSkuRows(nextLookupKeyword);
+    }
   }, [action, mode, warehouseOptions]);
 
-  async function searchSkuRows() {
+  async function searchSkuRows(nextKeyword = lookupKeyword) {
+    const keyword = nextKeyword.trim();
+    if (!keyword) {
+      setLookupRows([]);
+      return;
+    }
     setLoadingLookup(true);
     setError("");
     try {
-      const data = await api.inventoryBalances({ keyword: lookupKeyword, page: 1, pageSize: 20 });
+      const data = await api.inventoryBalances({
+        keyword,
+        stockStatus: "all",
+        page: 1,
+        pageSize: INVENTORY_ACTION_LOOKUP_PAGE_SIZE
+      });
       setLookupRows(filterStockTrackedBalances(data.list || []));
     } catch (err) {
       setError(err instanceof Error ? err.message : "商品/SKU 搜索失败");
@@ -1225,43 +1244,47 @@ function InventoryActionDialog({
               ) : null}
             </div>
           </Field>
-          {!action?.row ? (
-            <Field>
-              <FieldLabel>搜索 SKU</FieldLabel>
-              <div className="inventory-action-search">
-                <Input
-                  value={lookupKeyword}
-                  placeholder="输入商品、颜色或 SJ 编号"
-                  onChange={(event) => setLookupKeyword(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void searchSkuRows();
-                  }}
-                />
-                <Button type="button" variant="outline" size="sm" disabled={loadingLookup} onClick={() => void searchSkuRows()}>
-                  <Search data-icon="inline-start" /> 搜索
-                </Button>
-              </div>
-              {lookupRows.length ? (
-                <div className="inventory-action-results">
-                  {lookupRows.map((row) => (
-                    <Button
-                      key={`${rowProductId(row)}-${row.warehouse_id || "warehouse"}`}
-                      type="button"
-                      variant={selectedRow === row ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => {
-                        setSelectedRow(row);
-                        setWarehouseId(String(row.warehouse_id || warehouseId));
-                        setOutWarehouseId(String(row.warehouse_id || outWarehouseId));
-                      }}
-                    >
+          <Field>
+            <FieldLabel>搜索 SKU</FieldLabel>
+            <div className="inventory-action-search">
+              <Input
+                value={lookupKeyword}
+                placeholder="输入商品、颜色或 SJ 编号"
+                onChange={(event) => setLookupKeyword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void searchSkuRows();
+                }}
+              />
+              <Button type="button" variant="outline" size="sm" disabled={loadingLookup} onClick={() => void searchSkuRows()}>
+                <Search data-icon="inline-start" /> 搜索
+              </Button>
+            </div>
+            {lookupRows.length ? (
+              <div className="inventory-action-results">
+                {lookupRows.map((row) => (
+                  <Button
+                    key={`${rowProductId(row)}-${row.warehouse_id || "warehouse"}`}
+                    type="button"
+                    variant={selectedRow === row ? "default" : "outline"}
+                    size="sm"
+                    className="inventory-action-result-button"
+                    onClick={() => {
+                      setSelectedRow(row);
+                      setWarehouseId(String(row.warehouse_id || warehouseId));
+                      setOutWarehouseId(String(row.warehouse_id || outWarehouseId));
+                    }}
+                  >
+                    <span className="inventory-action-result-main">
                       {rowTitle(row)} · {rowColor(row)} · {row.sku_no || rowProductId(row)}
-                    </Button>
-                  ))}
-                </div>
-              ) : null}
-            </Field>
-          ) : null}
+                    </span>
+                    <span className="inventory-action-result-meta">
+                      {rowWarehouseLabel(row)} · 当前 {quantityText(row.quantity ?? row.inventory ?? row.stock)} {rowUnit(row)}
+                    </span>
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+          </Field>
           {mode === "transfer" ? (
             <div className="inventory-action-two-cols">
               <Field>

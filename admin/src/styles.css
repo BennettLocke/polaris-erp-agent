@@ -6087,6 +6087,35 @@ textarea,
   margin-top: 8px;
 }
 
+.inventory-action-result-button {
+  height: auto;
+  min-height: 46px;
+  display: grid;
+  justify-items: start;
+  align-content: center;
+  gap: 2px;
+  text-align: left;
+}
+
+.inventory-action-result-main,
+.inventory-action-result-meta {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inventory-action-result-main {
+  font-weight: 650;
+}
+
+.inventory-action-result-meta {
+  color: var(--sj-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .inventory-action-two-cols {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
