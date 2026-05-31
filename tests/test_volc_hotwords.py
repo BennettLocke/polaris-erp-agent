@@ -38,6 +38,10 @@ class VolcHotwordsTests(unittest.TestCase):
         self.assertNotIn(XIAONING, volc_realtime_asr._split_hotwords([XIAONING, "\u67e5\u8be2"]))
         self.assertNotIn(XIAONING_ALT, volc_realtime_asr._split_hotwords([XIAONING_ALT, "\u67e5\u8be2"]))
 
+    def test_default_hotwords_include_price_query_words(self) -> None:
+        for word in ("多少钱", "价格", "售价", "单价"):
+            self.assertIn(word, volc_realtime_asr.DEFAULT_HOTWORDS)
+
     def test_dynamic_hotwords_use_current_party_schema_and_gift_titles(self) -> None:
         original = volc_realtime_asr.get_native_db_client
         volc_realtime_asr.get_native_db_client = lambda: FakeDb()
