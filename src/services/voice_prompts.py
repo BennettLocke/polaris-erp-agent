@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import random
 import shutil
 import subprocess
 import threading
@@ -18,7 +17,11 @@ from src.utils import get_logger
 
 logger = get_logger("sjagent.services.voice_prompts")
 _PLAY_LOCK = threading.Lock()
+_PROMPT_CYCLE_LOCK = threading.Lock()
+_PROMPT_CYCLE_INDEX: dict[str, int] = {}
 _SILENCE_TAIL_MS = 220
+_TARGET_PROMPT_RMS = 2200
+_PROMPT_PEAK_LIMIT = 26000
 
 
 @dataclass(frozen=True)
@@ -69,8 +72,95 @@ def get_prompts(group: str) -> list[VoicePrompt]:
     return prompts
 
 
+def reset_prompt_cycle(group: str | None = None) -> None:
+    with _PROMPT_CYCLE_LOCK:
+        if group is None:
+            _PROMPT_CYCLE_INDEX.clear()
+        else:
+            _PROMPT_CYCLE_INDEX[group] = 0
+
+
 def pick_prompt(group: str) -> VoicePrompt:
-    return random.choice(get_prompts(group))
+    prompts = get_prompts(group)
+    with _PROMPT_CYCLE_LOCK:
+        index = _PROMPT_CYCLE_INDEX.get(group, 0)
+        prompt = prompts[index % len(prompts)]
+        _PROMPT_CYCLE_INDEX[group] = index + 1
+        return prompt
+
+
+def _prompt_target_rms() -> int:
+    raw = os.getenv("VOICE_PROMPT_TARGET_RMS", "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            logger.warning(f"Invalid VOICE_PROMPT_TARGET_RMS: {raw}")
+    return _TARGET_PROMPT_RMS
+
+
+def _pcm16_rms_and_peak(frames: bytes) -> tuple[int, int]:
+    if len(frames) < 2:
+        return 0, 0
+    count = len(frames) // 2
+    total = 0
+    peak = 0
+    for index in range(0, count * 2, 2):
+        sample = int.from_bytes(frames[index:index + 2], "little", signed=True)
+        total += sample * sample
+        peak = max(peak, abs(sample))
+    return int((total / count) ** 0.5), peak
+
+
+def _scale_pcm16(frames: bytes, gain: float) -> bytes:
+    output = bytearray(len(frames))
+    usable = (len(frames) // 2) * 2
+    for index in range(0, usable, 2):
+        sample = int.from_bytes(frames[index:index + 2], "little", signed=True)
+        scaled = max(-32768, min(32767, int(round(sample * gain))))
+        output[index:index + 2] = scaled.to_bytes(2, "little", signed=True)
+    if usable < len(frames):
+        output[usable:] = frames[usable:]
+    return bytes(output)
+
+
+def normalize_prompt_wav(
+    path: str | Path,
+    *,
+    target_rms: int | None = None,
+    peak_limit: int = _PROMPT_PEAK_LIMIT,
+) -> Path:
+    """Normalize cached PCM16 wav prompts so fixed replies have similar loudness."""
+    wav_path = Path(path)
+    target = _prompt_target_rms() if target_rms is None else target_rms
+    if target <= 0 or not wav_path.exists() or wav_path.suffix.lower() != ".wav":
+        return wav_path
+    try:
+        with wave.open(str(wav_path), "rb") as source:
+            params = source.getparams()
+            frames = source.readframes(source.getnframes())
+    except Exception as exc:
+        logger.warning(f"Skip prompt normalization for {wav_path}: {exc}")
+        return wav_path
+    if params.sampwidth != 2 or not frames:
+        return wav_path
+    rms, peak = _pcm16_rms_and_peak(frames)
+    if rms <= 0 or peak <= 0:
+        return wav_path
+    gain = min(target / rms, peak_limit / peak)
+    if abs(gain - 1.0) < 0.03:
+        return wav_path
+    normalized = _scale_pcm16(frames, gain)
+    temp_path = wav_path.with_suffix(f"{wav_path.suffix}.normalizing")
+    with wave.open(str(temp_path), "wb") as target_file:
+        target_file.setparams(params)
+        target_file.writeframes(normalized)
+    os.replace(temp_path, wav_path)
+    next_rms, next_peak = _pcm16_rms_and_peak(normalized)
+    logger.info(
+        f"Normalized voice prompt: path={wav_path.name}, rms={rms}->{next_rms}, peak={peak}->{next_peak}"
+    )
+    return wav_path
 
 
 def _prompt_provider() -> str:
@@ -101,10 +191,10 @@ def _synthesize_with_volc(text: str, path: Path) -> Path:
 def ensure_prompt(prompt: VoicePrompt, *, force: bool = False) -> Path:
     path = prompt_path(prompt)
     if path.exists() and path.stat().st_size > 0 and not force:
-        return path
+        return normalize_prompt_wav(path)
     if _prompt_provider() == "volc":
-        return _synthesize_with_volc(prompt.text, path)
-    return synthesize_mimo(prompt.text, path, context=prompt.context)
+        return normalize_prompt_wav(_synthesize_with_volc(prompt.text, path))
+    return normalize_prompt_wav(synthesize_mimo(prompt.text, path, context=prompt.context))
 
 
 def ensure_group(group: str, *, force: bool = False) -> list[Path]:
