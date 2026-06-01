@@ -298,6 +298,10 @@ def _clean_product_title(value: str) -> str:
     return str(value or "").replace("【", "").replace("】", "").strip()
 
 
+def _compact_product_title(value: str) -> str:
+    return _clean_product_title(value).replace(" ", "")
+
+
 def _query_payload(
     *,
     original_text: str,
@@ -397,8 +401,20 @@ def _inventory_speak(product_name: str, items: list[dict]) -> str:
     for item in items:
         grouped.setdefault(item.get("warehouse_label") or "未知仓库", []).append(item)
 
+    query_name = _compact_product_title(product_name)
+    item_names = [_compact_product_title(str(item.get("product_name") or product_name)) for item in items]
+    include_item_names = any(name and name != query_name for name in item_names)
+
     parts = []
     for warehouse, rows in grouped.items():
-        color_parts = [f"{row.get('color') or '默认'}有{int(row.get('qty') or 0)}套" for row in rows]
+        color_parts = []
+        for row in rows:
+            color = row.get("color") or "默认"
+            qty = int(row.get("qty") or 0)
+            if include_item_names:
+                title = _clean_product_title(str(row.get("product_name") or product_name))
+                color_parts.append(f"{title}{color}有{qty}套")
+            else:
+                color_parts.append(f"{color}有{qty}套")
         parts.append(f"{warehouse}{'，'.join(color_parts)}")
     return f"{product_name}，{'；'.join(parts)}。"

@@ -52,6 +52,7 @@ class ScreenStateDisplayTests(unittest.TestCase):
         self.assertIn("const display = state.display || latest.display || {}", html)
         self.assertIn("inventory-display", html)
         self.assertIn("item.warehouse_label || item.warehouse", html)
+        self.assertIn("item.product_name", html)
         self.assertIn("item.color", html)
         self.assertIn("item.qty", html)
 

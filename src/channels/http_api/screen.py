@@ -713,10 +713,11 @@ def get_screen_html() -> str:
       const rows = Array.isArray(display.items) ? display.items : [];
       const rowsHtml = rows.map((item) => {
         const warehouse = item.warehouse_label || item.warehouse || "仓库";
+        const product = item.product_name || item.title || item.name || "";
         const color = item.color || "默认";
         const qty = item.qty ?? "";
         const valueText = isPrice ? (item.price_text || "") : (qty === "" ? "" : `${qty}套`);
-        const label = isPrice ? color : `${warehouse} / ${color}`;
+        const label = isPrice ? color : (product ? `${product} / ${warehouse} / ${color}` : `${warehouse} / ${color}`);
         return `<div class="display-row"><span>${escapeHtml(label)}</span><em>${escapeHtml(valueText)}</em></div>`;
       }).join("");
       const detailHtml = rowsHtml ? `<div class="display-rows">${rowsHtml}</div>` : "";
