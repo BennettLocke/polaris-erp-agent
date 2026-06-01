@@ -21,7 +21,7 @@ _PROMPT_CYCLE_LOCK = threading.Lock()
 _PROMPT_CYCLE_INDEX: dict[str, int] = {}
 _PROMPT_PATH_CACHE: dict[str, Path] = {}
 _SILENCE_TAIL_MS = 220
-_TARGET_PROMPT_RMS = 2200
+_TARGET_PROMPT_RMS = 3200
 _PROMPT_PEAK_LIMIT = 26000
 
 
@@ -52,7 +52,6 @@ PROMPT_GROUPS: dict[str, list[VoicePrompt]] = {
     ],
     "failed": [
         VoicePrompt("failed_retry", "刚才没处理成功，你再说一遍。", "小星处理语音指令失败，需要用户重试。"),
-        VoicePrompt("failed_again", "这个我没处理好，再试一次。", "小星处理语音指令失败，需要用户重试。"),
     ],
 }
 

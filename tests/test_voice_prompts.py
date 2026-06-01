@@ -18,8 +18,14 @@ def pcm16_peak(frames: bytes) -> int:
 
 
 class VoicePromptsTests(unittest.TestCase):
+    def test_default_prompt_target_rms_matches_stream_tts_loudness(self) -> None:
+        self.assertEqual(voice_prompts._prompt_target_rms(), 3200)
+
     def test_wake_prompts_are_the_three_approved_replies(self) -> None:
         self.assertEqual([prompt.text for prompt in get_prompts("wake")], ["我在", "在呢", "小星在"])
+
+    def test_failed_prompt_uses_single_retry_sentence(self) -> None:
+        self.assertEqual([prompt.text for prompt in get_prompts("failed")], ["刚才没处理成功，你再说一遍。"])
 
     def test_wake_prompts_play_in_round_robin_order(self) -> None:
         voice_prompts.reset_prompt_cycle("wake")
