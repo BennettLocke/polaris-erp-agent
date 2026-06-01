@@ -12,8 +12,14 @@
 ## 推荐阅读顺序
 
 1. `../README.md`
-2. `react_admin_api_contract.md`
-3. `react_admin_page_design_blueprint.md`
-4. 页面项目书：`react_admin_*_page_development_handbook.md`
-5. `native_runtime_cutover.md`
-6. `sjagent_system_audit_report_2026-05-28.md`
+2. `../README.zh-CN.md` 或 `../README.en.md`
+3. `react_admin_api_contract.md`
+4. `react_admin_page_design_blueprint.md`
+5. 页面项目书：`react_admin_*_page_development_handbook.md`
+6. `native_runtime_cutover.md`
+7. `sjagent_system_audit_report_2026-05-28.md`
+
+## 相关仓库
+
+- 主服务端：`BennettLocke/polaris-erp-agent`
+- 小星设备端：`BennettLocke/polaris-xiaoxing-device`
