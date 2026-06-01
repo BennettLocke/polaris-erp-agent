@@ -2573,19 +2573,26 @@ class NativeDBClient:
                 spu_ids,
             )
             sku_ids = [int(row["id"]) for row in cursor.fetchall()] or seed_sku_ids
-            cursor.execute(
-                f"UPDATE product_sku SET is_listed=%s, updated_at=%s WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL",
-                [target_state, now] + spu_ids,
-            )
+            if target_state:
+                cursor.execute(
+                    f"UPDATE product_sku SET is_listed=%s, status='active', updated_at=%s WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL",
+                    [target_state, now] + spu_ids,
+                )
+            else:
+                cursor.execute(
+                    f"UPDATE product_sku SET is_listed=%s, updated_at=%s WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL",
+                    [target_state, now] + spu_ids,
+                )
             affected = int(cursor.rowcount or 0)
             cursor.execute(
                 f"UPDATE product_spu SET updated_at=%s WHERE id IN ({placeholders}) AND deleted_at IS NULL",
                 [now] + spu_ids,
             )
+            matching_sql = "is_listed=%s AND status='active'" if target_state else "is_listed=%s"
             cursor.execute(
                 f"""
                 SELECT COUNT(*) AS total,
-                       SUM(CASE WHEN is_listed=%s THEN 1 ELSE 0 END) AS matching
+                       SUM(CASE WHEN {matching_sql} THEN 1 ELSE 0 END) AS matching
                 FROM product_sku
                 WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL
                 """,

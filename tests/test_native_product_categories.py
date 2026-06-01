@@ -233,3 +233,16 @@ class NativeProductCategoriesTest(unittest.TestCase):
         self.assertIn("UPDATE product_sku SET is_listed=%s", sql_text)
         self.assertIn("WHERE spu_id IN", sql_text)
         self.assertIn("UPDATE product_spu SET updated_at=%s", sql_text)
+
+    def test_product_shelves_update_reactivates_skus_when_listing(self):
+        client = object.__new__(NativeDBClient)
+        cursor = ShelfUpdateCursor()
+        client.transaction = lambda: CategorySaveTransaction(cursor)
+
+        result = client.update_product_shelves(10, 1, spu_id=500, sku_ids=[10, 11])
+
+        self.assertEqual(result["code"], 0)
+        self.assertTrue(result["data"]["all_sku_matched"])
+        sql_text = "\n".join(statement for statement, _params in cursor.statements)
+        self.assertIn("UPDATE product_sku SET is_listed=%s, status='active', updated_at=%s", sql_text)
+        self.assertIn("is_listed=%s AND status='active'", sql_text)

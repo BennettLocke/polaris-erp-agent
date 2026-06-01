@@ -1930,6 +1930,10 @@ type ProductCardProps = {
   onDelete: (product: ProductItem) => void;
 };
 
+type ProductConfirmAction =
+  | { action: "shelf"; product: ProductItem; state: number }
+  | { action: "delete"; product: ProductItem };
+
 function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onDelete }: ProductCardProps) {
   const image = productImageUrl(product);
   const colors = productColorNames(product);
@@ -1937,117 +1941,130 @@ function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onDelete }:
   const nextShelfState = isListed ? 0 : 1;
   const productName = product.title || product.name || "商品";
   const colorText = productColorsInline(colors);
-  const [confirmAction, setConfirmAction] = useState<"shelf" | "delete" | null>(null);
   return (
-    <>
-      <Card size="sm" className="product-spu-card">
-        <div className="product-spu-thumb">
-          {image ? <img src={image} alt={productName} loading="lazy" /> : <span>无图</span>}
+    <Card size="sm" className="product-spu-card">
+      <div className="product-spu-thumb">
+        {image ? <img src={image} alt={productName} loading="lazy" /> : <span>无图</span>}
+      </div>
+      <CardHeader>
+        <div className="product-spu-title-copy">
+          <CardTitle>{productName}</CardTitle>
+          <CardDescription>{product.product_category_text || "未分类"}</CardDescription>
         </div>
-        <CardHeader>
-          <div className="product-spu-title-copy">
-            <CardTitle>{productName}</CardTitle>
-            <CardDescription>{product.product_category_text || "未分类"}</CardDescription>
-          </div>
-          <CardAction className="product-spu-status-slot">
-            <Badge
-              variant="outline"
-              className={cn(
-                "product-spu-status",
-                isListed ? "product-spu-status--listed" : "product-spu-status--unlisted"
-              )}
-            >
-              {isListed ? "已上架" : "未上架"}
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          <div className="product-spu-summary-row">
-            <strong className="product-spu-price">{productPriceText(product)}</strong>
-            <span className="product-spu-stock">{productStockText(product)}</span>
-          </div>
-          <div className="product-spu-detail-row" aria-label={`件规：${productPieceText(product)}`}>
-            <span className="product-spu-meta-label">件规</span>
-            <span className="product-spu-meta-value">{productPieceText(product)}</span>
-            {Number(product.is_one_case_purchase || 0) ? <span className="product-spu-mini-note">1件起订</span> : null}
-          </div>
-          <div className="product-spu-color-text" aria-label={`颜色：${productColorsText(product)}`}>
-            <span className="product-spu-meta-label">颜色</span>
-            <span className="product-spu-meta-value">{colorText}</span>
-          </div>
-        </CardContent>
-        <CardFooter className="product-spu-actions">
-          <div className="product-spu-actions--primary">
-            <Button type="button" variant="outline" size="sm" onClick={() => onEdit(product)} disabled={actionBusy}>
-              <Pencil data-icon="inline-start" />
-              编辑
+        <CardAction className="product-spu-status-slot">
+          <Badge
+            variant="outline"
+            className={cn(
+              "product-spu-status",
+              isListed ? "product-spu-status--listed" : "product-spu-status--unlisted"
+            )}
+          >
+            {isListed ? "已上架" : "未上架"}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <div className="product-spu-summary-row">
+          <strong className="product-spu-price">{productPriceText(product)}</strong>
+          <span className="product-spu-stock">{productStockText(product)}</span>
+        </div>
+        <div className="product-spu-detail-row" aria-label={`件规：${productPieceText(product)}`}>
+          <span className="product-spu-meta-label">件规</span>
+          <span className="product-spu-meta-value">{productPieceText(product)}</span>
+          {Number(product.is_one_case_purchase || 0) ? <span className="product-spu-mini-note">1件起订</span> : null}
+        </div>
+        <div className="product-spu-color-text" aria-label={`颜色：${productColorsText(product)}`}>
+          <span className="product-spu-meta-label">颜色</span>
+          <span className="product-spu-meta-value">{colorText}</span>
+        </div>
+      </CardContent>
+      <CardFooter className="product-spu-actions">
+        <div className="product-spu-actions--primary">
+          <Button type="button" variant="outline" size="sm" onClick={() => onEdit(product)} disabled={actionBusy}>
+            <Pencil data-icon="inline-start" />
+            编辑
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={actionBusy}
+            onClick={() => onToggleShelves(product, nextShelfState)}
+          >
+            {isListed ? "下架" : "上架"}
+          </Button>
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon-sm" disabled={actionBusy} aria-label="更多操作">
+              <MoreHorizontal data-icon="only" />
             </Button>
-            <Button type="button" variant="outline" size="sm" disabled={actionBusy} onClick={() => setConfirmAction("shelf")}>
-              {isListed ? "下架" : "上架"}
-            </Button>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="ghost" size="icon-sm" disabled={actionBusy} aria-label="更多操作">
-                <MoreHorizontal data-icon="only" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuGroup>
-                <DropdownMenuItem className="product-menu-danger" onSelect={(event) => {
-                  event.preventDefault();
-                  setConfirmAction("delete");
-                }}>
-                  删除商品
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </CardFooter>
-      </Card>
-      <AlertDialog open={confirmAction === "shelf"} onOpenChange={(open) => {
-        if (!open) setConfirmAction(null);
-      }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{isListed ? "确认下架商品？" : "确认上架商品？"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {productName} 会按整个商品同步处理，包含这个商品下面的所有颜色规格。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={() => {
-              setConfirmAction(null);
-              onToggleShelves(product, nextShelfState);
-            }}>
-              {isListed ? "确认下架" : "确认上架"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={confirmAction === "delete"} onOpenChange={(open) => {
-        if (!open) setConfirmAction(null);
-      }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认删除商品？</AlertDialogTitle>
-            <AlertDialogDescription>
-              {productName} 会软删除整个商品和全部颜色规格，历史销售单不会被删除。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={() => {
-              setConfirmAction(null);
-              onDelete(product);
-            }}>
-              确认删除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuGroup>
+              <DropdownMenuItem className="product-menu-danger" onSelect={(event) => {
+                event.preventDefault();
+                onDelete(product);
+              }}>
+                删除商品
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </CardFooter>
+    </Card>
+  );
+}
+
+function ProductActionConfirmDialog({
+  confirmAction,
+  onClose,
+  onConfirmShelves,
+  onConfirmDelete
+}: {
+  confirmAction: ProductConfirmAction | null;
+  onClose: () => void;
+  onConfirmShelves: (product: ProductItem, state: number) => void;
+  onConfirmDelete: (product: ProductItem) => void;
+}) {
+  const product = confirmAction?.product || null;
+  const isShelfAction = confirmAction?.action === "shelf";
+  const targetState = isShelfAction ? confirmAction.state : 0;
+  const productName = product?.title || product?.name || "商品";
+
+  function handleConfirm() {
+    if (!confirmAction || !product) return;
+    onClose();
+    if (confirmAction.action === "shelf") {
+      onConfirmShelves(product, confirmAction.state);
+      return;
+    }
+    onConfirmDelete(product);
+  }
+
+  return (
+    <AlertDialog open={!!confirmAction} onOpenChange={(open) => {
+      if (!open) onClose();
+    }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {isShelfAction ? (targetState ? "确认上架商品？" : "确认下架商品？") : "确认删除商品？"}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {isShelfAction
+              ? `${productName} 会按整个商品同步处理，包含这个商品下面的所有颜色规格。`
+              : `${productName} 会软删除整个商品和全部颜色规格，历史销售单不会被删除。`}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>
+            {isShelfAction ? (targetState ? "确认上架" : "确认下架") : "确认删除"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -2203,6 +2220,7 @@ export function ProductsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ProductConfirmAction | null>(null);
   const [actionProductId, setActionProductId] = useState(0);
   const [pageSize, setPageSize] = useState(initialProductPageSize);
   const [gridElement, setGridElement] = useState<HTMLDivElement | null>(null);
@@ -2402,8 +2420,12 @@ export function ProductsPage() {
           setNotice("");
           setEditingProduct(product);
         }}
-        onToggleShelves={(product, state) => void toggleProductShelves(product, state)}
-        onDelete={(product) => void deleteProduct(product)}
+        onToggleShelves={(product, state) => {
+          setConfirmAction({ action: "shelf", product, state });
+        }}
+        onDelete={(product) => {
+          setConfirmAction({ action: "delete", product });
+        }}
       />
       <ProductPager
         page={page}
@@ -2419,6 +2441,12 @@ export function ProductsPage() {
         availableCategories={categories}
         onClose={() => setEditingProduct(null)}
         onSaved={afterProductSaved}
+      />
+      <ProductActionConfirmDialog
+        confirmAction={confirmAction}
+        onClose={() => setConfirmAction(null)}
+        onConfirmShelves={(product, state) => void toggleProductShelves(product, state)}
+        onConfirmDelete={(product) => void deleteProduct(product)}
       />
     </section>
   );

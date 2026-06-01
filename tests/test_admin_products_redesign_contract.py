@@ -16,7 +16,7 @@ class AdminProductsRedesignContractTest(unittest.TestCase):
             "function ProductCategoryTabs", 1
         )[0]
         card_source = product_source.split("function ProductCard", 1)[1].split(
-            "function ProductListSkeleton", 1
+            "function ProductActionConfirmDialog", 1
         )[0]
 
         self.assertIn("listedState", api_source)
@@ -42,8 +42,9 @@ class AdminProductsRedesignContractTest(unittest.TestCase):
         )[0]
         self.assertNotIn('variant="destructive"', footer_source)
         shelf_action_source = footer_source.split("<DropdownMenu>", 1)[0]
-        self.assertIn('setConfirmAction("shelf")', shelf_action_source)
+        self.assertIn('onToggleShelves(product, nextShelfState)', shelf_action_source)
         self.assertIn('{isListed ? "下架" : "上架"}', shelf_action_source)
+        self.assertNotIn("<AlertDialog", card_source)
         self.assertIn("aspect-ratio: 1 / 1;", style_source)
         self.assertIn("object-fit: contain;", style_source)
         self.assertIn("repeat(auto-fill, minmax(208px, 1fr))", style_source)
@@ -98,6 +99,22 @@ class AdminProductsRedesignContractTest(unittest.TestCase):
         self.assertIn("productPageRangeText", product_source)
         self.assertIn("pageSize={pageSize}", product_source)
         self.assertNotIn("const pageSize = 14;", product_source)
+
+    def test_product_action_confirm_dialog_is_owned_by_page(self):
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+        card_source = product_source.split("function ProductCard", 1)[1].split(
+            "function ProductActionConfirmDialog", 1
+        )[0]
+        page_source = product_source.split("export function ProductsPage", 1)[1]
+
+        self.assertIn("function ProductActionConfirmDialog", product_source)
+        self.assertIn("setConfirmAction({ action: \"shelf\"", page_source)
+        self.assertIn("setConfirmAction({ action: \"delete\"", page_source)
+        self.assertIn("<ProductActionConfirmDialog", page_source)
+        self.assertNotIn("useState<\"shelf\" | \"delete\"", card_source)
+        self.assertNotIn("<AlertDialog", card_source)
 
 
 if __name__ == "__main__":
