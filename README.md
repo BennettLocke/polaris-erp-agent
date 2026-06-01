@@ -22,6 +22,8 @@ Polaris ERP Agent is the server-side ERP, AI assistant, mini-program API, print 
 | --- | --- |
 | [BennettLocke/polaris-erp-agent](https://github.com/BennettLocke/polaris-erp-agent) | Main server, React admin, ERP APIs, AI workflows, database access, print tasks, and deployment scripts. |
 | [BennettLocke/polaris-xiaoxing-device](https://github.com/BennettLocke/polaris-xiaoxing-device) | Xiaoxing Orange Pi client: wake word, microphone capture, ASR/TTS forwarding, local `/screen`, systemd services, install/update scripts, and device smoke tests. |
+| [shadcn-ui/ui](https://github.com/shadcn-ui/ui) | The React admin component system is based on shadcn/ui patterns: source-owned components, Radix primitives, semantic tokens, and composable UI blocks. |
+| [radix-ui/primitives](https://github.com/radix-ui/primitives) | Low-level accessible primitives behind dialogs, menus, selects, tabs, switches, and other interaction components. |
 
 ## Quick Start
 

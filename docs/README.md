@@ -23,3 +23,5 @@
 
 - 主服务端：`BennettLocke/polaris-erp-agent`
 - 小星设备端：`BennettLocke/polaris-xiaoxing-device`
+- 后台组件库来源：`shadcn-ui/ui`
+- 底层交互原语：`radix-ui/primitives`

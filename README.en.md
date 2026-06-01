@@ -57,6 +57,17 @@ The Xiaoxing device repository is a lightweight Orange Pi client. Its strengths:
 | Printing | HTML/PDF print templates, server print tasks, `sjAutoPrint` local agent |
 | Deployment | systemd, Docker Compose, smoke-test scripts |
 
+## Component Library
+
+The React admin component system is based on [shadcn-ui/ui](https://github.com/shadcn-ui/ui), with interaction primitives from [radix-ui/primitives](https://github.com/radix-ui/primitives). Polaris follows the shadcn/ui model where UI components live as source code inside the project instead of being consumed as a black-box package. Buttons, dialogs, cards, tables, tabs, selects, dropdown menus, badges, empty states, and skeletons can therefore be refined for the real operations workflow.
+
+Why this works well for Polaris:
+
+- **Consistent visual language**: every admin page uses the same buttons, cards, dialogs, tables, filters, and status badges.
+- **Maintainable source-owned UI**: components live in `admin/src/components/ui/` and can evolve with the business.
+- **Accessible primitives**: Dialog, AlertDialog, Select, DropdownMenu, Tabs, and related interactions are powered by Radix primitives.
+- **Good fit for an ERP console**: composable components support dense operational pages without drifting into marketing-page design.
+
 ## Repository Layout
 
 ```text
