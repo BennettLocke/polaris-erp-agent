@@ -25,6 +25,18 @@ Polaris ERP Agent is the server-side ERP, AI assistant, mini-program API, print 
 | [shadcn-ui/ui](https://github.com/shadcn-ui/ui) | The React admin component system is based on shadcn/ui patterns: source-owned components, Radix primitives, semantic tokens, and composable UI blocks. |
 | [radix-ui/primitives](https://github.com/radix-ui/primitives) | Low-level accessible primitives behind dialogs, menus, selects, tabs, switches, and other interaction components. |
 
+## Local Design System Workspace
+
+Polaris also has an internal local component-library workspace on the shared drive:
+
+```text
+Z:\肆计包装小程序\组件库全新重做
+```
+
+This local workspace is not required to deploy the ERP server. It is the design-system source used to keep the mini-program, web previews, and admin UI language aligned. It maintains CSS/HTML components, uni-app components, preview pages, and tests under `css-components/`, `uni-app-components/`, `preview/`, and `tests/`.
+
+The main server repository applies that design language in `admin/src/components/ui`, `admin/src/styles.css`, and the React business pages, while the local component-library workspace remains the place to refine reusable mini-program and preview components before they are adopted by product screens.
+
 ## Quick Start
 
 For complete deployment instructions, use:

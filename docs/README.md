@@ -25,3 +25,4 @@
 - 小星设备端：`BennettLocke/polaris-xiaoxing-device`
 - 后台组件库来源：`shadcn-ui/ui`
 - 底层交互原语：`radix-ui/primitives`
+- 本地组件库工作区：`Z:\肆计包装小程序\组件库全新重做`

@@ -61,12 +61,33 @@ The Xiaoxing device repository is a lightweight Orange Pi client. Its strengths:
 
 The React admin component system is based on [shadcn-ui/ui](https://github.com/shadcn-ui/ui), with interaction primitives from [radix-ui/primitives](https://github.com/radix-ui/primitives). Polaris follows the shadcn/ui model where UI components live as source code inside the project instead of being consumed as a black-box package. Buttons, dialogs, cards, tables, tabs, selects, dropdown menus, badges, empty states, and skeletons can therefore be refined for the real operations workflow.
 
+Polaris also has an internal local component-library workspace:
+
+```text
+Z:\肆计包装小程序\组件库全新重做
+```
+
+This workspace is not required for server deployment. It is the local design-system source for Polaris / SJ mini-program and admin visual language. It maintains:
+
+- `css-components/`: CSS / HTML component implementations for visual rules, sizing, states, spacing, and Chinese UI conventions.
+- `uni-app-components/`: reusable `sj-*` uni-app components for the mini-program.
+- `preview/`: component preview and acceptance pages that render real component output.
+- `tests/`: Node tests for component files, preview entries, and CSS / uni-app / preview mapping.
+
+Relationship with this main repository:
+
+- `admin/src/components/ui` contains the React admin components actually used by the ERP console.
+- `admin/src/styles.css` carries admin visual tokens, layout density, and business-page styling.
+- The local component library keeps mini-program and preview components aligned with the `sj-` prefix, Chinese copy, component states, example counts, and acceptance rules.
+- New or redesigned components should be proven in the local component library first, then the stable visual and interaction rules can be applied to the React admin.
+
 Why this works well for Polaris:
 
 - **Consistent visual language**: every admin page uses the same buttons, cards, dialogs, tables, filters, and status badges.
 - **Maintainable source-owned UI**: components live in `admin/src/components/ui/` and can evolve with the business.
 - **Accessible primitives**: Dialog, AlertDialog, Select, DropdownMenu, Tabs, and related interactions are powered by Radix primitives.
 - **Good fit for an ERP console**: composable components support dense operational pages without drifting into marketing-page design.
+- **Mini-program alignment**: local `uni-app-components/sj-*` components keep the customer-facing mini-program close to the admin visual system.
 
 ## Repository Layout
 
