@@ -120,6 +120,36 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
         self.assertIn("岩彩二三两黄色有8套", result["speak"])
         self.assertEqual(result["display"]["items"][0]["product_name"], "【见喜】二三两")
 
+    def test_broad_inventory_command_ignores_trailing_stock_question_words(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        service = FakeInventoryService(
+            [
+                {
+                    "product_id": 61,
+                    "产品名称": "【喜悦】二三两",
+                    "【颜色】": "红色",
+                    "【仓库】": "百鑫仓库",
+                    "warehouse_id": 2,
+                    "库存数量": 5,
+                }
+            ]
+        )
+
+        with patch("src.services.device_voice.get_inventory_service", return_value=service):
+            result = build_device_voice_command_response(
+                text="百鑫库存二三两有什么有库存的",
+                device_id="orangepi-xiaoxing-01",
+                session_id="voice-session-stock-tail",
+                trace_id="trace-stock-tail",
+            )
+
+        self.assertEqual(result["intent"], "inventory_query")
+        self.assertEqual(service.calls[0]["keyword"], "二三两")
+        self.assertEqual(service.calls[0]["warehouse_id"], 2)
+        self.assertEqual(result["display"]["query"]["product_name"], "二三两")
+        self.assertIn("喜悦二三两红色有5套", result["speak"])
+
     def test_unclear_command_asks_user_to_repeat_without_querying_inventory(self):
         from src.services.device_voice import build_device_voice_command_response
 
