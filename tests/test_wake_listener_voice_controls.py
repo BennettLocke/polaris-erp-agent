@@ -33,6 +33,61 @@ class WakeListenerVoiceControlTests(unittest.TestCase):
         finally:
             wake_listener.time.monotonic = original
 
+    def test_alsa_capture_uses_nonblocking_mode_and_sleeps_on_empty_reads(self) -> None:
+        class FakeAlsa(types.ModuleType):
+            PCM_CAPTURE = 1
+            PCM_NORMAL = 2
+            PCM_NONBLOCK = 3
+            PCM_FORMAT_S32_LE = 4
+
+            def __init__(self):
+                super().__init__("alsaaudio")
+                self.instances = []
+
+            class PCM:
+                def __init__(self, *, type, mode, device):
+                    self.type = type
+                    self.mode = mode
+                    self.device = device
+                    self.reads = 0
+                    fake_alsa.instances.append(self)
+
+                def setchannels(self, value):
+                    self.channels = value
+
+                def setrate(self, value):
+                    self.rate = value
+
+                def setformat(self, value):
+                    self.format = value
+
+                def setperiodsize(self, value):
+                    self.period_size = value
+
+                def read(self):
+                    self.reads += 1
+                    if self.reads == 1:
+                        return 0, b""
+                    return 2, b"abcd"
+
+        fake_alsa = FakeAlsa()
+        original_alsa = sys.modules.get("alsaaudio")
+        original_sleep = wake_listener.time.sleep
+        sleeps = []
+        sys.modules["alsaaudio"] = fake_alsa
+        wake_listener.time.sleep = lambda seconds: sleeps.append(seconds)
+        try:
+            frames = wake_listener._capture_alsa(types.SimpleNamespace(input_device="hw:test"), period_size=480)
+            self.assertEqual(next(frames), b"abcd")
+            self.assertEqual(fake_alsa.instances[0].mode, fake_alsa.PCM_NONBLOCK)
+            self.assertTrue(sleeps)
+        finally:
+            wake_listener.time.sleep = original_sleep
+            if original_alsa is None:
+                sys.modules.pop("alsaaudio", None)
+            else:
+                sys.modules["alsaaudio"] = original_alsa
+
     def test_handle_command_uses_device_command_api_when_configured(self) -> None:
         args = types.SimpleNamespace(
             device_command_url="http://server/api/device/voice/command",

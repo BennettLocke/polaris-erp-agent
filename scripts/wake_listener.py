@@ -849,16 +849,18 @@ def _capture_alsa(args, period_size: int):
 
     capture = alsaaudio.PCM(
         type=alsaaudio.PCM_CAPTURE,
-        mode=alsaaudio.PCM_NORMAL,
+        mode=getattr(alsaaudio, "PCM_NONBLOCK", alsaaudio.PCM_NORMAL),
         device=args.input_device,
     )
     capture.setchannels(2)
     capture.setrate(48000)
     capture.setformat(alsaaudio.PCM_FORMAT_S32_LE)
     capture.setperiodsize(period_size)
+    empty_sleep = min(0.05, max(0.005, period_size / 48000.0))
     while True:
         length, raw = capture.read()
         if length <= 0:
+            time.sleep(empty_sleep)
             continue
         yield raw
 
