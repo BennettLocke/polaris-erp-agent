@@ -203,6 +203,15 @@ def _extract_inventory_params(text: str) -> dict:
     return engine._extract_inventory_params(text)
 
 
+def _extract_case_pack_params(text: str) -> dict:
+    params = _extract_inventory_params(text)
+    compact = re.sub(r"\s+", "", str(text or ""))
+    product_name = str(params.get("product_name") or "")
+    if product_name and "二三两" not in compact and re.search(r"(?:3\s*两|三\s*两)", compact):
+        params["product_name"] = product_name.replace("二三两", "三两")
+    return params
+
+
 def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
     query_text = _strip_price_query_words(normalized_text)
     params = _extract_inventory_params(query_text)
@@ -249,7 +258,7 @@ def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str,
 
 def _build_case_pack_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
     query_text = _strip_case_pack_query_words(normalized_text)
-    params = _extract_inventory_params(query_text)
+    params = _extract_case_pack_params(query_text)
     product_name = str(params.get("product_name") or "").strip()
     if not product_name:
         return _clarification_response(trace_id, started_at)
@@ -320,7 +329,21 @@ def _strip_price_query_words(text: str) -> str:
 
 def _strip_case_pack_query_words(text: str) -> str:
     value = str(text or "").strip()
-    for word in ("帮我查一下", "帮我查下", "查一下", "查下", "查询", "看一下", "看下", "问一下", "帮我"):
+    for word in (
+        "帮我拿一下",
+        "帮我拿下",
+        "帮我查一下",
+        "帮我查下",
+        "拿一下",
+        "拿下",
+        "查一下",
+        "查下",
+        "查询",
+        "看一下",
+        "看下",
+        "问一下",
+        "帮我",
+    ):
         value = value.replace(word, "")
     value = re.sub(r"^(?:一?下|下)\s*", "", value)
     for word in sorted(CASE_PACK_QUERY_WORDS, key=len, reverse=True):

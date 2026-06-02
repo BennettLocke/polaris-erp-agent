@@ -397,6 +397,35 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
         self.assertEqual(result["intent"], "case_pack_query")
         self.assertEqual(result["display"]["summary"], "欢喜半斤一件20套")
 
+    def test_case_pack_command_ignores_take_prefix_and_preserves_sanliang(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        product_service = FakeProductService(
+            [
+                {
+                    "product_id": 91,
+                    "title": "【墨香】三两",
+                    "color": "咖色",
+                    "simple_desc": "规格：28套/件",
+                }
+            ]
+        )
+
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.services.device_voice.get_product_service", return_value=product_service):
+                result = build_device_voice_command_response(
+                    text="拿一下墨香三两一件多少个",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-case-pack-take-prefix",
+                    trace_id="trace-case-pack-take-prefix",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        self.assertEqual(product_service.calls, [{"keyword": "墨香 三两", "limit": 50, "listed_only": False}])
+        self.assertEqual(result["intent"], "case_pack_query")
+        self.assertEqual(result["display"]["summary"], "墨香三两一件28套")
+
 
 class DeviceVoiceCommandApiTests(unittest.TestCase):
     def test_device_voice_command_route_wraps_service_response(self):
