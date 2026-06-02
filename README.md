@@ -4,7 +4,7 @@
 
 Polaris ERP Agent is the server-side ERP, AI assistant, mini-program API, print pipeline, and React admin console for a small-batch packaging business. It centralizes products, SKUs, inventory, customers, sales orders, workflow orders, image assets, printing, analytics, and AI-assisted operations into the `sjagent_core` business database.
 
-北极星 Polaris ERP Agent 是面向小批量包装业务的自有 ERP 后台和智能体服务端。它把商品、库存、客户、销售单、订单流程、图片资产、打印、小程序接口、数据看板和 AI 工作台统一到 `sjagent_core` 业务库，日常运营入口统一使用 `/admin` React 后台。
+北极星 Polaris ERP Agent 是面向小批量包装业务的自有 ERP 后台和智能体服务端。它把商品、库存、客户、销售单、订单流程、图片资产、打印、小程序接口、数据看板和 AI 工作台统一到 `sjagent_core` 业务库，日常运营入口统一使用 `/admin` React 后台。商品、SKU、图片资产和库存规则以 `sjagent_core 商品库` 为统一数据源，避免后台、小程序和 AI 工作台重复维护。
 
 ## Highlights
 
