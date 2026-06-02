@@ -39,21 +39,9 @@ The customer-facing mini program is maintained as a separate GitHub repository:
 
 - [BennettLocke/polaris-ai-erp-weapp](https://github.com/BennettLocke/polaris-ai-erp-weapp)
 
-The accurate local business source used for the current sync was:
+The mini program is a thin uni-app + Vue 3 client for Polaris AI Agent. It covers home, category browsing, product lists, product detail, order lookup, sales-order account entry, login/customer binding, settings, contact, and share assets. It does not connect directly to the database. Instead, `src/api/*.js` and `src/config.js` call the Polaris AI Agent service layer, mainly through `/api/mini/*` and related mini-program APIs. Product, customer, order, inventory, shelf-state, hot-product analytics, and security rules remain centralized in this server repository.
 
-```text
-Z:\肆计包装小程序\商城小程序源码\sj-mall-uniapp
-```
-
-The local Git clone for that GitHub repository is:
-
-```text
-Z:\肆计包装小程序\商城小程序源码\polaris-ai-erp-weapp
-```
-
-The two local folders existed because `sj-mall-uniapp` was the active business source while `polaris-ai-erp-weapp` was the repository-named Git clone. The accurate source has now been synchronized into the GitHub mini-program repository. Server deployment does not require the mini-program source; mini-program releases should be built from the mini-program repository with uni-app / HBuilderX and pointed at the production backend domain.
-
-The mini program is built with uni-app + Vue 3 and covers the customer storefront experience: home, category browsing, product lists, product detail, order query, sales-order account entry, login/customer binding, settings, contact, and share assets. It does not connect directly to the database. Instead, `src/api/*.js` and `src/config.js` call the sjagent service layer, mainly through `/api/mini/*` and related mini-program APIs. Product, customer, order, inventory, shelf-state, hot-product analytics, and security rules remain centralized in this server repository.
+Server deployment does not require the mini-program source. Mini-program releases should be built from `BennettLocke/polaris-ai-erp-weapp` with uni-app / HBuilderX and pointed at the chosen backend domain through environment variables.
 
 ## Xiaoxing Device Client
 
@@ -83,13 +71,11 @@ The Xiaoxing device repository is a lightweight Orange Pi client. Its strengths:
 
 The React admin component system is based on [shadcn-ui/ui](https://github.com/shadcn-ui/ui), with interaction primitives from [radix-ui/primitives](https://github.com/radix-ui/primitives). Polaris follows the shadcn/ui model where UI components live as source code inside the project instead of being consumed as a black-box package. Buttons, dialogs, cards, tables, tabs, selects, dropdown menus, badges, empty states, and skeletons can therefore be refined for the real operations workflow.
 
-Polaris also has an internal local component-library workspace:
+Polaris AI Agent also has a public component-library repository:
 
-```text
-Z:\肆计包装小程序\组件库全新重做
-```
+- [BennettLocke/bennett-locke-ui](https://github.com/BennettLocke/bennett-locke-ui)
 
-This workspace is not required for server deployment. It is the local design-system source for Polaris / SJ mini-program and admin visual language. It maintains:
+This component library is not required for server deployment. It is the design-system source for Polaris AI Agent admin, mini-program, and preview pages. It maintains:
 
 - `css-components/`: CSS / HTML component implementations for visual rules, sizing, states, spacing, and Chinese UI conventions.
 - `uni-app-components/`: reusable `sj-*` uni-app components for the mini-program.
@@ -100,8 +86,8 @@ Relationship with this main repository:
 
 - `admin/src/components/ui` contains the React admin components actually used by the ERP console.
 - `admin/src/styles.css` carries admin visual tokens, layout density, and business-page styling.
-- The local component library keeps mini-program and preview components aligned with the `sj-` prefix, Chinese copy, component states, example counts, and acceptance rules.
-- New or redesigned components should be proven in the local component library first, then the stable visual and interaction rules can be applied to the React admin.
+- The component library keeps mini-program and preview components aligned through naming, copy, component states, example counts, and acceptance rules.
+- New or redesigned components should be proven in the component library first, then the stable visual and interaction rules can be applied to the React admin.
 
 Why this works well for Polaris:
 
@@ -109,7 +95,7 @@ Why this works well for Polaris:
 - **Maintainable source-owned UI**: components live in `admin/src/components/ui/` and can evolve with the business.
 - **Accessible primitives**: Dialog, AlertDialog, Select, DropdownMenu, Tabs, and related interactions are powered by Radix primitives.
 - **Good fit for an ERP console**: composable components support dense operational pages without drifting into marketing-page design.
-- **Mini-program alignment**: local `uni-app-components/sj-*` components keep the customer-facing mini-program close to the admin visual system.
+- **Mini-program alignment**: uni-app components keep the customer-facing mini-program close to the admin visual system.
 
 ## Repository Layout
 
@@ -139,10 +125,10 @@ sudo apt-get update
 sudo apt-get install -y fonts-noto-cjk
 ```
 
-If a Windows machine needs to receive centralized print tasks, install the bundled `sjAutoPrint` service:
+If a Windows machine needs to receive centralized print tasks, install the bundled `sjAutoPrint` service. Replace `<repo-path>` with the checkout path:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File Z:\sjagent\scripts\sjautoprint\install_sjautoprint.ps1
+powershell -ExecutionPolicy Bypass -File <repo-path>\scripts\sjautoprint\install_sjautoprint.ps1
 ```
 
 ## Quick Deployment

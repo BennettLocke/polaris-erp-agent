@@ -23,40 +23,29 @@ Polaris ERP Agent is the server-side ERP, AI assistant, mini-program API, print 
 | [BennettLocke/polaris-erp-agent](https://github.com/BennettLocke/polaris-erp-agent) | Main server, React admin, ERP APIs, AI workflows, database access, print tasks, and deployment scripts. |
 | [BennettLocke/polaris-ai-erp-weapp](https://github.com/BennettLocke/polaris-ai-erp-weapp) | Customer-facing WeChat / uni-app mini program: home, categories, product detail, order lookup, account binding, and customer-service entry points. |
 | [BennettLocke/polaris-xiaoxing-device](https://github.com/BennettLocke/polaris-xiaoxing-device) | Xiaoxing Orange Pi client: wake word, microphone capture, ASR/TTS forwarding, local `/screen`, systemd services, install/update scripts, and device smoke tests. |
+| [BennettLocke/bennett-locke-ui](https://github.com/BennettLocke/bennett-locke-ui) | Polaris UI component library used to align admin, mini-program, preview, and reusable interaction patterns. |
 | [shadcn-ui/ui](https://github.com/shadcn-ui/ui) | The React admin component system is based on shadcn/ui patterns: source-owned components, Radix primitives, semantic tokens, and composable UI blocks. |
 | [radix-ui/primitives](https://github.com/radix-ui/primitives) | Low-level accessible primitives behind dialogs, menus, selects, tabs, switches, and other interaction components. |
 
 ## Official Mini Program Source
 
-The customer-facing mini program is maintained as its own GitHub repository:
+The customer-facing mini program is maintained as its own public repository:
 
 - [BennettLocke/polaris-ai-erp-weapp](https://github.com/BennettLocke/polaris-ai-erp-weapp)
 
-The accurate local business source that was used for the current sync is:
+It is a thin uni-app + Vue 3 client for Polaris AI Agent. It covers home, category browsing, product lists, product detail, order lookup, sales-order account pages, login/binding, settings, contact, and share assets. Business data comes from the `polaris-erp-agent` service layer and `/api/mini/*` APIs, while product, customer, order, inventory, shelf-state, hot-product, balance, and security rules remain on the server.
 
-```text
-Z:\肆计包装小程序\商城小程序源码\sj-mall-uniapp
-```
+Server deployment does not require the mini-program source. Mini-program releases should be built from `BennettLocke/polaris-ai-erp-weapp` with uni-app / HBuilderX and pointed at the chosen backend domain through environment variables.
 
-The local Git clone for the GitHub repository is:
+## Component System
 
-```text
-Z:\肆计包装小程序\商城小程序源码\polaris-ai-erp-weapp
-```
+Polaris also maintains a public UI component-library repository:
 
-The two local folders existed because `sj-mall-uniapp` was the active source folder while `polaris-ai-erp-weapp` was the repository-named Git clone. The accurate source has now been synchronized into the GitHub mini-program repository. Server deployment does not require the mini-program source; mini-program releases should be built from the mini-program repository with uni-app / HBuilderX and pointed at the production backend domain.
+- [BennettLocke/bennett-locke-ui](https://github.com/BennettLocke/bennett-locke-ui)
 
-## Local Design System Workspace
+The React admin component system is source-owned and follows shadcn/ui + Radix patterns. The UI library repository is used to align the admin console, mini-program, previews, and reusable component rules without turning the ERP server into a design-system package.
 
-Polaris also has an internal local component-library workspace on the shared drive:
-
-```text
-Z:\肆计包装小程序\组件库全新重做
-```
-
-This local workspace is not required to deploy the ERP server. It is the design-system source used to keep the mini-program, web previews, and admin UI language aligned. It maintains CSS/HTML components, uni-app components, preview pages, and tests under `css-components/`, `uni-app-components/`, `preview/`, and `tests/`.
-
-The main server repository applies that design language in `admin/src/components/ui`, `admin/src/styles.css`, and the React business pages, while the local component-library workspace remains the place to refine reusable mini-program and preview components before they are adopted by product screens.
+The main server repository applies that design language in `admin/src/components/ui`, `admin/src/styles.css`, and the React business pages.
 
 ## Quick Start
 

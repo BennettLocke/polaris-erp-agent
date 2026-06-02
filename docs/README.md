@@ -23,9 +23,7 @@
 
 - 主服务端：`BennettLocke/polaris-erp-agent`
 - 小程序端：`BennettLocke/polaris-ai-erp-weapp`
-- 准确本地小程序源码：`Z:\肆计包装小程序\商城小程序源码\sj-mall-uniapp`
-- 本地小程序 Git 克隆：`Z:\肆计包装小程序\商城小程序源码\polaris-ai-erp-weapp`
 - 小星设备端：`BennettLocke/polaris-xiaoxing-device`
+- 组件库：`BennettLocke/bennett-locke-ui`
 - 后台组件库来源：`shadcn-ui/ui`
 - 底层交互原语：`radix-ui/primitives`
-- 本地组件库工作区：`Z:\肆计包装小程序\组件库全新重做`
