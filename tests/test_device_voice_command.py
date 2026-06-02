@@ -328,6 +328,46 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
         self.assertEqual(result["device_action"]["next_state"], "listening")
         self.assertIn("再说一下名称", result["speak"])
 
+    def test_case_pack_command_returns_piece_count_without_inventory_search(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        product_service = FakeProductService(
+            [
+                {
+                    "product_id": 81,
+                    "title": "【欢喜】半斤",
+                    "color": "红色",
+                    "simple_desc": "规格：20套/件",
+                },
+                {
+                    "product_id": 82,
+                    "title": "【欢喜】半斤",
+                    "color": "黄色",
+                    "simple_desc": "规格：20套/件",
+                },
+            ]
+        )
+
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.services.device_voice.get_product_service", return_value=product_service):
+                result = build_device_voice_command_response(
+                    text="查一下欢喜半斤一件多少个",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-case-pack",
+                    trace_id="trace-case-pack",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        self.assertEqual(product_service.calls, [{"keyword": "欢喜 半斤", "limit": 50, "listed_only": False}])
+        self.assertEqual(result["intent"], "case_pack_query")
+        self.assertEqual(result["device_action"]["next_state"], "idle")
+        self.assertEqual(result["display"]["mode"], "case_pack_result")
+        self.assertEqual(result["display"]["title"], "欢喜 半斤件规")
+        self.assertEqual(result["display"]["summary"], "欢喜半斤一件20套")
+        self.assertEqual(result["display"]["items"][0]["per_piece"], 20)
+        self.assertIn("欢喜半斤一件20套", result["speak"])
+
 
 class DeviceVoiceCommandApiTests(unittest.TestCase):
     def test_device_voice_command_route_wraps_service_response(self):

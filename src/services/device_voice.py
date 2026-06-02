@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import time
 import uuid
+import re
 from collections import OrderedDict
 from typing import Any
 
+from scripts.common.unit_converter import parse_unit_from_simple_desc
 from src.core.skill_engine import SkillEngine
 from src.services.business import get_inventory_service, get_product_service
 
@@ -35,6 +37,32 @@ PRICE_QUERY_WORDS = (
     "几块",
     "几元",
     "几钱",
+)
+CASE_PACK_QUERY_WORDS = (
+    "一件多少个",
+    "一件多少套",
+    "一件多少张",
+    "一件多少只",
+    "一件多少盒",
+    "一件有多少个",
+    "一件有多少套",
+    "一件几个",
+    "一件几套",
+    "一件装多少",
+    "一件里面多少",
+    "一件是多少",
+    "1件多少个",
+    "1件多少套",
+    "每件多少个",
+    "每件多少套",
+    "每件几个",
+    "每件几套",
+    "多少个一件",
+    "多少套一件",
+    "一箱多少个",
+    "一箱多少套",
+    "一箱几个",
+    "一箱几套",
 )
 
 
@@ -66,6 +94,14 @@ def build_device_voice_command_response(
 
     if _is_price_query(normalized_text):
         return _build_price_response(
+            raw_text=raw_text,
+            normalized_text=normalized_text,
+            trace_id=trace_id,
+            started_at=started_at,
+        )
+
+    if _is_case_pack_query(normalized_text):
+        return _build_case_pack_response(
             raw_text=raw_text,
             normalized_text=normalized_text,
             trace_id=trace_id,
@@ -211,15 +247,86 @@ def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str,
     )
 
 
+def _build_case_pack_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
+    query_text = _strip_case_pack_query_words(normalized_text)
+    params = _extract_inventory_params(query_text)
+    product_name = str(params.get("product_name") or "").strip()
+    if not product_name:
+        return _clarification_response(trace_id, started_at)
+
+    color = str(params.get("color") or "").strip()
+    rows = get_product_service().search(product_name, limit=50, listed_only=False)
+    items = _case_pack_items(rows, product_name=product_name, color=color)
+    query = _query_payload(
+        original_text=raw_text,
+        normalized_text=normalized_text,
+        product_name=product_name,
+        color=color,
+        warehouse_id=None,
+    )
+    if not items:
+        return _base_response(
+            trace_id=trace_id,
+            intent="case_pack_query",
+            speak=f"没找到{product_name}的一件数量，你再说一下名称。",
+            display={
+                "mode": "case_pack_empty",
+                "title": f"{product_name}件规",
+                "summary": f"按{product_name}查询，未找到一件数量",
+                "query": query,
+                "items": [],
+            },
+            device_action={"next_state": "listening", "listen_again": True, "command_window_seconds": 5, "screen_mode": "result"},
+            started_at=started_at,
+        )
+
+    display = _case_pack_display(product_name, items, query=query)
+    return _base_response(
+        trace_id=trace_id,
+        intent="case_pack_query",
+        speak=_case_pack_speak(product_name, items),
+        display=display,
+        device_action={"next_state": "idle", "listen_again": False, "command_window_seconds": 2, "screen_mode": "result"},
+        started_at=started_at,
+    )
+
+
 def _is_price_query(text: str) -> bool:
     compact = str(text or "").replace(" ", "")
     return any(word in compact for word in PRICE_QUERY_WORDS)
+
+
+def _is_case_pack_query(text: str) -> bool:
+    compact = str(text or "").replace(" ", "")
+    if not compact:
+        return False
+    if any(word in compact for word in PRICE_QUERY_WORDS):
+        return False
+    if any(word in compact for word in CASE_PACK_QUERY_WORDS):
+        return True
+    return bool(
+        re.search(r"(?:一|1)?件(?:有|装|里面|是)?(?:多少|几)(?:个|套|张|只|盒)?", compact)
+        or re.search(r"每件(?:有|装)?(?:多少|几)(?:个|套|张|只|盒)?", compact)
+        or re.search(r"(?:多少|几)(?:个|套|张|只|盒)(?:一|1)?件", compact)
+    )
 
 
 def _strip_price_query_words(text: str) -> str:
     value = str(text or "").strip()
     for word in sorted(PRICE_QUERY_WORDS, key=len, reverse=True):
         value = value.replace(word, "")
+    return value.strip()
+
+
+def _strip_case_pack_query_words(text: str) -> str:
+    value = str(text or "").strip()
+    for word in ("帮我查一下", "帮我查下", "查一下", "查下", "查询", "看一下", "看下", "问一下", "帮我"):
+        value = value.replace(word, "")
+    for word in sorted(CASE_PACK_QUERY_WORDS, key=len, reverse=True):
+        value = value.replace(word, "")
+    value = re.sub(r"(?:一|1)?件(?:有|装|里面|是)?(?:多少|几)(?:个|套|张|只|盒)?", "", value)
+    value = re.sub(r"每件(?:有|装)?(?:多少|几)(?:个|套|张|只|盒)?", "", value)
+    value = re.sub(r"(?:多少|几)(?:个|套|张|只|盒)(?:一|1)?件", "", value)
     return value.strip()
 
 
@@ -394,6 +501,73 @@ def _price_display(product_name: str, items: list[dict], *, query: dict) -> dict
         "query": query,
         "items": items,
     }
+
+
+def _case_pack_unit(simple_desc: str) -> str:
+    text = str(simple_desc or "")
+    patterns = (
+        r"\d+\s*(套|个|张|只|盒)\s*/\s*件",
+        r"(?:1\s*)?件\s*\d+\s*(套|个|张|只|盒)",
+        r"每\s*件\s*\d+\s*(套|个|张|只|盒)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return "套"
+
+
+def _case_pack_items(rows: list[dict], *, product_name: str, color: str) -> list[dict]:
+    items = []
+    seen: set[tuple[str, int, str, str]] = set()
+    for row in rows:
+        row_color = _row_text(row, "color", "spec", "颜色", "【颜色】") or "默认"
+        if color and color not in row_color:
+            continue
+        simple_desc = _row_text(row, "simple_desc", "piece_text", "box_spec")
+        per_piece = parse_unit_from_simple_desc(simple_desc)
+        if not per_piece:
+            continue
+        title = _clean_product_title(_row_text(row, "title", "name", "产品名称", "product_name") or product_name)
+        unit = _case_pack_unit(simple_desc)
+        key_color = row_color if color else ""
+        key = (title, int(per_piece), unit, key_color)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "product_id": row.get("product_id") or row.get("id"),
+                "product_name": title,
+                "color": row_color,
+                "per_piece": int(per_piece),
+                "unit": unit,
+                "simple_desc": simple_desc,
+            }
+        )
+    return items
+
+
+def _case_pack_display(product_name: str, items: list[dict], *, query: dict) -> dict:
+    summary = "，".join(_case_pack_item_text(item, include_title=True) for item in items[:6])
+    return {
+        "mode": "case_pack_result",
+        "title": f"{product_name}件规",
+        "summary": summary,
+        "query": query,
+        "items": items,
+    }
+
+
+def _case_pack_item_text(item: dict, *, include_title: bool) -> str:
+    prefix = _clean_product_title(str(item.get("product_name") or "")) if include_title else ""
+    return f"{prefix}一件{int(item.get('per_piece') or 0)}{item.get('unit') or '套'}"
+
+
+def _case_pack_speak(product_name: str, items: list[dict]) -> str:
+    if len(items) == 1:
+        return f"{_case_pack_item_text(items[0], include_title=True)}。"
+    return f"{product_name}，{'；'.join(_case_pack_item_text(item, include_title=True) for item in items[:6])}。"
 
 
 def _inventory_speak(product_name: str, items: list[dict]) -> str:
