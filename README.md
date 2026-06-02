@@ -25,6 +25,24 @@ Polaris ERP Agent is the server-side ERP, AI assistant, mini-program API, print 
 | [shadcn-ui/ui](https://github.com/shadcn-ui/ui) | The React admin component system is based on shadcn/ui patterns: source-owned components, Radix primitives, semantic tokens, and composable UI blocks. |
 | [radix-ui/primitives](https://github.com/radix-ui/primitives) | Low-level accessible primitives behind dialogs, menus, selects, tabs, switches, and other interaction components. |
 
+## Official Mini Program Source
+
+The current customer-facing WeChat / uni-app mall source is maintained in the internal shared-drive workspace:
+
+```text
+Z:\肆计包装小程序\商城小程序源码\sj-mall-uniapp
+```
+
+This is the canonical mini-program codebase for the storefront experience: home, category browsing, product lists, product detail, order query, sales-order account pages, login/binding, settings, contact, and share assets. It is a thin client for `polaris-erp-agent`: business data comes from the sjagent service layer and the `/api/mini/*` APIs, while product, customer, order, inventory, shelf-state, and hot-product rules remain on the server.
+
+Another local folder may exist at:
+
+```text
+Z:\肆计包装小程序\商城小程序源码\polaris-ai-erp-weapp
+```
+
+That folder is not the current source of truth for the mini program. Treat it as a historical or reference copy unless the project owner explicitly promotes it. Server deployment does not require either mini-program workspace; mini-program releases should be built from `sj-mall-uniapp` with uni-app / HBuilderX and pointed at the production backend domain.
+
 ## Local Design System Workspace
 
 Polaris also has an internal local component-library workspace on the shared drive:

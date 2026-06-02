@@ -22,6 +22,8 @@
 ## 相关仓库
 
 - 主服务端：`BennettLocke/polaris-erp-agent`
+- 当前小程序源码：`Z:\肆计包装小程序\商城小程序源码\sj-mall-uniapp`
+- 非当前小程序副本：`Z:\肆计包装小程序\商城小程序源码\polaris-ai-erp-weapp`，仅作为历史或参考目录，不作为发布准版本
 - 小星设备端：`BennettLocke/polaris-xiaoxing-device`
 - 后台组件库来源：`shadcn-ui/ui`
 - 底层交互原语：`radix-ui/primitives`
