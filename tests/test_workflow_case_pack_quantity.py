@@ -58,6 +58,26 @@ class WorkflowCasePackQuantityTest(unittest.TestCase):
         self.assertEqual(item["parsed"]["unit"], "\u5957")
         self.assertNotIn("per_piece", item["parsed"])
 
+    @patch("src.core.nodes.image_workflow.upload_to_oss", return_value="")
+    @patch("src.core.nodes.image_workflow.repair_ocr_parsed_fields", side_effect=lambda parsed, caller: parsed)
+    @patch("src.core.nodes.image_workflow.find_product_by_goods_name", return_value={"id": 139, "simple_desc": "\u0031\u4ef6\u0036\u0030\u5957"})
+    def test_chinese_piece_quantity_converts_to_case_pack_quantity(
+        self,
+        _find_product,
+        _repair,
+        _upload,
+    ):
+        item = _process_ocr_order(
+            ["\u8336\u793c\u534a\u65a4\u4e00\u4ef6 \u9ec4\u8272"],
+            "ignored.png",
+            caller=object(),
+        )
+
+        self.assertEqual(item["workflow_order_payload"]["goods_name"], "\u8336\u793c\u534a\u65a4")
+        self.assertEqual(item["workflow_order_payload"]["quantity"], 60)
+        self.assertEqual(item["parsed"]["unit"], "\u5957")
+        self.assertEqual(item["parsed"]["per_piece"], 60)
+
     def test_case_pack_lookup_accepts_same_goods_with_multiple_colors(self):
         class FakeCaller:
             def call(self, tool_name, **kwargs):

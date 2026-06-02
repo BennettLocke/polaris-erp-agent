@@ -41,6 +41,14 @@ class ImageWorkflowParsingTest(unittest.TestCase):
         self.assertEqual(parsed["quantity"], 1)
         self.assertEqual(parsed["unit"], "件")
 
+    def test_chinese_piece_quantity_is_removed_from_goods_name(self):
+        parsed = parse_ocr_text_list(["茶礼半斤一件 黄色"])
+
+        self.assertEqual(parsed["goods_name"], "茶礼半斤")
+        self.assertEqual(parsed["color"], "黄色")
+        self.assertEqual(parsed["quantity"], 1)
+        self.assertEqual(parsed["unit"], "件")
+
     def test_batch_customer_context_only_repairs_missing_items(self):
         items = [
             {

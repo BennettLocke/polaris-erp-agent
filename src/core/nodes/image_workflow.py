@@ -30,6 +30,56 @@ from scripts.common.unit_converter import calculate_order_quantity, parse_unit_f
 
 logger = get_logger("sjagent.nodes.image_workflow")
 REMARK_OCR_TOP_RATIO = 0.22
+CHINESE_NUMBER_PATTERN = r"[零〇一二两三四五六七八九十百千万]+"
+QUANTITY_NUMBER_PATTERN = rf"(?:\d+|{CHINESE_NUMBER_PATTERN})"
+QUANTITY_UNIT_PATTERN = r"(套|件|个|张|只|盒|捆)"
+
+
+def _parse_quantity_number(value: str) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+
+    digits = {
+        "零": 0,
+        "〇": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    small_units = {"十": 10, "百": 100, "千": 1000}
+    total = 0
+    current = 0
+    seen = False
+    for char in text:
+        if char in digits:
+            current = digits[char]
+            seen = True
+            continue
+        if char in small_units:
+            unit = small_units[char]
+            total += (current or 1) * unit
+            current = 0
+            seen = True
+            continue
+        if char == "万":
+            total = (total + current or 1) * 10000
+            current = 0
+            seen = True
+            continue
+        return None
+    if not seen:
+        return None
+    return total + current
 
 
 def image_workflow_node(state: AgentState) -> AgentState:
@@ -339,22 +389,27 @@ def _extract_after_label(line: str, labels: tuple[str, ...]) -> str:
 
 def _parse_quantity(line: str) -> tuple[int, str] | None:
     text = _normalize_ocr_line(line).replace(" ", "")
-    unit_pattern = r"(套|件|个|张|只|盒)"
 
     label_match = re.search(
-        rf"(?:数量|订单数量|下单数量|做|要|订)\D{{0,6}}?(\d+)\s*{unit_pattern}?",
+        rf"(?:数量|订单数量|下单数量|做|要|订)\D{{0,6}}?({QUANTITY_NUMBER_PATTERN})\s*{QUANTITY_UNIT_PATTERN}?",
         text,
     )
     if label_match:
-        return int(label_match.group(1)), label_match.group(2) or "套"
+        quantity = _parse_quantity_number(label_match.group(1))
+        if quantity is not None:
+            return quantity, label_match.group(2) or "套"
 
-    unit_match = re.search(rf"(\d+)\s*{unit_pattern}", text)
+    unit_match = re.search(rf"({QUANTITY_NUMBER_PATTERN})\s*{QUANTITY_UNIT_PATTERN}", text)
     if unit_match and not re.search(r"(电话|手机|编号|单号|日期|20\d{{2}})", text):
-        return int(unit_match.group(1)), unit_match.group(2)
+        quantity = _parse_quantity_number(unit_match.group(1))
+        if quantity is not None:
+            return quantity, unit_match.group(2)
 
-    compact_match = re.search(rf"(?:UV|uv|丝印|印刷)?(\d+){unit_pattern}", text)
+    compact_match = re.search(rf"(?:UV|uv|丝印|印刷)?({QUANTITY_NUMBER_PATTERN}){QUANTITY_UNIT_PATTERN}", text)
     if compact_match:
-        return int(compact_match.group(1)), compact_match.group(2)
+        quantity = _parse_quantity_number(compact_match.group(1))
+        if quantity is not None:
+            return quantity, compact_match.group(2)
 
     return None
 
@@ -397,7 +452,7 @@ def _extract_goods_from_remark(line: str) -> str:
     text = _normalize_ocr_line(line)
     without_date = re.sub(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", "", text)
     without_prefix = re.sub(r"^(客户|下单)\s*:?\s*", "", without_date).strip()
-    without_qty = re.sub(r"(?:UV|uv)?\d+\s*(套|件|个|张|只|盒)", "", without_prefix)
+    without_qty = re.sub(rf"(?:UV|uv)?{QUANTITY_NUMBER_PATTERN}\s*{QUANTITY_UNIT_PATTERN}", "", without_prefix)
     without_craft = re.sub(r"\([^)]*(丝印|印刷|提袋)[^)]*\)", "", without_qty)
     without_craft = re.sub(r"(提袋\s*)?(丝印|印刷|UV|uv|烫金|烫银|击凸|击凹)", "", without_craft)
     without_craft = re.sub(r"提袋", "", without_craft)
