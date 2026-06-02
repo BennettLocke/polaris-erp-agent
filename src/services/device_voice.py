@@ -10,7 +10,7 @@ from typing import Any
 
 from scripts.common.unit_converter import parse_unit_from_simple_desc
 from src.core.skill_engine import SkillEngine
-from src.services.business import get_inventory_service, get_product_service
+from src.services.business import get_customer_service, get_inventory_service, get_product_service
 
 
 UNCLEAR_REPLY = "没听清商品名，再说一遍。"
@@ -64,6 +64,28 @@ CASE_PACK_QUERY_WORDS = (
     "一箱几个",
     "一箱几套",
 )
+CUSTOMER_LAST_ORDER_QUERY_WORDS = (
+    "上一次做礼盒是什么时候",
+    "上次做礼盒是什么时候",
+    "什么时候做的订单",
+    "什么时候做礼盒",
+    "最近一次的订单",
+    "最近一次订单",
+    "最近一笔订单",
+    "上一次的订单",
+    "上一次订单",
+    "上次做是什么时候",
+    "上一次做是什么时候",
+    "最近的订单",
+    "最近一单",
+    "最近订单",
+    "上次订单",
+    "上次做礼盒",
+    "上一次做礼盒",
+    "上次做",
+    "上一次做",
+    "什么时候做",
+)
 
 
 def build_device_voice_command_response(
@@ -91,6 +113,14 @@ def build_device_voice_command_response(
 
     if _is_unclear_command(normalized_text, asr_confidence):
         return _clarification_response(trace_id, started_at)
+
+    if _is_customer_last_order_query(normalized_text):
+        return _build_customer_last_order_response(
+            raw_text=raw_text,
+            normalized_text=normalized_text,
+            trace_id=trace_id,
+            started_at=started_at,
+        )
 
     if _is_price_query(normalized_text):
         return _build_price_response(
@@ -212,6 +242,94 @@ def _extract_case_pack_params(text: str) -> dict:
     return params
 
 
+def _build_customer_last_order_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
+    customer_name = _strip_customer_last_order_query_words(normalized_text)
+    if not customer_name:
+        return _base_response(
+            trace_id=trace_id,
+            intent="customer_last_order_query",
+            speak="没听清客户名，再说一遍。",
+            display={"mode": "clarification", "title": "没听清", "summary": "没听清客户名，再说一遍。", "items": []},
+            device_action={"next_state": "listening", "listen_again": True, "command_window_seconds": 5, "screen_mode": "listen"},
+            started_at=started_at,
+        )
+
+    service = get_customer_service()
+    customers = service.list(customer_name, limit=10)
+    customer = _select_customer(customers, customer_name)
+    query = {
+        "original_text": raw_text,
+        "normalized_text": normalized_text,
+        "customer_name": customer_name,
+        "customer_id": customer.get("id") or customer.get("customer_id") if customer else None,
+    }
+    if not customer:
+        return _base_response(
+            trace_id=trace_id,
+            intent="customer_last_order_query",
+            speak=f"没找到{customer_name}这个客户。",
+            display={
+                "mode": "customer_not_found",
+                "title": f"{customer_name}最近订单",
+                "summary": f"没找到{customer_name}这个客户",
+                "query": query,
+                "items": [],
+            },
+            device_action={"next_state": "listening", "listen_again": True, "command_window_seconds": 5, "screen_mode": "result"},
+            started_at=started_at,
+        )
+
+    customer_id = int(customer.get("id") or customer.get("customer_id") or 0)
+    display_name = _customer_display_name(customer, customer_name)
+    rows, _total, _summary = service.sales(customer_id, page=1, page_size=1)
+    if not rows:
+        return _base_response(
+            trace_id=trace_id,
+            intent="customer_last_order_query",
+            speak=f"没查到{display_name}最近订单。",
+            display={
+                "mode": "customer_last_order_empty",
+                "title": f"{display_name}最近订单",
+                "summary": f"没查到{display_name}最近订单",
+                "query": query,
+                "items": [],
+            },
+            device_action={"next_state": "idle", "listen_again": False, "command_window_seconds": 2, "screen_mode": "result"},
+            started_at=started_at,
+        )
+
+    order = rows[0]
+    date_text = _format_order_date(order.get("sales_at") or order.get("created_at") or "")
+    items_text = str(order.get("items_preview") or "").strip()
+    if not items_text:
+        total_quantity = str(order.get("total_quantity") or "").strip()
+        items_text = f"数量{total_quantity}套" if total_quantity else "有一张销售单"
+    summary_text = f"{date_text}，{items_text}" if date_text else items_text
+    return _base_response(
+        trace_id=trace_id,
+        intent="customer_last_order_query",
+        speak=f"{display_name}最近一次订单是{summary_text}。",
+        display={
+            "mode": "customer_last_order_result",
+            "title": f"{display_name}最近订单",
+            "summary": summary_text,
+            "query": query,
+            "items": [
+                {
+                    "id": order.get("id"),
+                    "sales_no": order.get("sales_no") or "",
+                    "sales_at": order.get("sales_at") or "",
+                    "items_preview": items_text,
+                    "total_quantity": order.get("total_quantity") or "",
+                    "receivable_amount": order.get("receivable_amount") or "",
+                }
+            ],
+        },
+        device_action={"next_state": "idle", "listen_again": False, "command_window_seconds": 2, "screen_mode": "result"},
+        started_at=started_at,
+    )
+
+
 def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
     query_text = _strip_price_query_words(normalized_text)
     params = _extract_inventory_params(query_text)
@@ -320,6 +438,13 @@ def _is_case_pack_query(text: str) -> bool:
     )
 
 
+def _is_customer_last_order_query(text: str) -> bool:
+    compact = str(text or "").replace(" ", "")
+    if not compact:
+        return False
+    return any(word in compact for word in CUSTOMER_LAST_ORDER_QUERY_WORDS)
+
+
 def _strip_price_query_words(text: str) -> str:
     value = str(text or "").strip()
     for word in sorted(PRICE_QUERY_WORDS, key=len, reverse=True):
@@ -352,6 +477,16 @@ def _strip_case_pack_query_words(text: str) -> str:
     value = re.sub(r"每件(?:有|装)?(?:多少|几)(?:个|套|张|只|盒)?", "", value)
     value = re.sub(r"(?:多少|几)(?:个|套|张|只|盒)(?:一|1)?件", "", value)
     return value.strip()
+
+
+def _strip_customer_last_order_query_words(text: str) -> str:
+    value = str(text or "").strip()
+    for word in ("帮我查一下", "帮我查下", "查一下", "查下", "查询", "看一下", "看下", "问一下", "帮我"):
+        value = value.replace(word, "")
+    for word in sorted(CUSTOMER_LAST_ORDER_QUERY_WORDS, key=len, reverse=True):
+        value = value.replace(word, "")
+    value = re.sub(r"^(?:客户|客人)\s*", "", value)
+    return value.strip(" ，,。？?")
 
 
 def _normalize_command_text(text: str) -> str:
@@ -431,6 +566,35 @@ def _clean_product_title(value: str) -> str:
 
 def _compact_product_title(value: str) -> str:
     return _clean_product_title(value).replace(" ", "")
+
+
+def _customer_display_name(customer: dict, fallback: str) -> str:
+    return str(
+        customer.get("name")
+        or customer.get("customer_name")
+        or customer.get("company_name")
+        or fallback
+    ).strip()
+
+
+def _select_customer(customers: list[dict], customer_name: str) -> dict:
+    if not customers:
+        return {}
+    compact_query = str(customer_name or "").replace(" ", "")
+    for customer in customers:
+        display_name = _customer_display_name(customer, "")
+        if display_name.replace(" ", "") == compact_query:
+            return customer
+    return customers[0]
+
+
+def _format_order_date(value: Any) -> str:
+    text = str(value or "").strip()
+    match = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    if not match:
+        return text[:10]
+    year, month, day = match.groups()
+    return f"{int(year)}年{int(month)}月{int(day)}日"
 
 
 def _query_payload(

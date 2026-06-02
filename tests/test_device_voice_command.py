@@ -22,6 +22,22 @@ class FakeProductService:
         return self.rows
 
 
+class FakeCustomerService:
+    def __init__(self, customers, sales_rows):
+        self.customers = customers
+        self.sales_rows = sales_rows
+        self.list_calls = []
+        self.sales_calls = []
+
+    def list(self, keyword: str = "", limit: int = 100):
+        self.list_calls.append({"keyword": keyword, "limit": limit})
+        return self.customers
+
+    def sales(self, customer_id: int, **kwargs):
+        self.sales_calls.append({"customer_id": customer_id, **kwargs})
+        return self.sales_rows, len(self.sales_rows), {"total": len(self.sales_rows)}
+
+
 class DeviceVoiceCommandServiceTests(unittest.TestCase):
     def test_inventory_command_returns_speak_display_and_device_action(self):
         from src.services.device_voice import build_device_voice_command_response
@@ -79,6 +95,74 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
                 "limit": 100,
             },
         )
+
+    def test_customer_last_order_command_uses_customer_sales_not_inventory(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        customer_service = FakeCustomerService(
+            customers=[{"id": 501, "name": "宴袍"}],
+            sales_rows=[
+                {
+                    "id": 9901,
+                    "sales_no": "SO202605280001",
+                    "sales_at": "2026-05-28 10:20:00",
+                    "items_preview": "见喜半斤 红色 x20",
+                    "total_quantity": "20",
+                    "receivable_amount": "360.00",
+                }
+            ],
+        )
+
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.services.device_voice.get_customer_service", return_value=customer_service):
+                result = build_device_voice_command_response(
+                    text="宴袍最近一次订单",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-customer-last-order",
+                    trace_id="trace-customer-last-order",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        self.assertEqual(customer_service.list_calls, [{"keyword": "宴袍", "limit": 10}])
+        self.assertEqual(
+            customer_service.sales_calls,
+            [{"customer_id": 501, "page": 1, "page_size": 1}],
+        )
+        self.assertEqual(result["intent"], "customer_last_order_query")
+        self.assertEqual(result["device_action"]["next_state"], "idle")
+        self.assertEqual(result["display"]["mode"], "customer_last_order_result")
+        self.assertEqual(result["display"]["query"]["customer_name"], "宴袍")
+        self.assertIn("宴袍最近一次订单是2026年5月28日", result["speak"])
+        self.assertIn("见喜半斤 红色 x20", result["speak"])
+
+    def test_customer_last_order_command_accepts_last_gift_box_wording(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        customer_service = FakeCustomerService(
+            customers=[{"id": 501, "name": "宴袍"}],
+            sales_rows=[
+                {
+                    "id": 9902,
+                    "sales_no": "SO202605180001",
+                    "sales_at": "2026-05-18 15:00:00",
+                    "items_preview": "岩味二三两 黄色 x10",
+                }
+            ],
+        )
+
+        with patch("src.services.device_voice.get_customer_service", return_value=customer_service):
+            result = build_device_voice_command_response(
+                text="宴袍上次做礼盒是什么时候",
+                device_id="orangepi-xiaoxing-01",
+                session_id="voice-session-customer-last-gift-box",
+                trace_id="trace-customer-last-gift-box",
+            )
+
+        self.assertEqual(customer_service.list_calls, [{"keyword": "宴袍", "limit": 10}])
+        self.assertEqual(result["intent"], "customer_last_order_query")
+        self.assertIn("宴袍最近一次订单是2026年5月18日", result["speak"])
+        self.assertIn("岩味二三两 黄色 x10", result["speak"])
 
     def test_broad_inventory_command_speaks_matching_product_names(self):
         from src.services.device_voice import build_device_voice_command_response
