@@ -4,7 +4,7 @@
 
 Polaris ERP Agent is a server-side ERP, AI assistant, mini-program API, print pipeline, and React admin console for a small-batch packaging business. It centralizes products, SKUs, inventory, customers, sales orders, workflow orders, image assets, printing, analytics, and AI-assisted operations into the `sjagent_core` business database.
 
-This repository is the main server. The customer mini-program frontend and the Xiaoxing device client are separate codebases: the current mini-program source lives in the local `sj-mall-uniapp` workspace, and the Xiaoxing device client is maintained at [BennettLocke/polaris-xiaoxing-device](https://github.com/BennettLocke/polaris-xiaoxing-device).
+This repository is the main server. The customer mini-program frontend and the Xiaoxing device client are separate codebases: the mini program is maintained at [BennettLocke/polaris-ai-erp-weapp](https://github.com/BennettLocke/polaris-ai-erp-weapp), and the Xiaoxing device client is maintained at [BennettLocke/polaris-xiaoxing-device](https://github.com/BennettLocke/polaris-xiaoxing-device).
 
 ## What This Project Solves
 
@@ -35,21 +35,25 @@ The architecture uses a **business-heavy server** and **thin clients**. React Ad
 
 ## Official Mini Program Source
 
-The current customer-facing mini-program source is maintained in the internal shared-drive workspace:
+The customer-facing mini program is maintained as a separate GitHub repository:
+
+- [BennettLocke/polaris-ai-erp-weapp](https://github.com/BennettLocke/polaris-ai-erp-weapp)
+
+The accurate local business source used for the current sync was:
 
 ```text
 Z:\肆计包装小程序\商城小程序源码\sj-mall-uniapp
 ```
 
-This is the canonical mall mini-program codebase. It is built with uni-app + Vue 3 and covers the customer storefront experience: home, category browsing, product lists, product detail, order query, sales-order account entry, login/customer binding, settings, contact, and share assets. It does not connect directly to the database. Instead, `src/api/*.js` and `src/config.js` call the sjagent service layer, mainly through `/api/mini/*` and related mini-program APIs. Product, customer, order, inventory, shelf-state, hot-product analytics, and security rules remain centralized in this server repository.
-
-Another local directory may exist:
+The local Git clone for that GitHub repository is:
 
 ```text
 Z:\肆计包装小程序\商城小程序源码\polaris-ai-erp-weapp
 ```
 
-That folder is not the current canonical mini-program source. Treat it as a historical or reference copy unless the project owner explicitly promotes it again. Server deployment does not require the mini-program source; mini-program releases should be built from `sj-mall-uniapp` with uni-app / HBuilderX and pointed at the production backend domain.
+The two local folders existed because `sj-mall-uniapp` was the active business source while `polaris-ai-erp-weapp` was the repository-named Git clone. The accurate source has now been synchronized into the GitHub mini-program repository. Server deployment does not require the mini-program source; mini-program releases should be built from the mini-program repository with uni-app / HBuilderX and pointed at the production backend domain.
+
+The mini program is built with uni-app + Vue 3 and covers the customer storefront experience: home, category browsing, product lists, product detail, order query, sales-order account entry, login/customer binding, settings, contact, and share assets. It does not connect directly to the database. Instead, `src/api/*.js` and `src/config.js` call the sjagent service layer, mainly through `/api/mini/*` and related mini-program APIs. Product, customer, order, inventory, shelf-state, hot-product analytics, and security rules remain centralized in this server repository.
 
 ## Xiaoxing Device Client
 
