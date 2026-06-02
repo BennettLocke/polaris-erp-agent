@@ -368,6 +368,35 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
         self.assertEqual(result["display"]["items"][0]["per_piece"], 20)
         self.assertIn("欢喜半斤一件20套", result["speak"])
 
+    def test_case_pack_command_ignores_leading_xia_after_asr_drops_cha(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        product_service = FakeProductService(
+            [
+                {
+                    "product_id": 81,
+                    "title": "【欢喜】半斤",
+                    "color": "咖色",
+                    "simple_desc": "1件20套",
+                }
+            ]
+        )
+
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.services.device_voice.get_product_service", return_value=product_service):
+                result = build_device_voice_command_response(
+                    text="一下欢喜半斤一件多少个",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-case-pack-misheard",
+                    trace_id="trace-case-pack-misheard",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        self.assertEqual(product_service.calls, [{"keyword": "欢喜 半斤", "limit": 50, "listed_only": False}])
+        self.assertEqual(result["intent"], "case_pack_query")
+        self.assertEqual(result["display"]["summary"], "欢喜半斤一件20套")
+
 
 class DeviceVoiceCommandApiTests(unittest.TestCase):
     def test_device_voice_command_route_wraps_service_response(self):

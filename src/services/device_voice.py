@@ -322,6 +322,7 @@ def _strip_case_pack_query_words(text: str) -> str:
     value = str(text or "").strip()
     for word in ("帮我查一下", "帮我查下", "查一下", "查下", "查询", "看一下", "看下", "问一下", "帮我"):
         value = value.replace(word, "")
+    value = re.sub(r"^(?:一?下|下)\s*", "", value)
     for word in sorted(CASE_PACK_QUERY_WORDS, key=len, reverse=True):
         value = value.replace(word, "")
     value = re.sub(r"(?:一|1)?件(?:有|装|里面|是)?(?:多少|几)(?:个|套|张|只|盒)?", "", value)
