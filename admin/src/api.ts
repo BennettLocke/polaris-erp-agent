@@ -459,6 +459,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({})
     }),
+  salesPrintTaskStatus: (id: number) =>
+    request<SalesPrintTask>(`/api/sales/print-tasks/${id}`),
   deleteSales: (id: number) =>
     request<{ id: number }>(`/api/sales/${id}`, {
       method: "DELETE"

@@ -573,7 +573,13 @@ export type SalesPrintTask = {
   job_no?: string;
   sales_id?: number;
   sales_no?: string;
+  customer_name?: string;
   status?: string;
+  copies?: number;
+  print_url?: string;
+  created_at?: string;
+  updated_at?: string;
+  printed_at?: string;
 };
 
 export type SalesOrderLinePayload = {

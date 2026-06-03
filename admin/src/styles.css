@@ -952,6 +952,80 @@ button {
   font-weight: 800;
 }
 
+.print-feedback-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 130;
+  width: min(420px, calc(100vw - 28px));
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  border: 1px solid var(--sj-border);
+  border-left: 4px solid var(--sj-heading);
+  border-radius: 8px;
+  background: var(--sj-surface);
+  box-shadow: 0 20px 50px rgba(24, 24, 27, 0.18);
+  padding: 14px;
+}
+
+.print-feedback-toast--printed {
+  border-left-color: #16a34a;
+}
+
+.print-feedback-toast--failed,
+.print-feedback-toast--timeout {
+  border-left-color: #dc2626;
+}
+
+.print-feedback-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--sj-border);
+  border-radius: 999px;
+  color: var(--sj-heading);
+  background: var(--sj-surface-subtle);
+}
+
+.print-feedback-icon svg,
+.print-feedback-toast .sj-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.print-feedback-body {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.print-feedback-body strong {
+  color: var(--sj-heading);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.print-feedback-body p {
+  margin: 0;
+  color: var(--sj-foreground);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.print-feedback-body span {
+  color: var(--sj-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.print-feedback-spin {
+  animation: workbench-spin 1s linear infinite;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;

@@ -364,6 +364,7 @@ API_PERMISSION_RULES = [
     ({"DELETE"}, re.compile(r"^/api/sales/\d+$"), "删单"),
     ({"PATCH"}, re.compile(r"^/api/sales/\d+/payment$"), "调余额"),
     ({"POST"}, re.compile(r"^/api/sales/\d+/print-task$"), "打印"),
+    ({"GET"}, re.compile(r"^/api/sales/print-tasks/\d+$"), "打印"),
     ({"GET"}, re.compile(r"^/api/sales/\d+/print-html$"), "打印"),
     ({"POST"}, re.compile(r"^/api/inventory/purchase$"), "调库存"),
     ({"POST"}, re.compile(r"^/api/inventory/stocktaking$"), "盘点"),
@@ -2842,6 +2843,37 @@ def sales_print_task_api(sales_id: int):
         return jsonify(result if isinstance(result, dict) and "code" in result else {"code": 0, "data": result})
     except Exception as e:
         logger.error(f"sales print task failed: sales_id={sales_id}, error={e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/sales/print-tasks/<int:task_id>", methods=["GET"])
+def sales_print_task_status_api(task_id: int):
+    """Read a sales print task status for the React admin."""
+    if task_id <= 0:
+        return jsonify({"code": 400, "msg": "task_id is required"}), 400
+    try:
+        row = get_sales_service().print_task_row(task_id)
+        if not row:
+            return jsonify({"code": 404, "msg": "打印任务不存在"}), 404
+        return jsonify({
+            "code": 0,
+            "data": _safe_json({
+                "id": row.get("id"),
+                "task_id": row.get("id"),
+                "job_no": row.get("job_no") or "",
+                "sales_id": row.get("document_id"),
+                "sales_no": row.get("sales_no") or "",
+                "customer_name": row.get("customer_name_snapshot") or "",
+                "status": row.get("status") or "",
+                "copies": int(row.get("copies") or 1),
+                "print_url": row.get("print_url") or "",
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+                "printed_at": row.get("printed_at"),
+            }),
+        })
+    except Exception as e:
+        logger.error(f"sales print task status failed: task_id={task_id}, error={e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 

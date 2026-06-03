@@ -19,6 +19,7 @@ import { OrdersPage } from "./components/business/orders";
 import { ProductsPage } from "./components/business/products";
 import { SettingsPage } from "./components/business/settings";
 import { WorkbenchPage } from "./components/business/workbench";
+import { PrintFeedbackToast, useSalesPrintFeedback } from "./components/business/print-feedback";
 import {
   CreateCustomerDialog,
   SalesCustomerField,
@@ -272,6 +273,7 @@ function SalesNewPage() {
   const [loading, setLoading] = useState("");
   const [lastResult, setLastResult] = useState<{ id?: number; sales_id?: number; sales_no?: string; order_no?: string } | null>(null);
   const [detailOrder, setDetailOrder] = useState<SalesDetail | null>(null);
+  const printFeedback = useSalesPrintFeedback();
 
   const totalQty = lines.reduce((sum, line) => sum + toNumber(line.buy_number), 0);
   const totalAmount = lines.reduce((sum, line) => sum + toNumber(line.buy_number) * toNumber(line.price), 0);
@@ -496,15 +498,12 @@ function SalesNewPage() {
 
   async function printSalesById(id: number) {
     if (!id) return;
-    setLoading("print-last");
     setError("");
+    setNotice("");
     try {
-      await api.createSalesPrintTask(id);
-      setNotice("打印任务已创建，等待本地打印程序处理");
+      await printFeedback.printSales(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "打印任务创建失败");
-    } finally {
-      setLoading("");
     }
   }
 
@@ -690,7 +689,7 @@ function SalesNewPage() {
         />
         <SalesResultCard
           result={lastResult}
-          loading={loading}
+          loading={printFeedback.busySalesId ? "print-last" : loading}
           onPrint={() => void printLastSales()}
           onOpenDetail={() => void openLastSalesDetail()}
           onPreview={previewLastSales}
@@ -713,11 +712,15 @@ function SalesNewPage() {
       />
       <SalesOrderDetailSheet
         order={detailOrder}
-        busy={loading.startsWith("delete-")}
+        busy={
+          loading.startsWith("delete-")
+          || Boolean(printFeedback.busySalesId && printFeedback.busySalesId === Number(detailOrder?.id || detailOrder?.sales_id || 0))
+        }
         onClose={() => setDetailOrder(null)}
         onPrint={(id) => void printSalesById(id)}
         onDelete={(order) => void deleteDetailSales(order)}
       />
+      <PrintFeedbackToast feedback={printFeedback.feedback} onClose={printFeedback.closeFeedback} />
     </section>
   );
 }
@@ -762,6 +765,8 @@ function SalesPage() {
   const [detail, setDetail] = useState<SalesDetail | null>(null);
   const [busySalesId, setBusySalesId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SalesCard | SalesDetail | null>(null);
+  const printFeedback = useSalesPrintFeedback();
+  const activeBusySalesId = busySalesId || printFeedback.busySalesId;
 
   async function load(nextPage = page, nextFilters = filters) {
     setLoading(true);
@@ -798,14 +803,10 @@ function SalesPage() {
     if (!id) return;
     setError("");
     setNotice("");
-    setBusySalesId(id);
     try {
-      await api.createSalesPrintTask(id);
-      setNotice("打印任务已创建，等待本地打印程序处理");
+      await printFeedback.printSales(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "打印任务创建失败");
-    } finally {
-      setBusySalesId(null);
     }
   }
 
@@ -904,7 +905,7 @@ function SalesPage() {
         <>
           <SalesListTable
             orders={items}
-            busySalesId={busySalesId}
+            busySalesId={activeBusySalesId}
             onOpenDetail={(id) => void openDetail(id)}
             onPrint={(id) => void handlePrint(id)}
             onPreview={handlePreview}
@@ -912,7 +913,7 @@ function SalesPage() {
           />
           <SalesMobileCardList
             orders={items}
-            busySalesId={busySalesId}
+            busySalesId={activeBusySalesId}
             onOpenDetail={(id) => void openDetail(id)}
             onPrint={(id) => void handlePrint(id)}
             onPreview={handlePreview}
@@ -937,7 +938,7 @@ function SalesPage() {
       <SalesOrderDetailDialog
         order={detail}
         onClose={() => setDetail(null)}
-        busySalesId={busySalesId}
+        busySalesId={activeBusySalesId}
         onPrint={handlePrint}
         onPreview={handlePreview}
         onUpdatePayment={handleUpdatePayment}
@@ -945,10 +946,11 @@ function SalesPage() {
       />
       <SalesDeleteDialog
         order={deleteTarget}
-        busy={Boolean(busySalesId && Number(deleteTarget?.id || deleteTarget?.sales_id || 0) === busySalesId)}
+        busy={Boolean(activeBusySalesId && Number(deleteTarget?.id || deleteTarget?.sales_id || 0) === activeBusySalesId)}
         onClose={() => setDeleteTarget(null)}
         onConfirm={confirmDeleteSales}
       />
+      <PrintFeedbackToast feedback={printFeedback.feedback} onClose={printFeedback.closeFeedback} />
     </Card>
   );
 }

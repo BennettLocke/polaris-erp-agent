@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Eye, Printer, Trash2 } from "lucide-react";
 
 import { api } from "@/api";
+import { PrintFeedbackToast, useSalesPrintFeedback } from "@/components/business/print-feedback";
 import {
   SalesDeleteDialog,
   SalesOrderDetailDialog
@@ -93,8 +94,10 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
   const [busySalesId, setBusySalesId] = useState<number | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [statementOpen, setStatementOpen] = useState(false);
+  const printFeedback = useSalesPrintFeedback();
   const months = useMemo(() => monthOptions(), []);
   const selected = current || customer;
+  const activeBusySalesId = busySalesId || printFeedback.busySalesId;
   const selectedName = customerName(selected);
   const balance = moneyNumber(ledgerSummary?.balance_amount || selected?.balance_amount);
   const canAdjustBalance = hasPermission(currentUser, "调余额");
@@ -258,16 +261,12 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
 
   async function printSales(id: number) {
     if (!id) return;
-    setBusySalesId(id);
     setError("");
     setNotice("");
     try {
-      await api.createSalesPrintTask(id);
-      setNotice("打印任务已创建，等待本地打印程序处理");
+      await printFeedback.printSales(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "打印任务创建失败");
-    } finally {
-      setBusySalesId(null);
     }
   }
 
@@ -438,7 +437,15 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
                       <TableCell>
                         <div className="customer-row-actions" onClick={(event) => event.stopPropagation()}>
                           <Button size="icon-sm" variant="ghost" aria-label="详情" onClick={() => openSalesDetail(order.id)}><Eye /></Button>
-                          <Button size="icon-sm" variant="ghost" aria-label="打印" onClick={() => printSales(order.id)}><Printer /></Button>
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            aria-label="打印"
+                            disabled={activeBusySalesId === Number(order.id || 0)}
+                            onClick={() => printSales(order.id)}
+                          >
+                            <Printer />
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -597,7 +604,7 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
         />
         <SalesOrderDetailDialog
           order={detail}
-          busySalesId={busySalesId}
+          busySalesId={activeBusySalesId}
           onClose={() => setDetail(null)}
           onPrint={(id) => void printSales(id)}
           onPreview={previewSales}
@@ -606,11 +613,12 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
         />
         <SalesDeleteDialog
           order={deleteTarget}
-          busy={Boolean(deleteTarget && busySalesId === Number(deleteTarget.id || deleteTarget.sales_id || 0))}
+          busy={Boolean(deleteTarget && activeBusySalesId === Number(deleteTarget.id || deleteTarget.sales_id || 0))}
           onClose={() => setDeleteTarget(null)}
           onConfirm={() => void confirmDeleteSales()}
         />
-        {busySalesId && !detail ? <Badge className="customer-floating-badge">处理中</Badge> : null}
+        {activeBusySalesId && !detail ? <Badge className="customer-floating-badge">处理中</Badge> : null}
+        <PrintFeedbackToast feedback={printFeedback.feedback} onClose={printFeedback.closeFeedback} />
       </DialogContent>
     </Dialog>
   );
