@@ -53,7 +53,7 @@ def load_print_agent_config(
 
     if selected_path.exists():
         try:
-            loaded = json.loads(selected_path.read_text(encoding="utf-8"))
+            loaded = json.loads(selected_path.read_text(encoding="utf-8-sig"))
             if isinstance(loaded, dict):
                 config.update({str(key): value for key, value in loaded.items()})
         except Exception as exc:
@@ -243,11 +243,17 @@ def pdf_orientation(pdf_path: Path) -> str:
         return "portrait"
 
 
+def sumatra_print_settings(pdf_path: Path) -> str:
+    """Let the PDF/web template carry paper orientation; only fit to paper."""
+    return "fit"
+
+
 def print_pdf_windows(pdf_path: Path) -> bool:
     printer = PRINTER_NAME
-    orientation = pdf_orientation(pdf_path)
+    pdf_page_orientation = pdf_orientation(pdf_path)
+    print_settings = sumatra_print_settings(pdf_path)
     if SUMATRA_PATH.exists():
-        cmd = [str(SUMATRA_PATH), "-silent", "-exit-when-done", "-print-settings", orientation]
+        cmd = [str(SUMATRA_PATH), "-silent", "-exit-when-done", "-print-settings", print_settings]
         if printer:
             cmd.extend(["-print-to", printer])
         else:
@@ -256,7 +262,12 @@ def print_pdf_windows(pdf_path: Path) -> bool:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
             if result.returncode == 0:
-                logger.info("已发送到打印机: %s (%s)", printer or "系统默认", orientation)
+                logger.info(
+                    "已发送到打印机: %s (pdf=%s, settings=%s)",
+                    printer or "系统默认",
+                    pdf_page_orientation,
+                    print_settings,
+                )
                 return True
             logger.error("SumatraPDF 打印失败: code=%s stdout=%s stderr=%s", result.returncode, result.stdout, result.stderr)
         except Exception as exc:
