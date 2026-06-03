@@ -100,6 +100,30 @@ function Install-NodeDependencies([string]$TargetDir, [string]$CacheDir, [string
     }
 }
 
+function Set-DesktopStartShortcut([string]$TargetDir) {
+    try {
+        $desktop = [Environment]::GetFolderPath("Desktop")
+        if (-not $desktop) {
+            return
+        }
+        $shortcutPath = Join-Path $desktop "启动 sjAutoPrint.lnk"
+        $scriptPath = Join-Path $TargetDir "start_sjautoprint.ps1"
+        $powershellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+        $wsh = New-Object -ComObject WScript.Shell
+        $shortcut = $wsh.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $powershellPath
+        $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+        $shortcut.WorkingDirectory = $TargetDir
+        $shortcut.WindowStyle = 1
+        $shortcut.Description = "Start or check the sjAutoPrint local print service"
+        $shortcut.IconLocation = "$env:WINDIR\System32\shell32.dll,16"
+        $shortcut.Save()
+        Write-Host "Desktop shortcut: $shortcutPath"
+    } catch {
+        Write-Warning "Could not create desktop shortcut: $($_.Exception.Message)"
+    }
+}
+
 if (-not (Test-IsAdmin)) {
     throw "Please run this installer from an elevated PowerShell window."
 }
@@ -131,6 +155,7 @@ New-Item -ItemType Directory -Force -Path $PuppeteerCacheDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $ScriptsDir "local_print_agent.py") -Destination (Join-Path $InstallDir "local_print_agent.py") -Force
 Copy-Item -LiteralPath (Join-Path $ScriptsDir "local_print_render_pdf.js") -Destination (Join-Path $InstallDir "local_print_render_pdf.js") -Force
 Copy-Item -LiteralPath (Join-Path $ServiceScriptDir "auto_print.py") -Destination (Join-Path $InstallDir "auto_print.py") -Force
+Copy-Item -LiteralPath (Join-Path $ServiceScriptDir "start_sjautoprint.ps1") -Destination (Join-Path $InstallDir "start_sjautoprint.ps1") -Force
 Install-NodeDependencies $InstallDir $PuppeteerCacheDir $NodeCommand.Source $NpmCommand.Source
 
 if (-not $ChromiumPath) {
@@ -177,6 +202,7 @@ Stop-ExistingPrintAgents
 & $NssmPath set $ServiceName AppRotateOnline 1 | Out-Host
 & $NssmPath set $ServiceName AppEnvironmentExtra "SJAGENT_PRINT_CONFIG=$ConfigPath" | Out-Host
 & $NssmPath start $ServiceName | Out-Host
+Set-DesktopStartShortcut $InstallDir
 
 Write-Host ""
 Write-Host "Installed $ServiceName"
