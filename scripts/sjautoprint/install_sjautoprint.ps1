@@ -106,7 +106,7 @@ function Set-DesktopStartShortcut([string]$TargetDir) {
         if (-not $desktop) {
             return
         }
-        $shortcutPath = Join-Path $desktop "启动 sjAutoPrint.lnk"
+        $shortcutPath = Join-Path $desktop "启动或重启 sjAutoPrint.lnk"
         $scriptPath = Join-Path $TargetDir "start_sjautoprint.ps1"
         $powershellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
         $wsh = New-Object -ComObject WScript.Shell
@@ -115,7 +115,7 @@ function Set-DesktopStartShortcut([string]$TargetDir) {
         $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
         $shortcut.WorkingDirectory = $TargetDir
         $shortcut.WindowStyle = 1
-        $shortcut.Description = "Start or check the sjAutoPrint local print service"
+        $shortcut.Description = "Start or restart the sjAutoPrint local print service"
         $shortcut.IconLocation = "$env:WINDIR\System32\shell32.dll,16"
         $shortcut.Save()
         Write-Host "Desktop shortcut: $shortcutPath"

@@ -39,7 +39,11 @@ try {
     }
 
     if ($service.Status -eq "Running") {
-        Write-Host "Service is already running." -ForegroundColor Green
+        Write-Host "Service is running. Restarting to reload the latest print script ..."
+        Restart-Service -Name $ServiceName -Force
+        $service = Get-Service -Name $ServiceName
+        $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
+        Write-Host "Service restarted." -ForegroundColor Green
     } else {
         Write-Host "Current status: $($service.Status)"
         Write-Host "Starting $ServiceName ..."
