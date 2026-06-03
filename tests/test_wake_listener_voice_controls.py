@@ -135,6 +135,18 @@ class WakeListenerVoiceControlTests(unittest.TestCase):
         finally:
             wake_listener.time.monotonic = original
 
+    def test_command_window_expires_after_blocked_audio_read(self) -> None:
+        self.assertEqual(
+            wake_listener.expire_command_window_if_needed(10.0, speaking=False, now=12.0),
+            0.0,
+        )
+
+    def test_command_window_stays_open_while_speech_is_active(self) -> None:
+        self.assertEqual(
+            wake_listener.expire_command_window_if_needed(10.0, speaking=True, now=12.0),
+            10.0,
+        )
+
     def test_alsa_capture_uses_nonblocking_mode_and_sleeps_on_empty_reads(self) -> None:
         class FakeAlsa(types.ModuleType):
             PCM_CAPTURE = 1

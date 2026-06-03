@@ -1079,6 +1079,20 @@ def command_window_deadline(args, *, after_wake_reply: bool = False) -> float:
     return time.monotonic() + max(0.0, extra) + args.command_window_seconds
 
 
+def expire_command_window_if_needed(
+    waiting_command_until: float,
+    *,
+    speaking: bool,
+    now: float | None = None,
+    verbose: bool = False,
+) -> float:
+    if waiting_command_until and not speaking and (time.monotonic() if now is None else now) > waiting_command_until:
+        if verbose:
+            print("command_window=timeout", flush=True)
+        return 0.0
+    return waiting_command_until
+
+
 def run_once(args) -> bool:
     with tempfile.TemporaryDirectory(prefix="sjagent-wake-") as tmp:
         wav_path = Path(tmp) / "chunk.wav"
@@ -1147,11 +1161,17 @@ def run_stream(args) -> None:
     expecting_command_utterance = False
 
     while True:
-        if waiting_command_until and not speaking and time.monotonic() > waiting_command_until:
-            waiting_command_until = 0.0
-            if args.verbose:
-                print("command_window=timeout", flush=True)
+        waiting_command_until = expire_command_window_if_needed(
+            waiting_command_until,
+            speaking=speaking,
+            verbose=args.verbose,
+        )
         raw = next(raw_frames)
+        waiting_command_until = expire_command_window_if_needed(
+            waiting_command_until,
+            speaking=speaking,
+            verbose=True,
+        )
         pcm, rms, state = raw_to_pcm16(raw, gain=args.gain, state=state)
         if ignore_audio_until and time.monotonic() < ignore_audio_until:
             continue
@@ -1356,12 +1376,20 @@ def run_stream(args) -> None:
             expecting_command_utterance = False
             continue
         try:
+            asr_started_at = time.monotonic()
+            print(
+                f"ASR_START source=stream bytes={len(utterance)} "
+                f"command_window={int(bool(waiting_command_until or expecting_command_utterance))}",
+                flush=True,
+            )
             if streaming_asr is not None:
                 text = streaming_asr.finish()
                 streaming_asr = None
             else:
                 utterance = prepare_asr_pcm16(utterance, args, source="stream")
                 text = recognize(args, utterance)
+            asr_elapsed = time.monotonic() - asr_started_at
+            print(f"ASR_DONE elapsed_ms={asr_elapsed * 1000:.0f} chars={len(text or '')}", flush=True)
         except Exception as exc:
             streaming_asr = None
             print(f"ASR_ERROR {exc}", flush=True)
@@ -1370,6 +1398,14 @@ def run_stream(args) -> None:
         print(f"ASR {text}", flush=True)
         if waiting_command_until or expecting_command_utterance:
             expecting_command_utterance = False
+            if asr_elapsed > args.asr_stale_result_seconds:
+                print(
+                    f"ASR_DISCARD_STALE elapsed_ms={asr_elapsed * 1000:.0f} "
+                    f"limit_ms={args.asr_stale_result_seconds * 1000:.0f}",
+                    flush=True,
+                )
+                waiting_command_until = 0.0
+                continue
             if handle_command(args, text):
                 waiting_command_until = 0.0
             elif not should_continue_command_window(text):
@@ -1411,6 +1447,7 @@ def main() -> None:
     parser.add_argument("--gain", type=float, default=8.0, help="PCM gain before ASR")
     parser.add_argument("--asr-provider", choices=["volc"], default="volc")
     parser.add_argument("--asr-timeout", type=int, default=15)
+    parser.add_argument("--asr-stale-result-seconds", type=float, default=30.0)
     parser.add_argument("--stream-command-asr", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--asr-preprocess", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--asr-frame-ms", type=int, default=20, choices=[10, 20, 30])
