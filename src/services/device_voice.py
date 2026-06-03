@@ -439,7 +439,7 @@ def _is_case_pack_query(text: str) -> bool:
 
 
 def _is_customer_last_order_query(text: str) -> bool:
-    compact = str(text or "").replace(" ", "")
+    compact = _normalize_customer_last_order_intent_text(text).replace(" ", "")
     if not compact:
         return False
     return any(word in compact for word in CUSTOMER_LAST_ORDER_QUERY_WORDS)
@@ -480,13 +480,22 @@ def _strip_case_pack_query_words(text: str) -> str:
 
 
 def _strip_customer_last_order_query_words(text: str) -> str:
-    value = str(text or "").strip()
+    value = _normalize_customer_last_order_intent_text(text).strip()
     for word in ("帮我查一下", "帮我查下", "查一下", "查下", "查询", "看一下", "看下", "问一下", "帮我"):
         value = value.replace(word, "")
     for word in sorted(CUSTOMER_LAST_ORDER_QUERY_WORDS, key=len, reverse=True):
         value = value.replace(word, "")
     value = re.sub(r"^(?:客户|客人)\s*", "", value)
     return value.strip(" ，,。？?")
+
+
+def _normalize_customer_last_order_intent_text(text: str) -> str:
+    value = str(text or "")
+    # ASR often stutters functional command words ("订订单", "单单"). Normalize
+    # only order-query vocabulary so product/customer names are left alone.
+    value = re.sub(r"([订定单次上最近做礼盒时候一笔])\1+", r"\1", value)
+    value = value.replace("定单", "订单")
+    return value
 
 
 def _normalize_command_text(text: str) -> str:

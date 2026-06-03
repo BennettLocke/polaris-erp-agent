@@ -164,6 +164,37 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
         self.assertIn("宴袍最近一次订单是2026年5月18日", result["speak"])
         self.assertIn("岩味二三两 黄色 x10", result["speak"])
 
+    def test_customer_last_order_command_tolerates_asr_repeated_order_word(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        customer_service = FakeCustomerService(
+            customers=[{"id": 501, "name": "宴袍"}],
+            sales_rows=[
+                {
+                    "id": 9903,
+                    "sales_no": "SO202606030001",
+                    "sales_at": "2026-06-03 15:20:00",
+                    "items_preview": "见喜六小盒 黑色 x5",
+                }
+            ],
+        )
+
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.services.device_voice.get_customer_service", return_value=customer_service):
+                result = build_device_voice_command_response(
+                    text="宴袍最近的订订单",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-customer-last-order-asr-repeat",
+                    trace_id="trace-customer-last-order-asr-repeat",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        self.assertEqual(customer_service.list_calls, [{"keyword": "宴袍", "limit": 10}])
+        self.assertEqual(result["intent"], "customer_last_order_query")
+        self.assertEqual(result["display"]["query"]["customer_name"], "宴袍")
+        self.assertIn("宴袍最近一次订单是2026年6月3日", result["speak"])
+
     def test_broad_inventory_command_speaks_matching_product_names(self):
         from src.services.device_voice import build_device_voice_command_response
 
