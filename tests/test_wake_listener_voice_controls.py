@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from array import array
 
 if "audioop" not in sys.modules:
     audioop_stub = types.ModuleType("audioop")
@@ -11,6 +12,107 @@ from scripts import wake_listener
 
 
 class WakeListenerVoiceControlTests(unittest.TestCase):
+    def test_openwakeword_requires_configured_consecutive_hits(self) -> None:
+        class FakeModel:
+            scores = []
+
+            def __init__(self, *args, **kwargs):
+                self.scores = list(type(self).scores)
+
+            def predict(self, _frame):
+                score = self.scores.pop(0) if self.scores else 0.0
+                return {"xiaoxing": score}
+
+            def reset(self):
+                pass
+
+        fake_openwakeword = types.ModuleType("openwakeword")
+        fake_model_module = types.ModuleType("openwakeword.model")
+        fake_model_module.Model = FakeModel
+        original_openwakeword = sys.modules.get("openwakeword")
+        original_model_module = sys.modules.get("openwakeword.model")
+        sys.modules["openwakeword"] = fake_openwakeword
+        sys.modules["openwakeword.model"] = fake_model_module
+
+        args = types.SimpleNamespace(
+            openwakeword_model_path=["xiaoxing.onnx"],
+            openwakeword_threshold=0.9,
+            openwakeword_confirm_frames=2,
+            openwakeword_min_rms=0,
+            wake_debug=False,
+        )
+        frame = array("h", [1000] * 1280).tobytes()
+
+        try:
+            FakeModel.scores = [0.95, 0.2, 0.95, 0.95]
+            detector = wake_listener.OpenWakeWordDetector(args)
+
+            self.assertFalse(detector.process(frame))
+            self.assertFalse(detector.process(frame))
+            self.assertFalse(detector.process(frame))
+            self.assertTrue(detector.process(frame))
+        finally:
+            if original_openwakeword is None:
+                sys.modules.pop("openwakeword", None)
+            else:
+                sys.modules["openwakeword"] = original_openwakeword
+            if original_model_module is None:
+                sys.modules.pop("openwakeword.model", None)
+            else:
+                sys.modules["openwakeword.model"] = original_model_module
+
+    def test_openwakeword_ignores_hits_below_min_rms(self) -> None:
+        class FakeModel:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def predict(self, _frame):
+                return {"xiaoxing": 0.99}
+
+            def reset(self):
+                pass
+
+        fake_openwakeword = types.ModuleType("openwakeword")
+        fake_model_module = types.ModuleType("openwakeword.model")
+        fake_model_module.Model = FakeModel
+        original_openwakeword = sys.modules.get("openwakeword")
+        original_model_module = sys.modules.get("openwakeword.model")
+        sys.modules["openwakeword"] = fake_openwakeword
+        sys.modules["openwakeword.model"] = fake_model_module
+
+        args = types.SimpleNamespace(
+            openwakeword_model_path=["xiaoxing.onnx"],
+            openwakeword_threshold=0.9,
+            openwakeword_confirm_frames=1,
+            openwakeword_min_rms=500,
+            wake_debug=False,
+        )
+        quiet_frame = array("h", [20] * 1280).tobytes()
+        loud_frame = array("h", [1000] * 1280).tobytes()
+        original_rms = wake_listener.audioop.rms
+
+        def fake_rms(pcm, _width):
+            samples = array("h")
+            samples.frombytes(pcm)
+            return max(abs(sample) for sample in samples)
+
+        try:
+            wake_listener.audioop.rms = fake_rms
+            detector = wake_listener.OpenWakeWordDetector(args)
+
+            self.assertFalse(detector.process(quiet_frame))
+            self.assertTrue(detector.process(loud_frame))
+        finally:
+            wake_listener.audioop.rms = original_rms
+            if original_openwakeword is None:
+                sys.modules.pop("openwakeword", None)
+            else:
+                sys.modules["openwakeword"] = original_openwakeword
+            if original_model_module is None:
+                sys.modules.pop("openwakeword.model", None)
+            else:
+                sys.modules["openwakeword.model"] = original_model_module
+
     def test_cancel_phrases_close_command_window(self) -> None:
         for phrase in ["没事了", "不用了", "取消", "算了", "不查了", "不用查了"]:
             with self.subTest(phrase=phrase):

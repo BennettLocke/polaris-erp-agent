@@ -677,11 +677,18 @@ class OpenWakeWordDetector(LocalWakeDetector):
             }
         self.model = Model(wakeword_models=model_paths, inference_framework="onnx", **feature_kwargs)
         self.threshold = args.openwakeword_threshold
+        self.confirm_frames = max(1, int(args.openwakeword_confirm_frames))
+        self.min_rms = max(0, int(args.openwakeword_min_rms))
         self.debug = args.wake_debug
         self._debug_count = 0
         self._debug_best = 0.0
+        self._confirm_hits = 0
         self.buffer = array("h")
-        print(f"local_wake=openwakeword threshold={self.threshold}", flush=True)
+        print(
+            f"local_wake=openwakeword threshold={self.threshold} "
+            f"confirm_frames={self.confirm_frames} min_rms={self.min_rms}",
+            flush=True,
+        )
 
     def process(self, pcm16: bytes, *, force: bool = False) -> bool:
         import numpy as np
@@ -694,6 +701,7 @@ class OpenWakeWordDetector(LocalWakeDetector):
         while len(self.buffer) >= 1280:
             frame = self.buffer[:1280]
             del self.buffer[:1280]
+            frame_rms = audioop.rms(frame.tobytes(), 2)
             prediction = self.model.predict(np.array(frame, dtype=np.int16))
             score = max((float(v) for v in prediction.values()), default=0.0) if prediction else 0.0
             if self.debug:
@@ -703,8 +711,17 @@ class OpenWakeWordDetector(LocalWakeDetector):
                     print(f"LOCAL_WAKE_BEST best={self._debug_best:.4f} last={score:.4f}", flush=True)
                     self._debug_count = 0
                     self._debug_best = 0.0
-            if prediction and score >= self.threshold:
-                print(f"LOCAL_WAKE_SCORE {prediction}", flush=True)
+            if prediction and score >= self.threshold and (not self.min_rms or frame_rms >= self.min_rms):
+                self._confirm_hits += 1
+                print(
+                    f"LOCAL_WAKE_SCORE {prediction} "
+                    f"confirm={self._confirm_hits}/{self.confirm_frames} rms={frame_rms}",
+                    flush=True,
+                )
+            else:
+                self._confirm_hits = 0
+            if self._confirm_hits >= self.confirm_frames:
+                self._confirm_hits = 0
                 detected = True
         return detected
 
@@ -712,6 +729,7 @@ class OpenWakeWordDetector(LocalWakeDetector):
         self.buffer = array("h")
         self._debug_count = 0
         self._debug_best = 0.0
+        self._confirm_hits = 0
         try:
             self.model.reset()
         except Exception:
@@ -1435,6 +1453,8 @@ def main() -> None:
     parser.add_argument("--porcupine-sensitivity", type=float, default=0.65)
     parser.add_argument("--openwakeword-model-path", action="append", default=[])
     parser.add_argument("--openwakeword-threshold", type=float, default=0.55)
+    parser.add_argument("--openwakeword-confirm-frames", type=int, default=1)
+    parser.add_argument("--openwakeword-min-rms", type=int, default=0)
     parser.add_argument(
         "--sherpa-model-dir",
         default="models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20",
