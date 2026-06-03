@@ -9,7 +9,7 @@ param(
     [string]$PrinterName = "Kyocera TASKalfa 1800",
     [int]$CheckInterval = 3,
     [string]$PrintToken = "",
-    [string]$ChromiumPath = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    [string]$ChromiumPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -44,6 +44,62 @@ function Stop-ExistingPrintAgents {
     }
 }
 
+function Get-LocalBrowserPath([string]$CacheDir) {
+    if (-not (Test-Path -LiteralPath $CacheDir)) {
+        return ""
+    }
+
+    $patterns = @(
+        "chrome\win64-*\chrome-win64\chrome.exe",
+        "chrome-headless-shell\win64-*\chrome-headless-shell-win64\chrome-headless-shell.exe"
+    )
+    foreach ($pattern in $patterns) {
+        $searchPath = Join-Path $CacheDir $pattern
+        $match = Get-ChildItem -Path $searchPath -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+        if ($match) {
+            return $match.FullName
+        }
+    }
+    return ""
+}
+
+function Install-NodeDependencies([string]$TargetDir, [string]$CacheDir, [string]$NodePath, [string]$NpmPath) {
+    $packageSource = Join-Path $ServiceScriptDir "package.json"
+    $packageTarget = Join-Path $TargetDir "package.json"
+    if (Test-Path -LiteralPath $packageSource) {
+        Copy-Item -LiteralPath $packageSource -Destination $packageTarget -Force
+    }
+
+    $puppeteerPackage = Join-Path $TargetDir "node_modules\puppeteer\package.json"
+    if (-not (Test-Path -LiteralPath $puppeteerPackage)) {
+        Write-Host "Installing sjAutoPrint Node dependencies ..."
+        Push-Location $TargetDir
+        try {
+            & $NpmPath install --omit=dev --no-audit --no-fund | Out-Host
+        } finally {
+            Pop-Location
+        }
+    }
+
+    $installScript = Join-Path $TargetDir "node_modules\puppeteer\install.mjs"
+    if (Test-Path -LiteralPath $installScript) {
+        Write-Host "Installing local Chromium for sjAutoPrint ..."
+        $previousCache = $env:PUPPETEER_CACHE_DIR
+        $env:PUPPETEER_CACHE_DIR = $CacheDir
+        try {
+            & $NodePath $installScript | Out-Host
+        } finally {
+            if ($null -eq $previousCache) {
+                Remove-Item Env:\PUPPETEER_CACHE_DIR -ErrorAction SilentlyContinue
+            } else {
+                $env:PUPPETEER_CACHE_DIR = $previousCache
+            }
+        }
+    }
+}
+
 if (-not (Test-IsAdmin)) {
     throw "Please run this installer from an elevated PowerShell window."
 }
@@ -53,18 +109,33 @@ if (-not (Test-Path -LiteralPath $NssmPath)) {
 if (-not (Test-Path -LiteralPath $PythonPath)) {
     throw "Python was not found at $PythonPath"
 }
+$NodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+if (-not $NodeCommand) {
+    throw "Node.js was not found in PATH"
+}
+$NpmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if (-not $NpmCommand) {
+    throw "npm was not found in PATH"
+}
 
 $ServiceScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ScriptsDir = Split-Path -Parent $ServiceScriptDir
 $ConfigPath = Join-Path $InstallDir "config.json"
+$PuppeteerCacheDir = Join-Path $InstallDir ".cache\puppeteer"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "logs") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "pdf_output") | Out-Null
+New-Item -ItemType Directory -Force -Path $PuppeteerCacheDir | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $ScriptsDir "local_print_agent.py") -Destination (Join-Path $InstallDir "local_print_agent.py") -Force
 Copy-Item -LiteralPath (Join-Path $ScriptsDir "local_print_render_pdf.js") -Destination (Join-Path $InstallDir "local_print_render_pdf.js") -Force
 Copy-Item -LiteralPath (Join-Path $ServiceScriptDir "auto_print.py") -Destination (Join-Path $InstallDir "auto_print.py") -Force
+Install-NodeDependencies $InstallDir $PuppeteerCacheDir $NodeCommand.Source $NpmCommand.Source
+
+if (-not $ChromiumPath) {
+    $ChromiumPath = Get-LocalBrowserPath $PuppeteerCacheDir
+}
 
 if (Test-Path -LiteralPath $ConfigPath) {
     try {

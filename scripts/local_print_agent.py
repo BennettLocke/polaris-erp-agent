@@ -29,7 +29,7 @@ DEFAULT_CONFIG = {
     "print_token": "",
     "check_interval": 3,
     "printer_name": "Kyocera TASKalfa 1800",
-    "chromium_path": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "chromium_path": "",
     "agent_name": "sjAutoPrint",
     "service_name": "sjAutoPrint",
 }
