@@ -289,23 +289,22 @@ class TaobaoDetailExportService:
         return unique_items
 
     def _render_template_images(self, product: dict, color_items: list[dict], dimensions: dict) -> list[Path]:
-        with tempfile.TemporaryDirectory(prefix="taobao_detail_render_", delete=False) as tmp_dir:
-            base = Path(tmp_dir)
-            paths = []
-            section_drawers = [
-                self._draw_product_params,
-                self._draw_dimension_section,
-                self._draw_customization_section,
-                self._draw_instruction_section,
-            ]
-            for index, drawer in enumerate(section_drawers, start=1):
-                image = Image.new("RGB", (DETAIL_IMAGE_WIDTH, DETAIL_IMAGE_HEIGHT), "#f8f8f8")
-                draw = ImageDraw.Draw(image)
-                drawer(draw, product, color_items, dimensions)
-                path = base / f"taobao-detail-{index}.jpg"
-                image.save(path, "JPEG", quality=92, optimize=True)
-                paths.append(path)
-            return paths
+        base = Path(tempfile.mkdtemp(prefix="taobao_detail_render_"))
+        paths = []
+        section_drawers = [
+            self._draw_product_params,
+            self._draw_dimension_section,
+            self._draw_customization_section,
+            self._draw_instruction_section,
+        ]
+        for index, drawer in enumerate(section_drawers, start=1):
+            image = Image.new("RGB", (DETAIL_IMAGE_WIDTH, DETAIL_IMAGE_HEIGHT), "#f8f8f8")
+            draw = ImageDraw.Draw(image)
+            drawer(draw, product, color_items, dimensions)
+            path = base / f"taobao-detail-{index}.jpg"
+            image.save(path, "JPEG", quality=92, optimize=True)
+            paths.append(path)
+        return paths
 
     def _draw_header(self, draw: ImageDraw.ImageDraw, title_lines: list[str], english: list[str] | None = None):
         if english:
