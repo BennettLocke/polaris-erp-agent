@@ -2213,24 +2213,24 @@ def _screen_dashboard_payload() -> dict:
     for card in workflow_cards[:3]:
         recent.append(
             {
-                "title": f"{card.get('customer_name') or '??'} {card.get('goods_name') or ''}".strip(),
-                "sub": f"{card.get('goods_color') or ''} x{card.get('order_quantity') or 0} ? {card.get('status_text') or ''}",
-                "tag": "??",
+                "title": f"{card.get('customer_name') or '客户'} {card.get('goods_name') or ''}".strip(),
+                "sub": f"{card.get('goods_color') or ''} x{card.get('order_quantity') or 0} · {card.get('status_text') or ''}",
+                "tag": "订单",
                 "class": "ok" if int(card.get("is_made") or 0) else "warn",
             }
         )
     sales_items = [
         {
-            "title": card.get("product_summary") or card.get("sales_no") or "???",
-            "sub": f"{card.get('customer_name') or '??'} ? {card.get('date_text') or ''}",
+            "title": card.get("product_summary") or card.get("sales_no") or "销售单",
+            "sub": f"{card.get('customer_name') or '客户'} · {card.get('date_text') or ''}",
             "value": str(card.get("total_quantity") or card.get("buy_number_count") or ""),
         }
         for card in sales_cards
     ]
     inventory_items = [
         {
-            "title": card.get("title") or "??",
-            "sub": f"{card.get('piece_text') or ''} ? ?? {card.get('total_stock') or 0}",
+            "title": card.get("title") or "商品",
+            "sub": f"{card.get('piece_text') or ''} · 库存 {card.get('total_stock') or 0}",
             "tag": "LOW" if int(card.get("total_stock") or 0) <= 30 else "OK",
             "class": "warn" if int(card.get("total_stock") or 0) <= 30 else "ok",
         }
@@ -2240,10 +2240,10 @@ def _screen_dashboard_payload() -> dict:
     for card in workflow_cards[:6]:
         order_items.append(
             {
-                "customer_name": card.get("customer_name") or "??",
+                "customer_name": card.get("customer_name") or "客户",
                 "goods_name": f"{card.get('goods_name') or ''} {card.get('goods_color') or ''}".strip(),
                 "status_text": card.get("status_text") or "",
-                "status_tag": "???" if not int(card.get("is_made") or 0) else "??",
+                "status_tag": "待做" if not int(card.get("is_made") or 0) else "完成",
             }
         )
     return {
