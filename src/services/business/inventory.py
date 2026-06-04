@@ -35,6 +35,7 @@ class InventoryService(BusinessService):
         self,
         *,
         keyword: str = "",
+        sku_id: int | None = None,
         color: str = "",
         warehouse_id: int | None = None,
         stock_status: str = "",
@@ -44,6 +45,7 @@ class InventoryService(BusinessService):
     ) -> tuple[list[dict], int]:
         return self.db.inventory_balances(
             keyword=keyword,
+            sku_id=sku_id,
             color=color,
             warehouse_id=warehouse_id,
             stock_status=stock_status,

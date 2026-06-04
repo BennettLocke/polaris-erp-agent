@@ -5,6 +5,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 APP_SOURCE = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8-sig")
 HTTP_SOURCE = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+INVENTORY_SERVICE_SOURCE = (ROOT / "src" / "services" / "business" / "inventory.py").read_text(encoding="utf-8")
 SALES_SERVICE_SOURCE = (ROOT / "src" / "services" / "business" / "sales.py").read_text(encoding="utf-8")
 NATIVE_SOURCE = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
 
@@ -23,6 +24,14 @@ class SalesStockPreflightContractTest(unittest.TestCase):
         self.assertIn("allow_negative_stock = body.get", HTTP_SOURCE)
         self.assertIn("allow_negative_stock=allow_negative_stock", SALES_SERVICE_SOURCE)
         self.assertIn("allow_negative_stock: Any | None = None", NATIVE_SOURCE)
+
+    def test_inventory_preflight_balance_lookup_accepts_sku_id(self):
+        self.assertIn('request.args.get("sku_id", type=int)', HTTP_SOURCE)
+        self.assertIn("sku_id=sku_id", HTTP_SOURCE)
+        self.assertIn("sku_id: int | None = None", INVENTORY_SERVICE_SOURCE)
+        self.assertIn("sku_id=sku_id", INVENTORY_SERVICE_SOURCE)
+        self.assertIn("resolved_sku_id = self.resolve_sku_id", NATIVE_SOURCE)
+        self.assertIn("AND s.id=%s", NATIVE_SOURCE)
 
 
 if __name__ == "__main__":

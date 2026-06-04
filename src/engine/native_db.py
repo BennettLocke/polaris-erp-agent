@@ -4341,6 +4341,7 @@ class NativeDBClient:
     def inventory_balances(
         self,
         keyword: str = "",
+        sku_id: int | None = None,
         color: str = "",
         warehouse_id: int | None = None,
         stock_status: str = "",
@@ -4350,6 +4351,12 @@ class NativeDBClient:
     ) -> tuple[list[dict], int]:
         self._sync_inventory_policy_categories()
         where_sql, params = self._sku_where(keyword, active_only=False, stock_mode="stock")
+        if sku_id:
+            resolved_sku_id = self.resolve_sku_id(int(sku_id))
+            if not resolved_sku_id:
+                return [], 0
+            where_sql = f"{where_sql} AND s.id=%s"
+            params.append(int(resolved_sku_id))
         color = str(color or "").strip()
         if color:
             where_sql = f"{where_sql} AND s.color LIKE %s"

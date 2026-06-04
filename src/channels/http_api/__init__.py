@@ -5015,6 +5015,7 @@ def native_warehouses_api():
 @app.route("/api/inventory/balances", methods=["GET"])
 def native_inventory_balances_api():
     keyword = _normalize_inventory_keyword((request.args.get("keyword") or "").strip())
+    sku_id = request.args.get("sku_id", type=int)
     warehouse_id = request.args.get("warehouse_id", type=int)
     stock_status = (request.args.get("stock_status") or "").strip()
     group_by_product = request.args.get("group_by_product", "0") in ("1", "true", "True", "yes")
@@ -5022,6 +5023,7 @@ def native_inventory_balances_api():
     try:
         rows, total = get_inventory_service().balances(
             keyword=keyword,
+            sku_id=sku_id,
             warehouse_id=warehouse_id,
             stock_status=stock_status,
             group_by_product=group_by_product,
