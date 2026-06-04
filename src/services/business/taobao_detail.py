@@ -104,12 +104,28 @@ def _download_image(url: str) -> bytes:
 
 
 def _font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = [
-        "C:/Windows/Fonts/msyhbd.ttc" if weight == "bold" else "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf" if weight == "bold" else "C:/Windows/Fonts/simsun.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if weight == "bold" else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    ]
+    if weight == "bold":
+        candidates = [
+            "C:/Windows/Fonts/msyhbd.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]
+    else:
+        candidates = [
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simsun.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
     for path in candidates:
         try:
             if path and Path(path).exists():

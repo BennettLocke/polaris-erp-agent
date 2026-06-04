@@ -110,3 +110,13 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("exportProductTaobaoDetail", api_source)
         self.assertIn("导出淘宝详情页", product_source)
         self.assertIn("onExportTaobaoDetail", product_source)
+
+    def test_linux_export_font_prefers_cjk_before_dejavu(self):
+        service_source = (ROOT / "src" / "services" / "business" / "taobao_detail.py").read_text(encoding="utf-8")
+
+        regular_noto = service_source.index("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+        regular_dejavu = service_source.index("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+        bold_noto = service_source.index("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc")
+        bold_dejavu = service_source.index("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+        self.assertLess(regular_noto, regular_dejavu)
+        self.assertLess(bold_noto, bold_dejavu)

@@ -21,6 +21,7 @@ admin/*.log
 data/sessions/
 data/uploads/
 data/generated/
+exports/
 
 # Local deployment artifacts
 sjagent_deploy.tar.gz
