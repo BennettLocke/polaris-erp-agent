@@ -597,6 +597,7 @@ export type SalesOrderPayload = {
   create_time: string;
   pay_status: "paid" | "monthly" | "unpaid";
   pay_type?: string;
+  allow_negative_stock?: boolean | number;
   products: SalesOrderLinePayload[];
 };
 

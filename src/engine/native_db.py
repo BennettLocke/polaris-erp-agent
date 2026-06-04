@@ -3203,6 +3203,20 @@ class NativeDBClient:
         rules = self._inventory_rules(cursor)
         return int(rules.get("allow_negative_stock") or 0) == 1
 
+    def _explicit_allow_negative_stock(self, value: Any, default: bool) -> bool:
+        if value in (None, ""):
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return int(value) == 1
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on", "allow", "allowed"}:
+            return True
+        if text in {"0", "false", "no", "off", "deny", "denied"}:
+            return False
+        return default
+
     def _normalize_category_inventory_policy(self, value: Any, default: str = "strict") -> str:
         clean = str(value or "").strip().lower()
         if clean in {"none", "no_stock", "non_stock", "0", "false", "不扣库存"}:
@@ -6631,6 +6645,7 @@ class NativeDBClient:
         pay_status: str | None = None,
         pay_type: str | None = None,
         operator_user_id: Any = None,
+        allow_negative_stock: Any | None = None,
     ) -> dict:
         self._ensure_operator_columns()
         self._ensure_party_columns()
@@ -6643,7 +6658,10 @@ class NativeDBClient:
         sales_no = self._ledger_no("SO")
         with self.transaction() as cursor:
             default_out_warehouse_id = self._default_out_warehouse_id(cursor)
-            allow_negative_stock = self._allow_negative_stock(cursor)
+            allow_negative_sales_out = self._explicit_allow_negative_stock(
+                allow_negative_stock,
+                self._allow_negative_stock(cursor),
+            )
             cursor.execute(
                 "SELECT id, name, is_monthly_customer FROM party WHERE id=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE",
                 (customer_id,),
@@ -6729,7 +6747,7 @@ class NativeDBClient:
                         sales_id,
                         item_id,
                         f"销售单 {sales_no}",
-                        allow_negative=allow_negative_stock,
+                        allow_negative=allow_negative_sales_out,
                         operator_user_id=operator_user_id,
                     )
             cursor.execute(

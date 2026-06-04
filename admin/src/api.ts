@@ -163,6 +163,41 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   return payload.data;
 }
 
+function filenameFromDisposition(disposition: string | null, fallback: string) {
+  if (!disposition) return fallback;
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const normalMatch = disposition.match(/filename="?([^";]+)"?/i);
+  if (!normalMatch?.[1]) return fallback;
+  try {
+    return decodeURIComponent(normalMatch[1]);
+  } catch {
+    return normalMatch[1];
+  }
+}
+
+async function requestBlob(path: string, fallbackFilename: string): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(path, { credentials: "include" });
+  if (!response.ok) {
+    const contentType = response.headers.get("Content-Type") || "";
+    const payload = contentType.includes("application/json")
+      ? ((await response.json().catch(() => null)) as ApiResult<unknown> | null)
+      : null;
+    const fallbackMessage = payload?.msg || (await response.text().catch(() => "")) || response.statusText || "文件下载失败";
+    throw new ApiError(fallbackMessage, response.status, payload?.code ?? -1);
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get("Content-Disposition"), fallbackFilename)
+  };
+}
+
 function customerStatementParams(options: CustomerStatementQuery = {}) {
   const params = new URLSearchParams();
   if (options.month) params.set("month", options.month);
@@ -366,6 +401,8 @@ export const api = {
   },
   productCategories: () => request<ListResult<ProductCategory>>("/api/product/categories"),
   productDetail: (id: number) => request<ProductItem>(`/api/product/${id}`),
+  exportProductTaobaoDetail: (id: number) =>
+    requestBlob(`/api/product/${id}/taobao-detail-export`, `taobao-detail-${id}.zip`),
   productOptions: (id?: number) => request<ProductOptions>(`/api/product/options${id ? `?id=${id}` : ""}`),
   saveProduct: (payload: ProductSavePayload) =>
     request<{ id?: number; sku_ids?: number[]; spu_id?: number }>("/api/product/save", {

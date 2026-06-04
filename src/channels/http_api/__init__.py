@@ -384,6 +384,7 @@ API_PERMISSION_RULES = [
     ({"POST", "PATCH"}, re.compile(r"^/api/product/categories$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/(save|delete)$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/\d+/shelves$"), "设置"),
+    ({"GET"}, re.compile(r"^/api/product/\d+/taobao-detail-export$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customer/create$"), "开单"),
     ({"POST"}, re.compile(r"^/api/workflow/orders$"), "开单"),
 ]
@@ -4555,6 +4556,24 @@ def product_shelves_api(product_id: int):
         return _api_exception_response(e)
 
 
+@app.route("/api/product/<int:product_id>/taobao-detail-export", methods=["GET"])
+def product_taobao_detail_export_api(product_id: int):
+    """Export Taobao detail-page ZIP for one product."""
+    try:
+        from src.services.business.taobao_detail import TaobaoDetailExportService
+
+        result = TaobaoDetailExportService().export_zip(product_id)
+        response = Response(result.content, mimetype="application/zip")
+        response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(result.filename)}"
+        response.headers["Content-Length"] = str(len(result.content))
+        return response
+    except ValueError as e:
+        return jsonify({"code": 404, "msg": str(e)}), 404
+    except Exception as e:
+        logger.error(f"淘宝详情页导出异常: product_id={product_id}, error={e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/customer/list", methods=["GET"])
 def customer_list():
     """
@@ -5097,6 +5116,7 @@ def sales_add():
     pay_status = body.get("pay_status")
     pay_type = body.get("pay_type")
     workflow_order_id = body.get("workflow_order_id") or body.get("workflow_id") or body.get("source_workflow_id")
+    allow_negative_stock = body.get("allow_negative_stock") if "allow_negative_stock" in body else body.get("allowNegativeStock")
 
     if not customer_id or not products:
         return jsonify({"code": 400, "msg": "customer_id and products are required"}), 400
@@ -5113,6 +5133,7 @@ def sales_add():
             pay_type=pay_type,
             operator_user_id=operator_user_id,
             workflow_order_id=workflow_order_id,
+            allow_negative_stock=allow_negative_stock,
         )
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400

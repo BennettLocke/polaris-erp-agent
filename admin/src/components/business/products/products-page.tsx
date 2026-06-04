@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
-import { ArrowDown, ArrowUp, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 
 import { ApiError, api } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -1927,6 +1927,7 @@ type ProductCardProps = {
   actionBusy: boolean;
   onEdit: (product: ProductItem) => void;
   onToggleShelves: (product: ProductItem, state: number) => void;
+  onExportTaobaoDetail: (product: ProductItem) => void;
   onDelete: (product: ProductItem) => void;
 };
 
@@ -1934,7 +1935,7 @@ type ProductConfirmAction =
   | { action: "shelf"; product: ProductItem; state: number }
   | { action: "delete"; product: ProductItem };
 
-function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onDelete }: ProductCardProps) {
+function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onExportTaobaoDetail, onDelete }: ProductCardProps) {
   const image = productImageUrl(product);
   const colors = productColorNames(product);
   const isListed = Number(product.system_goods_is_shelves ?? product.is_listed ?? 0) === 1;
@@ -2002,6 +2003,13 @@ function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onDelete }:
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={(event) => {
+                event.preventDefault();
+                onExportTaobaoDetail(product);
+              }}>
+                <Download data-icon="inline-start" />
+                导出淘宝详情页
+              </DropdownMenuItem>
               <DropdownMenuItem className="product-menu-danger" onSelect={(event) => {
                 event.preventDefault();
                 onDelete(product);
@@ -2120,6 +2128,17 @@ function ProductNotice({ message, tone = "neutral" }: { message: string; tone?: 
   );
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename || "taobao-detail.zip";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function ProductSummaryStrip({ total, items, loading }: { total: number; items: ProductItem[]; loading: boolean }) {
   const listedCount = items.filter((item) => Number(item.is_listed || 0)).length;
   const nonStockCount = items.filter((item) => Number(item.is_stock_item ?? 1) === 0).length;
@@ -2142,6 +2161,7 @@ function ProductCardGrid({
   onEdit,
   onReset,
   onToggleShelves,
+  onExportTaobaoDetail,
   onDelete
 }: {
   items: ProductItem[];
@@ -2151,6 +2171,7 @@ function ProductCardGrid({
   onEdit: (product: ProductItem) => void;
   onReset: () => void;
   onToggleShelves: (product: ProductItem, state: number) => void;
+  onExportTaobaoDetail: (product: ProductItem) => void;
   onDelete: (product: ProductItem) => void;
 }) {
   if (loading) return <ProductListSkeleton />;
@@ -2164,6 +2185,7 @@ function ProductCardGrid({
           actionBusy={actionProductId === productActionId(product)}
           onEdit={onEdit}
           onToggleShelves={onToggleShelves}
+          onExportTaobaoDetail={onExportTaobaoDetail}
           onDelete={onDelete}
         />
       ))}
@@ -2314,6 +2336,23 @@ export function ProductsPage() {
     }
   }
 
+  async function exportProductTaobaoDetail(product: ProductItem) {
+    const id = productActionId(product);
+    if (!id) return;
+    setActionProductId(id);
+    setError("");
+    setNotice("");
+    try {
+      const file = await api.exportProductTaobaoDetail(id);
+      downloadBlob(file.blob, file.filename);
+      setNotice(`${product.title || product.name || "商品"} 淘宝详情页资料包已生成`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "淘宝详情页导出失败");
+    } finally {
+      setActionProductId(0);
+    }
+  }
+
   useEffect(() => {
     api.productCategories()
       .then((data) => setCategories(data.list || []))
@@ -2423,6 +2462,7 @@ export function ProductsPage() {
         onToggleShelves={(product, state) => {
           setConfirmAction({ action: "shelf", product, state });
         }}
+        onExportTaobaoDetail={(product) => void exportProductTaobaoDetail(product)}
         onDelete={(product) => {
           setConfirmAction({ action: "delete", product });
         }}

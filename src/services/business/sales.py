@@ -63,6 +63,7 @@ class SalesService(BusinessService):
         pay_type: str | None = None,
         operator_user_id: Any = None,
         workflow_order_id: int | None = None,
+        allow_negative_stock: Any | None = None,
     ) -> dict:
         normalized_products = self.normalize_products(products)
         result = self.db.create_sales_order(
@@ -73,6 +74,7 @@ class SalesService(BusinessService):
             pay_status=pay_status,
             pay_type=pay_type,
             operator_user_id=operator_user_id,
+            allow_negative_stock=allow_negative_stock,
         )
         if not workflow_order_id or not isinstance(result, dict) or result.get("code") not in (None, 0):
             return result

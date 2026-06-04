@@ -3357,6 +3357,36 @@ nav button:hover {
   min-width: 118px;
 }
 
+.sales-stock-shortage-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sales-stock-shortage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.sales-stock-shortage-row div {
+  display: grid;
+  gap: 3px;
+}
+
+.sales-stock-shortage-row span {
+  color: var(--sj-muted);
+  font-size: 12px;
+}
+
+.sales-stock-shortage-row strong {
+  color: var(--sj-heading);
+}
+
 .sales-create-side {
   position: sticky;
   top: 18px;

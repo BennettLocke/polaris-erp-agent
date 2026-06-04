@@ -48,6 +48,16 @@ import { hasPermission } from "./lib/permissions";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "./components/ui/alert-dialog";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -250,6 +260,19 @@ function salesResultId(result: { id?: number; sales_id?: number } | null) {
   return Number(result?.id || result?.sales_id || 0);
 }
 
+type SalesStockShortageLine = {
+  line: SalesFormLine;
+  available: number;
+  requested: number;
+  shortage: number;
+  warehouseName: string;
+};
+
+type SalesStockShortage = {
+  payload: SalesOrderPayload;
+  lines: SalesStockShortageLine[];
+} | null;
+
 function SalesNewPage() {
   const [customerKeyword, setCustomerKeyword] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerItem[]>([]);
@@ -273,6 +296,7 @@ function SalesNewPage() {
   const [loading, setLoading] = useState("");
   const [lastResult, setLastResult] = useState<{ id?: number; sales_id?: number; sales_no?: string; order_no?: string } | null>(null);
   const [detailOrder, setDetailOrder] = useState<SalesDetail | null>(null);
+  const [stockShortage, setStockShortage] = useState<SalesStockShortage>(null);
   const printFeedback = useSalesPrintFeedback();
 
   const totalQty = lines.reduce((sum, line) => sum + toNumber(line.buy_number), 0);
@@ -452,6 +476,76 @@ function SalesNewPage() {
     }));
   }
 
+  function salesLineWarehouseName(line: SalesFormLine) {
+    const warehouse = warehouses.find((item) => Number(item.id) === Number(line.warehouse_id));
+    return warehouse?.name || warehouse?.warehouse_name || `仓库${line.warehouse_id}`;
+  }
+
+  function salesQuantityText(value: number) {
+    return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: 3 });
+  }
+
+  function buildSalesOrderPayload(): SalesOrderPayload {
+    const cleanPayType = payStatus === "paid" ? payType : payStatus;
+    return {
+      customer_id: Number(selectedCustomer?.id || 0),
+      customer_name: selectedCustomerName,
+      warehouse_id: defaultWarehouseId || Number(lines[0]?.warehouse_id || 2),
+      create_time: `${createTime.replace("T", " ")}:00`,
+      pay_status: payStatus,
+      pay_type: cleanPayType,
+      allow_negative_stock: false,
+      products: lines.map((line) => ({
+        product_id: line.product_id,
+        unit_id: line.unit_id || 1,
+        warehouse_id: Number(line.warehouse_id || defaultWarehouseId || 2),
+        buy_number: Number(line.buy_number || 1),
+        price: Number(line.price || 0)
+      }))
+    };
+  }
+
+  async function ensureSalesStockBeforeSubmit(payload: SalesOrderPayload) {
+    const shortages: SalesStockShortageLine[] = [];
+    for (const line of lines) {
+      if (Number(line.is_stock_item ?? 1) === 0) continue;
+      const warehouseId = Number(line.warehouse_id || payload.warehouse_id || defaultWarehouseId || 2);
+      const data = await api.inventoryBalances({
+        skuId: line.product_id,
+        warehouseId,
+        stockStatus: "all",
+        page: 1,
+        pageSize: 20
+      });
+      const row = (data.list || []).find((item) => (
+        Number(item.product_id || item.sku_id || item.id || 0) === Number(line.product_id)
+        && Number(item.warehouse_id || 0) === warehouseId
+      ));
+      const available = toNumber(row?.quantity ?? row?.inventory ?? row?.stock ?? row?.available_qty ?? 0);
+      const requested = toNumber(line.buy_number, 1);
+      if (available < requested) {
+        shortages.push({
+          line,
+          available,
+          requested,
+          shortage: requested - available,
+          warehouseName: salesLineWarehouseName({ ...line, warehouse_id: warehouseId })
+        });
+      }
+    }
+    if (!shortages.length) return true;
+    setStockShortage({ payload, lines: shortages });
+    return false;
+  }
+
+  async function submitSalesOrderAfterStockReady(payload: SalesOrderPayload) {
+    const result = await api.createSalesOrder(payload);
+    setLastResult(result);
+    setNotice(`开单成功${result.sales_no ? `：${result.sales_no}` : ""}`);
+    setLines([]);
+    setProductResults([]);
+  }
+
   async function submitSalesOrder() {
     if (!selectedCustomer?.id) {
       setError("请先选择客户");
@@ -469,28 +563,37 @@ function SalesNewPage() {
     setError("");
     setNotice("");
     try {
-      const cleanPayType = payStatus === "paid" ? payType : payStatus;
-      const result = await api.createSalesOrder({
-        customer_id: Number(selectedCustomer.id),
-        customer_name: selectedCustomerName,
-        warehouse_id: defaultWarehouseId || Number(lines[0]?.warehouse_id || 2),
-        create_time: `${createTime.replace("T", " ")}:00`,
-        pay_status: payStatus,
-        pay_type: cleanPayType,
-        products: lines.map((line) => ({
-          product_id: line.product_id,
-          unit_id: line.unit_id || 1,
-          warehouse_id: Number(line.warehouse_id || defaultWarehouseId || 2),
-          buy_number: Number(line.buy_number || 1),
-          price: Number(line.price || 0)
-        }))
-      });
-      setLastResult(result);
-      setNotice(`开单成功${result.sales_no ? `：${result.sales_no}` : ""}`);
-      setLines([]);
-      setProductResults([]);
+      const payload = buildSalesOrderPayload();
+      const stockReady = await ensureSalesStockBeforeSubmit(payload);
+      if (!stockReady) return;
+      await submitSalesOrderAfterStockReady(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "开单失败");
+    } finally {
+      setLoading("");
+    }
+  }
+
+  async function purchaseShortageAndCreateOrder() {
+    if (!stockShortage) return;
+    const current = stockShortage;
+    setLoading("stock-purchase-submit");
+    setError("");
+    setNotice("");
+    try {
+      for (const item of current.lines) {
+        await api.createInventoryPurchase({
+          product_id: item.line.product_id,
+          unit_id: item.line.unit_id || 1,
+          warehouse_id: Number(item.line.warehouse_id || current.payload.warehouse_id || defaultWarehouseId || 2),
+          quantity: item.shortage,
+          note: `开单前自动补货：${selectedCustomerName || current.payload.customer_name || ""} ${item.line.title}`.trim()
+        });
+      }
+      await submitSalesOrderAfterStockReady(current.payload);
+      setStockShortage(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "补货后开单失败");
     } finally {
       setLoading("");
     }
@@ -720,6 +823,42 @@ function SalesNewPage() {
         onPrint={(id) => void printSalesById(id)}
         onDelete={(order) => void deleteDetailSales(order)}
       />
+      <AlertDialog open={Boolean(stockShortage)} onOpenChange={(open) => {
+        if (!open && loading !== "stock-purchase-submit") setStockShortage(null);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>库存不足</AlertDialogTitle>
+            <AlertDialogDescription>
+              下面商品库存不够，直接开单会造成负库存。确认后会先按缺口数量进货到对应仓库，再继续创建销售单。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="sales-stock-shortage-list">
+            {stockShortage?.lines.map((item) => (
+              <div className="sales-stock-shortage-row" key={`${item.line.product_id}-${item.line.warehouse_id}`}>
+                <div>
+                  <strong>{item.line.title}</strong>
+                  <span>{item.line.spec || "默认颜色"} · {item.warehouseName}</span>
+                </div>
+                <div>
+                  <span>库存 {salesQuantityText(item.available)}</span>
+                  <span>开单 {salesQuantityText(item.requested)}</span>
+                  <strong>需进货 {salesQuantityText(item.shortage)}</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading === "stock-purchase-submit"}>取消</AlertDialogCancel>
+            <AlertDialogAction disabled={loading === "stock-purchase-submit"} onClick={(event) => {
+              event.preventDefault();
+              void purchaseShortageAndCreateOrder();
+            }}>
+              {loading === "stock-purchase-submit" ? "处理中" : "先进货并开单"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <PrintFeedbackToast feedback={printFeedback.feedback} onClose={printFeedback.closeFeedback} />
     </section>
   );
