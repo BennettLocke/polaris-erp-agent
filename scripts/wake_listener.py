@@ -37,6 +37,72 @@ from src.services.voice_reply_formatter import format_voice_reply  # noqa: E402
 from src.services.voice_prompts import ensure_group, play_file, play_prompt  # noqa: E402
 
 
+_ALSA_CARD_LINE_RE = re.compile(
+    r"card\s+(?P<index>\d+):\s+(?P<name>[^\s\[]+)\s+\[(?P<label>[^\]]+)\],\s+device\s+(?P<device>\d+):\s+(?P<desc>.+)"
+)
+
+
+def parse_alsa_cards(listing: str) -> list[dict[str, str]]:
+    cards: list[dict[str, str]] = []
+    for line in (listing or "").splitlines():
+        match = _ALSA_CARD_LINE_RE.search(line)
+        if match:
+            cards.append(match.groupdict())
+    return cards
+
+
+def _list_alsa_cards(command: str) -> list[dict[str, str]]:
+    try:
+        result = subprocess.run([command, "-l"], capture_output=True, text=True, timeout=4)
+    except Exception:
+        return []
+    return parse_alsa_cards(result.stdout)
+
+
+def _is_usb_audio_card(card: dict[str, str]) -> bool:
+    haystack = " ".join(str(card.get(key, "")) for key in ("label", "desc", "name"))
+    return "USB" in haystack or "usb" in haystack
+
+
+def _device_card_name(device: str) -> str:
+    match = re.search(r"CARD=([^,\s]+)", device or "")
+    return match.group(1) if match else ""
+
+
+def resolve_alsa_device(device: str, *, direction: str, avoid_card: str = "") -> str:
+    value = (device or "").strip()
+    if value not in {"auto-usb-capture", "auto-usb-playback"}:
+        return value
+    command = "arecord" if direction == "capture" else "aplay"
+    candidates = [card for card in _list_alsa_cards(command) if _is_usb_audio_card(card)]
+    if avoid_card and len(candidates) > 1:
+        candidates = [card for card in candidates if card.get("name") != avoid_card] or candidates
+    if not candidates:
+        raise RuntimeError(f"No USB ALSA {direction} device found")
+    card = candidates[0]
+    return f"plughw:CARD={card['name']},DEV={card['device']}"
+
+
+def configure_audio_devices(args) -> None:
+    output_device = resolve_alsa_device(args.output_device, direction="playback")
+    input_device = resolve_alsa_device(
+        args.input_device,
+        direction="capture",
+        avoid_card=_device_card_name(output_device),
+    )
+    if input_device != args.input_device or output_device != args.output_device:
+        print(f"AUDIO_RESOLVED input={input_device} output={output_device}", flush=True)
+    args.input_device = input_device
+    args.output_device = output_device
+    volume = int(getattr(args, "output_volume_percent", 0) or 0)
+    card_name = _device_card_name(output_device)
+    if volume > 0 and card_name:
+        subprocess.run(
+            ["amixer", "-q", "-c", card_name, "sset", "PCM", f"{min(100, max(1, volume))}%", "unmute"],
+            check=False,
+        )
+
+
 WAKE_WORDS = {
     "小星",
     "小新",
@@ -1482,6 +1548,7 @@ def main() -> None:
     parser.add_argument("--tts-max-chars", type=int, default=180)
     parser.add_argument("--stream-tts-play", action="store_true")
     parser.add_argument("--stream-tts-player", default="mpg123")
+    parser.add_argument("--output-volume-percent", type=int, default=0)
     parser.add_argument("--screen-state-url", default=os.getenv("SJ_SCREEN_STATE_URL", "http://127.0.0.1:8080/api/screen/state"))
     parser.add_argument("--capture-backend", choices=["alsa", "arecord"], default="arecord")
     parser.add_argument("--local-wake-provider", choices=["none", "porcupine", "openwakeword", "sherpa"], default="none")
@@ -1520,6 +1587,7 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
+    configure_audio_devices(args)
     ensure_group("wake")
     if args.once:
         raise SystemExit(0 if run_once(args) else 1)

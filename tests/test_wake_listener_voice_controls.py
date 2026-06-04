@@ -12,6 +12,37 @@ from scripts import wake_listener
 
 
 class WakeListenerVoiceControlTests(unittest.TestCase):
+    def test_parse_alsa_cards_extracts_usb_card_names(self) -> None:
+        listing = """
+card 4: Device [USB Composite Device], device 0: USB Audio [USB Audio]
+  Subdevices: 1/1
+card 5: Device_1 [USB Composite Device], device 0: USB Audio [USB Audio]
+  Subdevices: 1/1
+"""
+
+        cards = wake_listener.parse_alsa_cards(listing)
+
+        self.assertEqual([card["name"] for card in cards], ["Device", "Device_1"])
+        self.assertEqual([card["device"] for card in cards], ["0", "0"])
+
+    def test_auto_usb_capture_avoids_playback_card_when_possible(self) -> None:
+        original_list = wake_listener._list_alsa_cards
+        try:
+            wake_listener._list_alsa_cards = lambda command: [
+                {"index": "4", "name": "Device", "label": "USB Composite Device", "device": "0", "desc": "USB Audio"},
+                {"index": "5", "name": "Device_1", "label": "USB Composite Device", "device": "0", "desc": "USB Audio"},
+            ]
+
+            device = wake_listener.resolve_alsa_device(
+                "auto-usb-capture",
+                direction="capture",
+                avoid_card="Device_1",
+            )
+
+            self.assertEqual(device, "plughw:CARD=Device,DEV=0")
+        finally:
+            wake_listener._list_alsa_cards = original_list
+
     def test_openwakeword_requires_configured_consecutive_hits(self) -> None:
         class FakeModel:
             scores = []
