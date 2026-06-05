@@ -17,6 +17,8 @@ class CapturingNativeDB(NativeDBClient):
 
     def query(self, sql: str, params=()):
         self.queries.append((sql, list(params)))
+        if "FROM sales_order" in sql:
+            return [{"count": 0, "amount": 0}]
         if "COUNT" in sql:
             return [{"total": 0}]
         return []
@@ -33,6 +35,16 @@ class NativeWorkflowOrderQueryTests(unittest.TestCase):
         self.assertIn("CAST(wo.id AS CHAR) LIKE %s", count_sql)
         self.assertIn("wo.workflow_no LIKE %s", count_sql)
         self.assertIn("%WF20260527173319001%", params)
+
+    def test_dashboard_pending_workflow_count_matches_unfinished_order_state(self):
+        db = CapturingNativeDB()
+
+        db.dashboard_summary()
+
+        workflow_sql = db.queries[1][0]
+        self.assertIn("status <> 'completed'", workflow_sql)
+        self.assertIn("(COALESCE(is_made, 0) <> 1 OR COALESCE(is_delivered, 0) <> 1)", workflow_sql)
+        self.assertNotIn("status <> 'completed' OR is_made", workflow_sql)
 
 
 if __name__ == "__main__":

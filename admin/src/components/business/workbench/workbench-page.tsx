@@ -131,6 +131,7 @@ const SESSION_KEY = "sj_admin_agent_session_id";
 const MESSAGE_KEY_PREFIX = "sj_admin_agent_messages_";
 const BUSINESS_KEY_PREFIX = "sj_admin_business_history_";
 const MAX_BUSINESS_HISTORY = 5;
+const DASHBOARD_SUMMARY_REFRESH_MS = 8000;
 
 const COMMANDS = ["开单", "查库存", "进货", "调货", "盘点", "工作流", "上传泡袋"];
 
@@ -781,6 +782,26 @@ export function WorkbenchPage() {
   const [confirming, setConfirming] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const summaryRequestRef = useRef(0);
+  const summaryMountedRef = useRef(true);
+
+  async function refreshSummary(showLoading = false) {
+    const requestId = summaryRequestRef.current + 1;
+    summaryRequestRef.current = requestId;
+    if (showLoading) setSummaryLoading(true);
+    try {
+      const data = await api.dashboardSummary();
+      if (summaryMountedRef.current && summaryRequestRef.current === requestId) {
+        setSummary(data);
+      }
+    } catch {
+      // Keep the previous dashboard values if a background refresh fails.
+    } finally {
+      if (summaryMountedRef.current && summaryRequestRef.current === requestId) {
+        setSummaryLoading(false);
+      }
+    }
+  }
 
   useEffect(() => {
     if (!hasStorage()) return;
@@ -825,19 +846,24 @@ export function WorkbenchPage() {
   }, [sessionId]);
 
   useEffect(() => {
-    let active = true;
-    setSummaryLoading(true);
-    api
-      .dashboardSummary()
-      .then((data) => {
-        if (active) setSummary(data);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) setSummaryLoading(false);
-      });
+    summaryMountedRef.current = true;
+    void refreshSummary(true);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refreshSummary(false);
+    }, DASHBOARD_SUMMARY_REFRESH_MS);
+    const refreshOnFocus = () => {
+      void refreshSummary(false);
+    };
+    const refreshOnVisibility = () => {
+      if (!document.hidden) void refreshSummary(false);
+    };
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnVisibility);
     return () => {
-      active = false;
+      summaryMountedRef.current = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisibility);
     };
   }, []);
 
@@ -922,6 +948,7 @@ export function WorkbenchPage() {
       });
       openResultDialog(historyItem);
     }
+    void refreshSummary(false);
   }
 
   async function uploadImageFile(file: File) {
@@ -943,6 +970,7 @@ export function WorkbenchPage() {
       const historyItem = pushBusinessHistory(displayText, nextSession, "image");
       openResultDialog(historyItem);
     }
+    void refreshSummary(false);
   }
 
   async function sendMessage(explicitText?: string) {

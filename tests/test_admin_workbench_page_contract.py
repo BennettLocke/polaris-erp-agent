@@ -97,6 +97,19 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("workbench-hot-products", workbench_source)
         self.assertIn(".workbench-hot-products", styles_source)
 
+    def test_workbench_refreshes_dashboard_summary_realtime(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        workbench_section = extract_function_section(workbench_source, "WorkbenchPage")
+
+        self.assertIn("DASHBOARD_SUMMARY_REFRESH_MS", workbench_source)
+        self.assertIn("refreshSummary", workbench_section)
+        self.assertIn("window.setInterval", workbench_section)
+        self.assertIn("window.addEventListener(\"focus\"", workbench_section)
+        self.assertIn("document.addEventListener(\"visibilitychange\"", workbench_section)
+        self.assertIn("document.hidden", workbench_section)
+
     def test_workbench_only_renders_real_image_urls_as_images(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

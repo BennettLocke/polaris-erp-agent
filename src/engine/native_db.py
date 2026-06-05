@@ -7131,7 +7131,9 @@ class NativeDBClient:
             """
             SELECT COUNT(*) AS count
             FROM workflow_order
-            WHERE deleted_at IS NULL AND (status <> 'completed' OR is_made <> 1 OR is_delivered <> 1)
+            WHERE deleted_at IS NULL
+              AND status <> 'completed'
+              AND (COALESCE(is_made, 0) <> 1 OR COALESCE(is_delivered, 0) <> 1)
             """
         )
         sales = rows[0] if rows else {}
