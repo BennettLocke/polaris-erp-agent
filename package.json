@@ -1,0 +1,12 @@
+{
+  "name": "polaris-erp-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Polaris AI ERP agent backend utilities and renderer dependencies.",
+  "scripts": {
+    "render:taobao-detail": "node scripts/taobao_detail/render_taobao_detail.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.60.0"
+  }
+}

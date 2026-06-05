@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>可编辑淘宝详情页模板</title>
+    <style>
+      /* __EDITABLE_FONT_FACE__ */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+      }
+
+      .detail-page {
+        position: relative;
+        width: 800px;
+        height: 4488px;
+        overflow: hidden;
+        background: #f8f8f8;
+        color: #000;
+        font-family: "AlibabaPuhuiEditable", "Alibaba PuHuiTi", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      }
+
+      .line {
+        position: absolute;
+        left: 52px;
+        width: 693px;
+        height: 3px;
+        background: #e6e6e6;
+      }
+
+      .hero-en {
+        position: absolute;
+        left: 50px;
+        top: 86px;
+        color: #1a1a1a;
+        font-size: 36.8px;
+        line-height: 41px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+
+      .hero-title {
+        position: absolute;
+        left: 53px;
+        top: 238px;
+        color: #1a1a1a;
+        font-size: 55px;
+        line-height: 61px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+
+      .cube {
+        position: absolute;
+        left: 668px;
+        top: 82px;
+        width: 68px;
+        height: 78px;
+      }
+
+      .vertical-mark {
+        position: absolute;
+        left: 700px;
+        top: 248px;
+        width: 4px;
+        height: 117px;
+        background: #000;
+      }
+
+      .label {
+        position: absolute;
+        color: #111;
+        font-size: 25.2px;
+        line-height: 32px;
+        font-weight: 400;
+      }
+
+      .value-lg {
+        position: absolute;
+        color: #000;
+        font-size: 32.3px;
+        line-height: 40px;
+        font-weight: 400;
+        letter-spacing: -0.02em;
+      }
+
+      .value-md {
+        position: absolute;
+        color: #000;
+        font-size: 23.8px;
+        line-height: 32.4px;
+        font-weight: 400;
+        letter-spacing: -0.02em;
+      }
+
+      .section-title {
+        position: absolute;
+        left: 53px;
+        color: #1a1a1a;
+        font-size: 55px;
+        line-height: 61px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+
+      .size-diagram {
+        position: absolute;
+        left: 40px;
+        top: 1195px;
+        width: 700px;
+        height: 510px;
+      }
+
+      .size-note {
+        position: absolute;
+        left: 56px;
+        top: 1702px;
+        font-size: 20.6px;
+        line-height: 28px;
+        font-weight: 400;
+        color: #1a1a1a;
+      }
+
+      .custom-box {
+        position: absolute;
+        width: 348.96px;
+        height: 235.66px;
+        border: 2px solid #000;
+        box-sizing: border-box;
+      }
+
+      .custom-caption {
+        position: absolute;
+        width: 310px;
+        color: #1a1a1a;
+        text-align: center;
+        font-size: 25.2px;
+        line-height: 32px;
+        font-weight: 400;
+      }
+
+      .custom-right-title {
+        position: absolute;
+        left: 429.65px;
+        top: 2339.63px;
+        color: #1a1a1a;
+        font-size: 31.2px;
+        line-height: 38px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+
+      .custom-small {
+        position: absolute;
+        left: 432.82px;
+        top: 2384.44px;
+        color: #1a1a1a;
+        font-size: 17.7px;
+        line-height: 24px;
+        font-weight: 400;
+      }
+
+      .custom-inner {
+        position: absolute;
+        left: 429.65px;
+        top: 2540.45px;
+        color: #1a1a1a;
+        font-size: 30.7px;
+        line-height: 36.8px;
+        font-weight: 400;
+      }
+
+      .instruction-en {
+        position: absolute;
+        left: 50px;
+        top: 2739.63px;
+        color: #1a1a1a;
+        font-size: 36.8px;
+        line-height: 41px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+
+      .instructions-block {
+        position: absolute;
+        left: 59.5px;
+        width: 638px;
+        color: #231815;
+        font-size: 22.22px;
+        line-height: 24.9px;
+        font-weight: 400;
+      }
+
+      .instructions-block h3 {
+        margin: 0 0 17.8px;
+        font-size: 26.52px;
+        line-height: 32px;
+        font-weight: 400;
+      }
+
+      .instructions-block p {
+        margin: 0 0 24.9px;
+      }
+
+      .showcase-en {
+        position: absolute;
+        left: 50px;
+        top: 4112.45px;
+        color: #1a1a1a;
+        font-size: 36.8px;
+        line-height: 41px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+
+      .showcase-title {
+        position: absolute;
+        left: 53px;
+        top: 4262.59px;
+        color: #1a1a1a;
+        font-size: 55px;
+        line-height: 61px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="detail-page">
+      <div class="hero-en" data-hero-tagline></div>
+      <svg class="cube" viewBox="710 86 82 90" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M716.37,110.46l32.02,20.08,31.95-19.97-29.43-18.41-34.55,18.31ZM782.53,147.28v-35.41l-32.55,20.33-.57.42v35.41l32.99-20.57s.11-.13.12-.18ZM747.16,132.38l-31.78-19.8v35.72l31.78,19.8v-35.72Z" fill="#000"/>
+      </svg>
+      <div class="hero-title" data-hero-title></div>
+      <div class="vertical-mark"></div>
+
+      <div class="line" style="top:424px;"></div>
+      <div class="label" style="left:54px;top:482px;">产品名称</div>
+      <div class="label" style="left:470px;top:482px;">产品规格</div>
+      <div class="value-lg" style="left:52px;top:529px;" data-product-name></div>
+      <div class="value-lg" style="left:470px;top:529px;" data-product-spec></div>
+
+      <div class="line" style="top:607px;"></div>
+      <div class="label" style="left:52px;top:652px;">可装容量</div>
+      <div class="label" style="left:470px;top:652px;">制作工艺</div>
+      <div class="value-md" style="left:52px;top:700px;" data-product-capacity></div>
+      <div class="value-md" style="left:473px;top:700px;" data-product-process></div>
+
+      <div class="line" style="top:785px;"></div>
+      <div class="label" style="left:52px;top:821px;">产品尺寸</div>
+      <div class="label" style="left:470px;top:821px;">产品颜色</div>
+      <div class="value-md" style="left:52px;top:877px;" data-product-size></div>
+      <div class="value-md" style="left:472px;top:877px;" data-product-colors></div>
+
+      <div class="line" style="top:945px;"></div>
+      <div class="label" style="left:54px;top:990px;">产品配件</div>
+      <div class="value-lg" style="left:52px;top:1034px;" data-product-accessories></div>
+      <div class="line" style="top:1112px;"></div>
+
+      <svg class="size-diagram" viewBox="80 1160 680 540" xmlns="http://www.w3.org/2000/svg" aria-label="产品尺寸示意图">
+        <g fill="none" stroke="#231815" stroke-width="1.3">
+          <polygon points="156.97 1372.08 161.8 1437.69 517.48 1664.45 706.25 1482.12 708.78 1418.59 350.81 1211.17 156.97 1372.08"/>
+          <polyline points="708.78 1418.59 518.63 1601.14 517.48 1664.45"/>
+          <line x1="156.97" y1="1372.08" x2="518.63" y2="1601.14"/>
+          <line x1="709.67" y1="1416.09" x2="732.8" y2="1376.17" stroke-width=".7"/>
+          <line x1="351.69" y1="1208.67" x2="374.82" y2="1168.75" stroke-width=".7"/>
+          <line x1="376.52" y1="1180.14" x2="722.08" y2="1380.36"/>
+          <line x1="152.32" y1="1367.85" x2="130.72" y2="1341.84" stroke-width=".7"/>
+          <line x1="346.15" y1="1206.94" x2="324.55" y2="1180.92" stroke-width=".7"/>
+          <line x1="324.78" y1="1192.43" x2="141.99" y2="1344.18"/>
+          <line x1="711.74" y1="1482.35" x2="730.22" y2="1483.09" stroke-width=".7"/>
+          <line x1="714.28" y1="1418.81" x2="732.75" y2="1419.55" stroke-width=".7"/>
+          <line x1="723.47" y1="1426.36" x2="721.51" y2="1475.56"/>
+        </g>
+        <g fill="#231815">
+          <polygon points="375.28 1185.18 370.31 1176.54 380.28 1176.55 375.28 1185.18"/>
+          <polygon points="718.31 1383.94 728.28 1383.96 723.31 1375.31 718.31 1383.94"/>
+          <polygon points="320.47 1189.52 330.3 1187.84 326.84 1197.2 320.47 1189.52"/>
+          <polygon points="139.93 1339.41 136.47 1348.76 146.3 1347.08 139.93 1339.41"/>
+          <polygon points="718.43 1427.62 723.76 1419.19 728.4 1428.02 718.43 1427.62"/>
+          <polygon points="716.59 1473.9 721.22 1482.73 726.55 1474.3 716.59 1473.9"/>
+        </g>
+        <text x="518.68" y="1252.85" transform="rotate(30.0887 518.68 1252.85)" fill="#231815" font-size="19.82" data-dimension-length></text>
+        <text x="201.34" y="1283.22" transform="rotate(-39.6985 201.34 1283.22)" fill="#231815" font-size="19.82" data-dimension-width></text>
+        <text x="731.38" y="1421.24" transform="rotate(92.2821 731.38 1421.24)" fill="#231815" font-size="19.82" data-dimension-height></text>
+      </svg>
+      <div class="size-note" data-dimension-note></div>
+
+      <div class="section-title" style="top:1826.25px;" data-custom-title></div>
+      <div class="custom-box" style="left:35.94px;top:2024.75px;"></div>
+      <div class="custom-box" style="left:401.07px;top:2024.75px;"></div>
+      <div class="custom-box" style="left:35.94px;top:2345.2px;"></div>
+      <div class="custom-caption" style="left:55px;top:2276px;" data-custom-front></div>
+      <div class="custom-caption" style="left:421px;top:2276px;" data-custom-back></div>
+      <div class="custom-caption" style="left:55px;top:2594px;" data-custom-bag></div>
+      <div class="custom-right-title" data-custom-design-title></div>
+      <div class="custom-small"><span data-custom-format-label></span><br><span data-custom-format-lines></span></div>
+      <div data-custom-format-line style="position:absolute;left:434.41px;top:2464.14px;width:201.53px;height:1.33px;background:#ccc;"></div>
+      <div style="position:absolute;left:432.76px;top:2479.28px;width:142.78px;height:51.24px;border:2px solid #000;box-sizing:border-box;"></div>
+      <div class="custom-inner" data-custom-inner></div>
+
+      <div class="instruction-en" data-instruction-english></div>
+      <div class="section-title" style="top:2904px;" data-instruction-title></div>
+      <div class="line" data-line="instruction-color" style="top:3040px;"></div>
+      <div class="instructions-block" style="top:3057.44px;">
+        <h3 data-color-title></h3>
+        <div data-color-items></div>
+      </div>
+      <div class="line" data-line="instruction-proof" style="top:3540px;"></div>
+      <div class="instructions-block" style="top:3565.45px;">
+        <h3 data-proof-title></h3>
+        <div data-proof-items></div>
+      </div>
+      <div class="line" data-line="instruction-end" style="top:4040px;"></div>
+
+      <div class="showcase-en" data-showcase-english></div>
+      <div class="showcase-title" data-showcase-title></div>
+    </div>
+
+    <!-- __TAOBAO_DETAIL_DATA__ -->
+    <script id="taobao-detail-data" type="application/json">
+{
+  "page": {
+    "width": 800,
+    "taobaoWidth": 750,
+    "background": "#f8f8f8"
+  },
+  "hero": {
+    "tagline": [
+      "The food is fast",
+      "cooked and delicious"
+    ],
+    "title": [
+      "产品参数",
+      "详情请阅读"
+    ]
+  },
+  "product": {
+    "name": "喜悦茶叶包装礼盒（空）",
+    "spec": "24套/件",
+    "capacity": [
+      "15CM款岩茶泡袋：30泡",
+      "11CM款红茶泡袋：50泡"
+    ],
+    "process": [
+      "礼盒：全彩UV工艺制作",
+      "提袋：丝网印刷制作"
+    ],
+    "size": "35×22.3×7.2CM",
+    "colors": "红色/黄色/橙色/蓝色/咖色",
+    "accessories": "礼盒、手提袋、礼盒膜"
+  },
+  "dimensions": {
+    "length": "35CM",
+    "width": "22.3CM",
+    "height": "7.2CM",
+    "note": "*本产品符合新规包装空隙率标准"
+  },
+  "customization": {
+    "title": [
+      "可定制范围",
+      "免费排版设计"
+    ],
+    "front": "礼盒正面定制",
+    "back": "礼盒背面定制",
+    "bag": "手提袋双面定制",
+    "designTitle": "可提供设计稿定制",
+    "formatLabel": "支持格式：",
+    "formatLines": [
+      "PNG、JPG、PSD、",
+      "AI、PDF等设计软件格式。"
+    ],
+    "innerBox": [
+      "如盒子内小盒",
+      "包含内小盒设计定制"
+    ]
+  },
+  "instructions": {
+    "english": [
+      "Kindly read the",
+      "customization",
+      "instructions carefully"
+    ],
+    "title": [
+      "定制说明",
+      "请您认真阅读"
+    ],
+    "colorTitle": "关于颜色差异",
+    "colorItems": [
+      "1. 色差客观存在：由于不同显示设备（如电脑显示器、手机屏幕）的色彩显示原理、品牌、型号、分辨率及色彩校准设置存在差异，以及不同材质对印刷/喷涂工艺的吸收表现不同、拍摄环境光线影响等因素，设计稿与最终实物成品之间不可避免会存在一定的颜色差异。",
+      "2. 非质量问题：此类因显示设备、生产工艺、材料特性及环境光线导致的合理范围内的色差，属于行业普遍现象，不属于产品质量问题。",
+      "3. 颜色判定标准：最终颜色效果以实际收到的实物为准。设计稿仅供参考，不作为颜色验收的绝对标准。",
+      "4. 免责声明：因此类客观技术原因产生的色差问题，本店无法提供退换货服务或承担相应责任。敬请在下单前充分理解并接受此客观情况。"
+    ],
+    "proofTitle": "设计稿信息核对责任",
+    "proofItems": [
+      "1. 最终确认责任在您：在提交生产订单前，您作为设计稿的最终确认方，负有核对设计稿所有信息的绝对责任。这包括但不限于：文字内容（拼写、语法、标点）、图案元素、排版布局、尺寸规格、颜色选择（理解色差前提下）等所有细节。",
+      "2. 生产依据：我们将严格按照您最终确认并授权生产的设计稿文件进行制作。",
+      "3. 自行承担风险：如因设计稿本身存在错误或您未在最终生产前指出并确认修改，导致生产出的成品不符合预期，由此产生的一切损失将由您自行承担。",
+      "4. 建议：强烈建议您在最终确认前，多次、仔细检查设计稿，或请他人协助校对。如有任何疑问或需要修改，请务必在正式下单生产前及时与我们沟通。"
+    ]
+  },
+  "showcase": {
+    "english": [
+      "Product images showcasing",
+      "packaging",
+      "dedicated to quality"
+    ],
+    "title": [
+      "产品展示",
+      "专注品质包装"
+    ]
+  }
+}
+    </script>
+    <script>
+      (() => {
+        const data = JSON.parse(document.getElementById("taobao-detail-data").textContent);
+        const setText = (selector, value) => {
+          const node = document.querySelector(selector);
+          if (node) node.textContent = value || "";
+        };
+        const setLines = (selector, lines) => {
+          const node = document.querySelector(selector);
+          if (!node) return;
+          node.textContent = "";
+          (Array.isArray(lines) ? lines : [lines || ""]).forEach((line, index) => {
+            if (index > 0) node.appendChild(document.createElement("br"));
+            node.appendChild(document.createTextNode(line));
+          });
+        };
+        const setParagraphs = (selector, items) => {
+          const node = document.querySelector(selector);
+          if (!node) return;
+          node.textContent = "";
+          (items || []).forEach((item) => {
+            const paragraph = document.createElement("p");
+            paragraph.textContent = item;
+            node.appendChild(paragraph);
+          });
+        };
+
+        setLines("[data-hero-tagline]", data.hero.tagline);
+        setLines("[data-hero-title]", data.hero.title);
+        setText("[data-product-name]", data.product.name);
+        setText("[data-product-spec]", data.product.spec);
+        setLines("[data-product-capacity]", data.product.capacity);
+        setLines("[data-product-process]", data.product.process);
+        setText("[data-product-size]", data.product.size);
+        setText("[data-product-colors]", data.product.colors);
+        setText("[data-product-accessories]", data.product.accessories);
+        setText("[data-dimension-length]", data.dimensions.length);
+        setText("[data-dimension-width]", data.dimensions.width);
+        setText("[data-dimension-height]", data.dimensions.height);
+        setText("[data-dimension-note]", data.dimensions.note);
+        setLines("[data-custom-title]", data.customization.title);
+        setText("[data-custom-front]", data.customization.front);
+        setText("[data-custom-back]", data.customization.back);
+        setText("[data-custom-bag]", data.customization.bag);
+        setText("[data-custom-design-title]", data.customization.designTitle);
+        setText("[data-custom-format-label]", data.customization.formatLabel);
+        setLines("[data-custom-format-lines]", data.customization.formatLines);
+        setLines("[data-custom-inner]", data.customization.innerBox);
+        setLines("[data-instruction-english]", data.instructions.english);
+        setLines("[data-instruction-title]", data.instructions.title);
+        setText("[data-color-title]", data.instructions.colorTitle);
+        setParagraphs("[data-color-items]", data.instructions.colorItems);
+        setText("[data-proof-title]", data.instructions.proofTitle);
+        setParagraphs("[data-proof-items]", data.instructions.proofItems);
+        setLines("[data-showcase-english]", data.showcase.english);
+        setLines("[data-showcase-title]", data.showcase.title);
+      })();
+    </script>
+  </body>
+</html>

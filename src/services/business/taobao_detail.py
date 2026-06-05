@@ -5,7 +5,10 @@ from __future__ import annotations
 import html
 import io
 import json
+import os
 import re
+import shutil
+import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -14,7 +17,7 @@ from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
+
 from src.core.config import get_config
 from src.utils import get_logger
 
@@ -26,9 +29,23 @@ logger = get_logger("sjagent.taobao_detail")
 ImageFetcher = Callable[[str], bytes]
 DimensionRecognizer = Callable[[list[str]], dict]
 
-DETAIL_IMAGE_WIDTH = 750
-DETAIL_IMAGE_HEIGHT = 1122
-DETAIL_IMAGE_COUNT = 4
+ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_DATA_PATH = ROOT / "assets" / "taobao_detail" / "default-product-data.json"
+TEMPLATE_PATH = ROOT / "assets" / "taobao_detail" / "detail-template.html"
+RENDER_SCRIPT_PATH = ROOT / "scripts" / "taobao_detail" / "render_taobao_detail.mjs"
+
+TAOBAO_IMAGE_WIDTH = 750
+DETAIL_SLICE_NAMES = [
+    "detail-01.png",
+    "detail-02.png",
+    "detail-03.png",
+    "detail-04.png",
+    "detail-05.png",
+]
+FIXED_CAPACITY = [
+    "15CM款岩茶泡袋：30泡",
+    "11CM款红茶泡袋：50泡",
+]
 FIXED_PROCESS = ["礼盒：全彩UV工艺制作", "提袋：丝网印刷制作"]
 FIXED_ACCESSORIES = "礼盒、手提袋、礼盒膜"
 
@@ -103,84 +120,24 @@ def _download_image(url: str) -> bytes:
     return response.content
 
 
-def _font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    if weight == "bold":
-        candidates = [
-            "C:/Windows/Fonts/msyhbd.ttc",
-            "C:/Windows/Fonts/simhei.ttf",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-            "/usr/share/fonts/truetype/arphic/uming.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        ]
-    else:
-        candidates = [
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simsun.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-            "/usr/share/fonts/truetype/arphic/uming.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ]
-    for path in candidates:
-        try:
-            if path and Path(path).exists():
-                return ImageFont.truetype(path, size=size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
-
-
-def _draw_lines(draw: ImageDraw.ImageDraw, xy: tuple[int, int], lines: Iterable[str], *, font, fill="#111", line_gap=10) -> int:
-    x, y = xy
-    for line in lines:
-        text = str(line or "").strip()
-        if not text:
-            continue
-        draw.text((x, y), text, font=font, fill=fill)
-        bbox = draw.textbbox((x, y), text, font=font)
-        y = bbox[3] + line_gap
-    return y
-
-
-def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
-    clean = str(text or "").strip()
-    if not clean:
-        return []
-    lines: list[str] = []
-    current = ""
-    for char in clean:
-        candidate = f"{current}{char}"
-        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
-            current = candidate
-        else:
-            if current:
-                lines.append(current)
-            current = char
-    if current:
-        lines.append(current)
-    return lines
-
-
-def _dimension_text(dimensions: dict) -> str:
-    text = str(dimensions.get("text") or "").strip()
-    if text:
-        return text
-    parts = [dimensions.get("length"), dimensions.get("width"), dimensions.get("height")]
-    parts = [str(item or "").strip() for item in parts if str(item or "").strip()]
-    return " × ".join(parts)
+def _strip_dimension_unit(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    return re.sub(r"\s*(?:CM|厘米|公分)\s*$", "", text, flags=re.I).strip()
 
 
 def _dimension_from_text(text: str) -> dict:
-    clean = str(text or "").upper().replace("厘米", "CM").replace("公分", "CM")
+    clean = (
+        str(text or "")
+        .upper()
+        .replace("厘米", "CM")
+        .replace("公分", "CM")
+        .replace("×", "X")
+        .replace("＊", "*")
+    )
     pattern = re.compile(
-        r"(?P<l>\d+(?:\.\d+)?)\s*(?:CM|厘米|公分)?\s*[X×*＊]\s*"
-        r"(?P<w>\d+(?:\.\d+)?)\s*(?:CM|厘米|公分)?\s*[X×*＊]\s*"
-        r"(?P<h>\d+(?:\.\d+)?)\s*(?:CM|厘米|公分)?",
+        r"(?P<l>\d+(?:\.\d+)?)\s*(?:CM)?\s*[X*]\s*"
+        r"(?P<w>\d+(?:\.\d+)?)\s*(?:CM)?\s*[X*]\s*"
+        r"(?P<h>\d+(?:\.\d+)?)\s*(?:CM)?",
         re.I,
     )
     match = pattern.search(clean)
@@ -195,6 +152,19 @@ def _dimension_from_text(text: str) -> dict:
         "height": f"{height}CM",
         "text": f"{length}×{width}×{height}CM",
     }
+
+
+def _dimension_text(dimensions: dict) -> str:
+    text = str(dimensions.get("text") or "").strip()
+    if text:
+        parsed = _dimension_from_text(text)
+        return str(parsed.get("text") or text.replace("X", "×").replace("x", "×")).strip()
+    length = _strip_dimension_unit(dimensions.get("length"))
+    width = _strip_dimension_unit(dimensions.get("width"))
+    height = _strip_dimension_unit(dimensions.get("height"))
+    if length and width and height:
+        return f"{length}×{width}×{height}CM"
+    return ""
 
 
 def recognize_dimensions_from_images(image_urls: list[str], image_fetcher: ImageFetcher = _download_image) -> dict:
@@ -223,17 +193,78 @@ def recognize_dimensions_from_images(image_urls: list[str], image_fetcher: Image
     return {}
 
 
+class OriginalTaobaoDetailRenderer:
+    """Render the original Taobao detail HTML template into the 5 fixed PNG slices."""
+
+    def __init__(
+        self,
+        *,
+        node_command: str = "node",
+        script_path: Path = RENDER_SCRIPT_PATH,
+        template_path: Path = TEMPLATE_PATH,
+    ):
+        self.node_command = node_command
+        self.script_path = Path(script_path)
+        self.template_path = Path(template_path)
+
+    def render(self, product_data: dict) -> list[Path]:
+        if not self.script_path.exists():
+            raise RuntimeError(f"淘宝详情页渲染脚本不存在: {self.script_path}")
+        if not self.template_path.exists():
+            raise RuntimeError(f"淘宝详情页模板不存在: {self.template_path}")
+
+        output_dir = Path(tempfile.mkdtemp(prefix="taobao_detail_render_"))
+        data_path = output_dir / "product-data.json"
+        render_data = {key: value for key, value in product_data.items() if not str(key).startswith("_")}
+        data_path.write_text(json.dumps(render_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        command = [
+            self.node_command,
+            str(self.script_path),
+            str(data_path),
+            str(self.template_path),
+            str(output_dir),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(ROOT),
+                env=os.environ.copy(),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=120,
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "淘宝详情页渲染失败: "
+                    f"stdout={completed.stdout.strip()} stderr={completed.stderr.strip()}"
+                )
+            paths = [output_dir / name for name in DETAIL_SLICE_NAMES]
+            missing = [str(path) for path in paths if not path.exists()]
+            if missing:
+                raise RuntimeError(f"淘宝详情页渲染缺少切片: {', '.join(missing)}")
+            return paths
+        except Exception:
+            shutil.rmtree(output_dir, ignore_errors=True)
+            raise
+
+
 class TaobaoDetailExportService:
     def __init__(
         self,
         *,
         product_service=None,
         uploader=None,
+        renderer: OriginalTaobaoDetailRenderer | None = None,
         image_fetcher: ImageFetcher = _download_image,
         dimension_recognizer: DimensionRecognizer | None = None,
     ):
         self.product_service = product_service or get_product_service()
         self.uploader = uploader
+        self.renderer = renderer or OriginalTaobaoDetailRenderer()
         self.image_fetcher = image_fetcher
         self.dimension_recognizer = dimension_recognizer or (
             lambda urls: recognize_dimensions_from_images(urls, image_fetcher=self.image_fetcher)
@@ -252,20 +283,23 @@ class TaobaoDetailExportService:
             main_urls = _unique(_json_list(product.get("main_images_list")) + [product.get("images")])
         color_items = self._color_items(color_assets, product)
         detail_urls = _unique([item.get("url") for item in detail_assets] + _json_list(product.get("detail_image_urls")))
+
         recognition_urls = _unique(main_urls + [item["url"] for item in color_items] + detail_urls)
         dimensions = dict(self.dimension_recognizer(recognition_urls) or {})
         if not _dimension_text(dimensions):
             fallback = _dimension_from_text(product.get("size_label") or product.get("title") or "")
             dimensions.update(fallback)
 
-        template_paths = self._render_template_images(product, color_items, dimensions)
+        template_data = self._template_data(product, color_items, dimensions)
+        template_paths = self.renderer.render(template_data)
         try:
-            template_urls = self._upload_template_images(template_paths)
+            template_urls = self._upload_detail_images(template_paths)
         finally:
-            self._cleanup_template_paths(template_paths)
-        detail_html = self._detail_html(template_urls, detail_urls, dimensions)
+            self._cleanup_render_paths(template_paths)
+
+        detail_html = self._detail_html(template_urls, detail_urls)
         filename = f"{_safe_zip_name(product.get('title') or product.get('name') or '商品', '商品')}-淘宝详情页.zip"
-        content = self._zip_package(filename, main_urls, color_items, detail_html)
+        content = self._zip_package(main_urls, color_items, detail_html)
         return TaobaoDetailExportResult(
             filename=filename,
             content=content,
@@ -304,117 +338,62 @@ class TaobaoDetailExportService:
             unique_items.append(item)
         return unique_items
 
-    def _render_template_images(self, product: dict, color_items: list[dict], dimensions: dict) -> list[Path]:
-        base = Path(tempfile.mkdtemp(prefix="taobao_detail_render_"))
-        paths = []
-        section_drawers = [
-            self._draw_product_params,
-            self._draw_dimension_section,
-            self._draw_customization_section,
-            self._draw_instruction_section,
-        ]
-        for index, drawer in enumerate(section_drawers, start=1):
-            image = Image.new("RGB", (DETAIL_IMAGE_WIDTH, DETAIL_IMAGE_HEIGHT), "#f8f8f8")
-            draw = ImageDraw.Draw(image)
-            drawer(draw, product, color_items, dimensions)
-            path = base / f"taobao-detail-{index}.jpg"
-            image.save(path, "JPEG", quality=92, optimize=True)
-            paths.append(path)
-        return paths
+    def _template_data(self, product: dict, color_items: list[dict], dimensions: dict) -> dict:
+        data = self._default_template_data()
+        product_data = dict(data.get("product") or {})
+        dimension_data = dict(data.get("dimensions") or {})
 
-    def _draw_header(self, draw: ImageDraw.ImageDraw, title_lines: list[str], english: list[str] | None = None):
-        if english:
-            _draw_lines(draw, (48, 54), english, font=_font(30, "bold"), fill="#111", line_gap=4)
-        _draw_lines(draw, (48, 170 if english else 68), title_lines, font=_font(48, "bold"), fill="#111", line_gap=8)
-        draw.line((48, 300, DETAIL_IMAGE_WIDTH - 48, 300), fill="#d8d8d8", width=3)
-
-    def _draw_field(self, draw, label: str, value: str | list[str], x: int, y: int, width: int = 290):
-        label_font = _font(22)
-        value_font = _font(28, "bold")
-        draw.text((x, y), label, font=label_font, fill="#555")
-        lines = value if isinstance(value, list) else [value]
-        line_y = y + 44
-        for raw in lines:
-            for line in _wrap_text(draw, str(raw or ""), value_font, width):
-                draw.text((x, line_y), line, font=value_font, fill="#050505")
-                line_y += 38
-
-    def _draw_product_params(self, draw, product: dict, color_items: list[dict], dimensions: dict):
-        self._draw_header(draw, ["产品参数", "详情请阅读"], ["PACKAGING DETAILS", "PRODUCT PROFILE"])
-        colors = _unique([item.get("color") for item in color_items] + _json_list(product.get("available_colors")))
-        colors_text = " / ".join(colors) if colors else str(product.get("color_text") or product.get("color") or "")
-        self._draw_field(draw, "产品名称", str(product.get("title") or product.get("name") or "商品"), 48, 350, 360)
-        self._draw_field(draw, "产品规格", str(product.get("piece_text") or product.get("simple_desc") or ""), 455, 350, 210)
-        self._draw_field(draw, "可装容量", self._capacity_lines(product), 48, 555, 310)
-        self._draw_field(draw, "制作工艺", FIXED_PROCESS, 455, 555, 230)
-        self._draw_field(draw, "产品尺寸", _dimension_text(dimensions), 48, 775, 310)
-        self._draw_field(draw, "产品颜色", colors_text, 455, 775, 230)
-        self._draw_field(draw, "产品配件", FIXED_ACCESSORIES, 48, 965, 560)
-
-    def _draw_dimension_section(self, draw, product: dict, color_items: list[dict], dimensions: dict):
-        self._draw_header(draw, ["产品尺寸", "规格信息"], ["PRODUCT SIZE", "SPECIFICATION"])
-        self._draw_field(draw, "尺寸", _dimension_text(dimensions) or "请以实物为准", 48, 350, 520)
-        self._draw_field(draw, "件规", str(product.get("piece_text") or product.get("simple_desc") or ""), 48, 515, 520)
-        self._draw_field(draw, "颜色", " / ".join(_unique([item.get("color") for item in color_items])), 48, 680, 520)
-        note_font = _font(22)
-        notes = [
-            "* 本产品符合新规包装空隙率标准",
-            "* 尺寸信息由商品图片标注识别，实际以实物为准",
-        ]
-        y = 880
-        for note in notes:
-            draw.text((48, y), note, font=note_font, fill="#222")
-            y += 42
-
-    def _draw_customization_section(self, draw, product: dict, color_items: list[dict], dimensions: dict):
-        self._draw_header(draw, ["可定制范围", "免费排版设计"], ["CUSTOM SERVICE", "FREE LAYOUT"])
-        box_font = _font(24, "bold")
-        captions = [
-            ("礼盒正面定制", 48, 370),
-            ("礼盒背面定制", 390, 370),
-            ("手提袋双面定制", 48, 690),
-        ]
-        for text, x, y in captions:
-            draw.rectangle((x, y, x + 290, y + 210), outline="#000", width=2)
-            draw.text((x + 58, y + 232), text, font=box_font, fill="#111")
-        draw.text((390, 710), "可提供设计稿定制", font=_font(28, "bold"), fill="#111")
-        _draw_lines(draw, (392, 760), ["支持格式：PNG、JPG、PSD、", "AI、PDF等设计软件格式。"], font=_font(20), fill="#111", line_gap=8)
-        _draw_lines(draw, (392, 900), ["如盒子内小盒", "包含内小盒设计定制"], font=_font(26), fill="#111", line_gap=10)
-
-    def _draw_instruction_section(self, draw, product: dict, color_items: list[dict], dimensions: dict):
-        self._draw_header(draw, ["定制说明", "请您认真阅读"], ["CUSTOM NOTES", "PLEASE READ"])
-        title_font = _font(24, "bold")
-        text_font = _font(18)
-        draw.text((48, 342), "关于颜色差异", font=title_font, fill="#111")
-        color_text = (
-            "色差客观存在。不同显示设备、材质、印刷工艺及拍摄光线会导致设计稿与实物存在合理色差，"
-            "最终颜色效果以实际收到的实物为准。"
+        colors = _unique(
+            [item.get("color") for item in color_items]
+            + _json_list(product.get("available_colors"))
+            + [product.get("color_text"), product.get("color")]
         )
-        y = 390
-        for line in _wrap_text(draw, color_text, text_font, 640):
-            draw.text((48, y), line, font=text_font, fill="#111")
-            y += 28
-        draw.line((48, 560, DETAIL_IMAGE_WIDTH - 48, 560), fill="#d8d8d8", width=2)
-        draw.text((48, 610), "设计稿信息核对责任", font=title_font, fill="#111")
-        proof_text = (
-            "请在提交生产前仔细核对文字、图案、排版、规格、颜色等信息。我们将按照最终确认的设计稿生产，"
-            "因设计稿本身错误造成的损失由客户自行承担。"
-        )
-        y = 660
-        for line in _wrap_text(draw, proof_text, text_font, 640):
-            draw.text((48, y), line, font=text_font, fill="#111")
-            y += 28
-        draw.line((48, 940, DETAIL_IMAGE_WIDTH - 48, 940), fill="#d8d8d8", width=2)
-        _draw_lines(draw, (48, 985), ["产品展示", "专注品质包装"], font=_font(40, "bold"), fill="#111", line_gap=8)
+        size_text = _dimension_text(dimensions)
+        if not size_text:
+            size_text = str(product.get("size_label") or "").strip()
+        if not size_text:
+            size_text = "请以实物为准"
 
-    def _capacity_lines(self, product: dict) -> list[str]:
-        text = str(product.get("size_label") or "").strip()
-        if text:
-            return [text]
-        piece = str(product.get("piece_text") or product.get("simple_desc") or "").strip()
-        return [piece] if piece else ["按商品规格页为准"]
+        parsed_dimensions = _dimension_from_text(size_text)
+        dimension_data.update({
+            "length": parsed_dimensions.get("length") or str(dimensions.get("length") or "").strip(),
+            "width": parsed_dimensions.get("width") or str(dimensions.get("width") or "").strip(),
+            "height": parsed_dimensions.get("height") or str(dimensions.get("height") or "").strip(),
+            "note": str(dimension_data.get("note") or "*本产品符合新规包装空隙率标准"),
+        })
 
-    def _upload_template_images(self, paths: list[Path]) -> list[str]:
+        product_data.update({
+            "name": str(product.get("title") or product.get("name") or "商品").strip(),
+            "spec": self._spec_text(product),
+            "capacity": FIXED_CAPACITY,
+            "process": FIXED_PROCESS,
+            "size": size_text,
+            "colors": "/".join(colors) if colors else "默认颜色",
+            "accessories": FIXED_ACCESSORIES,
+        })
+        data["product"] = product_data
+        data["dimensions"] = dimension_data
+        data.setdefault("page", {})
+        data["page"]["width"] = 800
+        data["page"]["taobaoWidth"] = TAOBAO_IMAGE_WIDTH
+        return data
+
+    def _default_template_data(self) -> dict:
+        if not DEFAULT_DATA_PATH.exists():
+            raise RuntimeError(f"淘宝详情页默认数据不存在: {DEFAULT_DATA_PATH}")
+        return json.loads(DEFAULT_DATA_PATH.read_text(encoding="utf-8"))
+
+    def _spec_text(self, product: dict) -> str:
+        for key in ("piece_text", "simple_desc", "spec"):
+            text = str(product.get(key) or "").strip()
+            if text:
+                return text
+        case_pack = str(product.get("case_pack_qty") or "").strip()
+        if case_pack:
+            return f"1件{case_pack}套"
+        return "按商品规格页为准"
+
+    def _upload_detail_images(self, paths: list[Path]) -> list[str]:
         uploader = self.uploader
         if uploader is None:
             from scripts.oss_uploader import OSSUploader
@@ -424,14 +403,14 @@ class TaobaoDetailExportService:
         for path in paths:
             result = uploader.upload(str(path))
             if not isinstance(result, dict) or result.get("error"):
-                raise RuntimeError(f"淘宝详情页模板图上传失败: {result}")
+                raise RuntimeError(f"淘宝详情页切片上传失败: {result}")
             url = str(result.get("url") or result.get("full_url") or result.get("images") or result.get("path") or "").strip()
             if not url:
-                raise RuntimeError("淘宝详情页模板图上传未返回 URL")
+                raise RuntimeError("淘宝详情页切片上传未返回 URL")
             urls.append(url)
         return urls
 
-    def _cleanup_template_paths(self, paths: list[Path]) -> None:
+    def _cleanup_render_paths(self, paths: list[Path]) -> None:
         directories: set[Path] = set()
         for path in paths:
             directories.add(path.parent)
@@ -440,22 +419,27 @@ class TaobaoDetailExportService:
             except Exception as exc:
                 logger.info(f"淘宝详情页临时图清理跳过: path={path}, error={exc}")
         for directory in directories:
-            try:
-                directory.rmdir()
-            except Exception:
-                pass
+            if directory.exists() and directory.name.startswith("taobao_detail_render_"):
+                shutil.rmtree(directory, ignore_errors=True)
 
-    def _detail_html(self, template_urls: list[str], detail_urls: list[str], dimensions: dict) -> str:
-        lines = [
-            "<!-- 北极星淘宝详情页导出代码：复制到淘宝详情页源码区域 -->",
-            f"<!-- 尺寸识别：{html.escape(_dimension_text(dimensions) or '未识别到尺寸')} -->",
-        ]
-        for url in _unique(template_urls + detail_urls):
+    def _detail_html(self, template_urls: list[str], detail_urls: list[str]) -> str:
+        lines = [f'<div style="width:{TAOBAO_IMAGE_WIDTH}px;margin:0 auto;padding:0;background:#ffffff;">']
+        for index, url in enumerate(_unique(template_urls), start=1):
             clean = html.escape(url, quote=True)
-            lines.append(f'<p><img src="{clean}" style="display:block;width:100%;height:auto;" /></p>')
+            lines.append(
+                f'  <img src="{clean}" alt="礼盒详情页{index:02d}" '
+                f'style="display:block;width:{TAOBAO_IMAGE_WIDTH}px;height:auto;margin:0;padding:0;border:0;">'
+            )
+        for index, url in enumerate(_unique(detail_urls), start=1):
+            clean = html.escape(url, quote=True)
+            lines.append(
+                f'  <img src="{clean}" alt="商品详情图{index:02d}" '
+                f'style="display:block;width:{TAOBAO_IMAGE_WIDTH}px;height:auto;margin:0;padding:0;border:0;">'
+            )
+        lines.append("</div>")
         return "\n".join(lines) + "\n"
 
-    def _zip_package(self, filename: str, main_urls: list[str], color_items: list[dict], detail_html: str) -> bytes:
+    def _zip_package(self, main_urls: list[str], color_items: list[dict], detail_html: str) -> bytes:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("detail.html", detail_html.encode("utf-8"))

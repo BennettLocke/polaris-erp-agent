@@ -1,4 +1,5 @@
 import io
+import tempfile
 import zipfile
 from pathlib import Path
 from unittest import TestCase
@@ -47,7 +48,23 @@ class FakeUploader:
 
     def upload(self, local_path):
         self.uploaded.append(local_path)
-        return {"url": f"https://img.513sjbz.com/taobao/template-{len(self.uploaded)}.jpg"}
+        return {"url": f"https://img.513sjbz.com/taobao/detail-{len(self.uploaded):02d}.png"}
+
+
+class FakeRenderer:
+    def __init__(self):
+        self.rendered_payloads = []
+
+    def render(self, product_data):
+        self.rendered_payloads.append(product_data)
+        base = Path(tempfile.mkdtemp(prefix="taobao-test-render_"))
+        base.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for index in range(1, 6):
+            path = base / f"detail-{index:02d}.png"
+            path.write_bytes(b"fake-png")
+            paths.append(path)
+        return paths
 
 
 def fake_fetch(url: str) -> bytes:
@@ -64,9 +81,11 @@ class TaobaoDetailExportServiceTest(TestCase):
         from src.services.business.taobao_detail import TaobaoDetailExportService
 
         uploader = FakeUploader()
+        renderer = FakeRenderer()
         service = TaobaoDetailExportService(
             product_service=FakeProductService(),
             uploader=uploader,
+            renderer=renderer,
             image_fetcher=fake_fetch,
             dimension_recognizer=lambda urls: {
                 "text": "35×22.3×7.2CM",
@@ -75,11 +94,17 @@ class TaobaoDetailExportServiceTest(TestCase):
                 "height": "7.2CM",
             },
         )
-
         result = service.export_zip(9)
 
         self.assertTrue(result.filename.endswith(".zip"))
-        self.assertEqual(len(uploader.uploaded), 4)
+        self.assertEqual(len(uploader.uploaded), 5)
+        self.assertEqual(len(renderer.rendered_payloads), 1)
+        rendered_product = renderer.rendered_payloads[0]["product"]
+        self.assertEqual(rendered_product["capacity"], [
+            "15CM款岩茶泡袋：30泡",
+            "11CM款红茶泡袋：50泡",
+        ])
+        self.assertEqual(rendered_product["size"], "35×22.3×7.2CM")
         with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
             names = sorted(archive.namelist())
             self.assertEqual(names, [
@@ -89,11 +114,12 @@ class TaobaoDetailExportServiceTest(TestCase):
                 "颜色图/蓝色-2.jpg",
             ])
             detail_html = archive.read("detail.html").decode("utf-8")
-        self.assertIn("https://img.513sjbz.com/taobao/template-1.jpg", detail_html)
-        self.assertIn("https://img.513sjbz.com/taobao/template-4.jpg", detail_html)
+        self.assertIn("https://img.513sjbz.com/taobao/detail-01.png", detail_html)
+        self.assertIn("https://img.513sjbz.com/taobao/detail-05.png", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-1.jpg", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-2.jpg", detail_html)
-        self.assertIn("35×22.3×7.2CM", detail_html)
+        self.assertIn("width:750px", detail_html)
+        self.assertNotIn("<p><img", detail_html)
 
 
 class TaobaoDetailExportContractTest(TestCase):
@@ -111,12 +137,14 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("导出淘宝详情页", product_source)
         self.assertIn("onExportTaobaoDetail", product_source)
 
-    def test_linux_export_font_prefers_cjk_before_dejavu(self):
+    def test_export_uses_original_playwright_renderer_contract(self):
         service_source = (ROOT / "src" / "services" / "business" / "taobao_detail.py").read_text(encoding="utf-8")
+        renderer_source = (ROOT / "scripts" / "taobao_detail" / "render_taobao_detail.mjs").read_text(encoding="utf-8")
+        template_source = (ROOT / "assets" / "taobao_detail" / "detail-template.html").read_text(encoding="utf-8")
 
-        regular_noto = service_source.index("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
-        regular_dejavu = service_source.index("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-        bold_noto = service_source.index("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc")
-        bold_dejavu = service_source.index("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-        self.assertLess(regular_noto, regular_dejavu)
-        self.assertLess(bold_noto, bold_dejavu)
+        self.assertIn("OriginalTaobaoDetailRenderer", service_source)
+        self.assertIn("playwright-core", renderer_source)
+        self.assertIn("TAOBAO_DETAIL_CHROMIUM_PATH", renderer_source)
+        self.assertIn("AlibabaPuHuiTi-3-55-Regular.woff2", renderer_source)
+        self.assertIn("detail-05.png", renderer_source)
+        self.assertIn('font-family: "AlibabaPuhuiEditable"', template_source)
