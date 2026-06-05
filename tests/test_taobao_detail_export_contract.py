@@ -104,6 +104,7 @@ class TaobaoDetailExportServiceTest(TestCase):
             "15CM款岩茶泡袋：30泡",
             "11CM款红茶泡袋：50泡",
         ])
+        self.assertEqual(rendered_product["name"], "喜悦半斤茶叶礼盒（空）")
         self.assertEqual(rendered_product["size"], "35×22.3×7.2CM")
         with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
             names = sorted(archive.namelist())

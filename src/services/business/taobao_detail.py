@@ -48,6 +48,7 @@ FIXED_CAPACITY = [
 ]
 FIXED_PROCESS = ["礼盒：全彩UV工艺制作", "提袋：丝网印刷制作"]
 FIXED_ACCESSORIES = "礼盒、手提袋、礼盒膜"
+TAOBAO_DETAIL_NAME_SUFFIX = "茶叶礼盒（空）"
 
 
 @dataclass
@@ -105,6 +106,20 @@ def _image_extension(url: str, content_type: str = "") -> str:
 def _safe_zip_name(value: str, fallback: str) -> str:
     text = re.sub(r'[\\/:*?"<>|\r\n]+', "-", str(value or "").strip()).strip(" .")
     return text or fallback
+
+
+def _taobao_detail_product_name(product: dict) -> str:
+    raw = str(product.get("title") or product.get("name") or "商品").strip()
+    match = re.match(r"^[【\[]\s*(?P<brand>[^】\]]+?)\s*[】\]]\s*(?P<spec>.*)$", raw)
+    if match:
+        base = f"{match.group('brand')}{match.group('spec')}"
+    else:
+        base = raw
+    base = re.sub(r"\s+", "", base)
+    base = re.sub(r"[【】\[\]]+", "", base)
+    base = re.sub(r"(?:茶叶)?(?:包装)?礼盒(?:（空）)?$", "", base).strip()
+    base = re.sub(r"（空）$", "", base).strip()
+    return f"{base or '商品'}{TAOBAO_DETAIL_NAME_SUFFIX}"
 
 
 def _download_image(url: str) -> bytes:
@@ -363,7 +378,7 @@ class TaobaoDetailExportService:
         })
 
         product_data.update({
-            "name": str(product.get("title") or product.get("name") or "商品").strip(),
+            "name": _taobao_detail_product_name(product),
             "spec": self._spec_text(product),
             "capacity": FIXED_CAPACITY,
             "process": FIXED_PROCESS,
