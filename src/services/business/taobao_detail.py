@@ -43,9 +43,20 @@ DETAIL_SLICE_NAMES = [
     "detail-04.jpg",
     "detail-05.jpg",
 ]
-FIXED_CAPACITY = [
+CAPACITY_HALF_JIN = [
     "15CM款岩茶泡袋：30泡",
     "11CM款红茶泡袋：50泡",
+]
+CAPACITY_TWO_THREE_LIANG = [
+    "15CM款岩茶泡袋：18/12泡",
+    "11CM款红茶泡袋：30/20泡",
+]
+CAPACITY_BIG_OR_SMALL_BOX = [
+    "15CM款岩茶泡袋：12泡",
+    "11CM款红茶泡袋：20泡",
+]
+CAPACITY_ONE_LIANG_OR_THREE_SMALL_BOX = [
+    "15CM款岩茶泡袋：6泡",
 ]
 FIXED_PROCESS = ["礼盒：全彩UV工艺制作", "提袋：丝网印刷制作"]
 FIXED_ACCESSORIES = "礼盒、手提袋、礼盒膜"
@@ -138,6 +149,30 @@ def _taobao_detail_product_name(product: dict) -> str:
     base = re.sub(r"(?:茶叶)?(?:包装)?礼盒(?:（空）)?$", "", base).strip()
     base = re.sub(r"（空）$", "", base).strip()
     return f"{base or '商品'}{TAOBAO_DETAIL_NAME_SUFFIX}"
+
+
+def _capacity_lines(product: dict) -> list[str]:
+    source = "".join(
+        str(product.get(key) or "")
+        for key in (
+            "title",
+            "name",
+            "product_name",
+            "product_category_text",
+            "category_name",
+            "piece_text",
+            "simple_desc",
+            "spec",
+        )
+    )
+    text = re.sub(r"\s+", "", source).lower()
+    if any(token in text for token in ("二三两", "2-3两", "2/3两", "2三两")):
+        return CAPACITY_TWO_THREE_LIANG
+    if any(token in text for token in ("2大盒", "二大盒", "两大盒", "6小盒", "六小盒")):
+        return CAPACITY_BIG_OR_SMALL_BOX
+    if any(token in text for token in ("1两", "一两", "壹两", "3小盒", "三小盒")):
+        return CAPACITY_ONE_LIANG_OR_THREE_SMALL_BOX
+    return CAPACITY_HALF_JIN
 
 
 def _taobao_title_core(product: dict) -> str:
@@ -462,7 +497,7 @@ class TaobaoDetailExportService:
         product_data.update({
             "name": _taobao_detail_product_name(product),
             "spec": self._spec_text(product),
-            "capacity": FIXED_CAPACITY,
+            "capacity": _capacity_lines(product),
             "process": FIXED_PROCESS,
             "size": size_text,
             "colors": "/".join(colors) if colors else "默认颜色",

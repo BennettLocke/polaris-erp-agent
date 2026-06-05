@@ -9,22 +9,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeProductService:
+    DEFAULT_PRODUCT = {
+        "id": 9,
+        "spu_id": 3,
+        "sku_no": "SJ1587",
+        "title": "【喜悦】半斤",
+        "piece_text": "1件30套",
+        "case_pack_qty": "30",
+        "available_colors": ["红色", "蓝色"],
+        "detail_image_urls": [
+            "https://img.513sjbz.com/detail/detail-1.jpg",
+            "https://img.513sjbz.com/detail/detail-2.jpg",
+        ],
+    }
+
+    def __init__(self, product=None):
+        self.product = {**self.DEFAULT_PRODUCT, **(product or {})}
+
     def info(self, product_id):
-        if product_id != 9:
+        if product_id != self.product["id"]:
             return None
-        return {
-            "id": 9,
-            "spu_id": 3,
-            "sku_no": "SJ1587",
-            "title": "【喜悦】半斤",
-            "piece_text": "1件30套",
-            "case_pack_qty": "30",
-            "available_colors": ["红色", "蓝色"],
-            "detail_image_urls": [
-                "https://img.513sjbz.com/detail/detail-1.jpg",
-                "https://img.513sjbz.com/detail/detail-2.jpg",
-            ],
-        }
+        return dict(self.product)
 
     def media_assets(self, **kwargs):
         media_type = kwargs.get("media_type")
@@ -92,6 +97,22 @@ def fake_fetch(url: str) -> bytes:
 
 
 class TaobaoDetailExportServiceTest(TestCase):
+    def _rendered_capacity_for_title(self, title: str) -> list[str]:
+        from src.services.business.taobao_detail import TaobaoDetailExportService
+
+        renderer = FakeRenderer()
+        service = TaobaoDetailExportService(
+            product_service=FakeProductService({"title": title}),
+            uploader=FakeUploader(),
+            renderer=renderer,
+            title_generator=FakeTaobaoTitleGenerator(),
+            image_fetcher=fake_fetch,
+            dimension_recognizer=lambda urls: {"text": "35×22.3×7.2CM"},
+        )
+
+        service.export_zip(9)
+        return renderer.rendered_payloads[0]["product"]["capacity"]
+
     def test_export_zip_contains_main_color_images_and_detail_html_only(self):
         from src.services.business.taobao_detail import TaobaoDetailExportService
 
@@ -167,6 +188,30 @@ class TaobaoDetailExportServiceTest(TestCase):
         with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
             self.assertIn(result.html_filename, archive.namelist())
             self.assertNotIn("detail.html", archive.namelist())
+
+    def test_export_capacity_lines_follow_box_spec(self):
+        self.assertEqual(self._rendered_capacity_for_title("【喜悦】半斤"), [
+            "15CM款岩茶泡袋：30泡",
+            "11CM款红茶泡袋：50泡",
+        ])
+        self.assertEqual(self._rendered_capacity_for_title("【云岭】二三两"), [
+            "15CM款岩茶泡袋：18/12泡",
+            "11CM款红茶泡袋：30/20泡",
+        ])
+        self.assertEqual(self._rendered_capacity_for_title("【岩彩】2大盒"), [
+            "15CM款岩茶泡袋：12泡",
+            "11CM款红茶泡袋：20泡",
+        ])
+        self.assertEqual(self._rendered_capacity_for_title("【视觉】6小盒"), [
+            "15CM款岩茶泡袋：12泡",
+            "11CM款红茶泡袋：20泡",
+        ])
+        self.assertEqual(self._rendered_capacity_for_title("【出彩】1两"), [
+            "15CM款岩茶泡袋：6泡",
+        ])
+        self.assertEqual(self._rendered_capacity_for_title("【名岩】3小盒"), [
+            "15CM款岩茶泡袋：6泡",
+        ])
 
 
 class TaobaoDetailExportContractTest(TestCase):
