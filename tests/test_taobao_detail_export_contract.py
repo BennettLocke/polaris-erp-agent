@@ -197,3 +197,8 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn('type: "jpeg"', renderer_source)
         self.assertIn("quality: 100", renderer_source)
         self.assertIn('font-family: "AlibabaPuhuiEditable"', template_source)
+        self.assertNotIn("color: #1a1a1a", template_source)
+        self.assertNotIn("color: #231815", template_source)
+        self.assertNotIn("color: #111", template_source)
+        self.assertNotIn('fill="#231815"', template_source)
+        self.assertNotIn('stroke="#231815"', template_source)
