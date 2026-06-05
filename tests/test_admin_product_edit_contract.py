@@ -25,6 +25,24 @@ class AdminProductEditContractTest(unittest.TestCase):
         self.assertIn('{isCreate ? "新增商品" : "编辑商品"}', editor_source)
         self.assertIn("id: isCreate ? undefined : productId || undefined", editor_source)
 
+    def test_created_product_is_revealed_after_save(self):
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+        editor_source = product_source.split("function ProductEditorDialog", 1)[1].split(
+            "function ProductToolbar", 1
+        )[0]
+        page_source = product_source.split("export function ProductsPage", 1)[1]
+
+        self.assertIn("type ProductSaveContext", product_source)
+        self.assertIn("const saved = await api.saveProduct(buildPayload());", editor_source)
+        self.assertIn("onSaved({ created: isCreate, title: title.trim(), result: saved });", editor_source)
+        self.assertIn("async function afterProductSaved(context?: ProductSaveContext)", page_source)
+        self.assertIn("if (context?.created && context.title)", page_source)
+        self.assertIn("setKeyword(context.title);", page_source)
+        self.assertIn('setListedState("");', page_source)
+        self.assertIn('await loadProducts(1, context.title, "", "", "", "", "");', page_source)
+
     def test_react_product_editor_uses_product_service_contract(self):
         api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
         app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")

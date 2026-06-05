@@ -360,6 +360,16 @@ type ProductSpecForm = {
   is_stock_item: number;
 };
 
+type ProductSaveContext = {
+  created: boolean;
+  title: string;
+  result: {
+    id?: number;
+    sku_ids?: number[];
+    spu_id?: number;
+  };
+};
+
 type ImagePickerTarget = {
   type: "main" | "detail" | "spec";
   specIndex?: number;
@@ -1206,7 +1216,7 @@ function ProductEditorDialog({
   product: ProductItem | null;
   availableCategories: ProductCategory[];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (context?: ProductSaveContext) => void | Promise<void>;
 }) {
   const open = Boolean(product);
   const [title, setTitle] = useState("");
@@ -1405,8 +1415,8 @@ function ProductEditorDialog({
     setSaving(true);
     setError("");
     try {
-      await api.saveProduct(buildPayload());
-      onSaved();
+      const saved = await api.saveProduct(buildPayload());
+      onSaved({ created: isCreate, title: title.trim(), result: saved });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "商品保存失败");
@@ -2283,8 +2293,18 @@ export function ProductsPage() {
     }
   }
 
-  async function afterProductSaved() {
+  async function afterProductSaved(context?: ProductSaveContext) {
     setNotice("商品已保存");
+    if (context?.created && context.title) {
+      setKeyword(context.title);
+      setCategoryId("");
+      setProductType("");
+      setListedState("");
+      setStockMode("");
+      setQuality("");
+      await loadProducts(1, context.title, "", "", "", "", "");
+      return;
+    }
     await loadProducts(page, keyword, categoryId, productType, listedState, stockMode, quality);
   }
 
