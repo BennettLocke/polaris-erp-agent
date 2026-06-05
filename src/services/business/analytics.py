@@ -181,17 +181,16 @@ class AnalyticsService(BusinessService):
             SELECT
                 s.id,
                 s.sales_no,
-                COALESCE(NULLIF(s.customer_name_snapshot, ''), c.name, '客户') AS customer_name,
-                COALESCE(NULLIF(s.product_summary, ''), GROUP_CONCAT(i.title_snapshot ORDER BY i.line_no SEPARATOR ' / '), '销售单') AS product_summary,
+                COALESCE(NULLIF(s.customer_name_snapshot, ''), '客户') AS customer_name,
+                COALESCE(GROUP_CONCAT(i.title_snapshot ORDER BY i.line_no SEPARATOR ' / '), '销售单') AS product_summary,
                 COALESCE(s.receivable_amount, s.total_price, 0) AS receivable_amount,
                 s.pay_status,
                 s.pay_type,
                 s.sales_at
             FROM sales_order s
-            LEFT JOIN customer c ON c.id = s.customer_id
             LEFT JOIN sales_order_item i ON i.sales_order_id = s.id
             WHERE {self._sales_overview_base_where(period_sql)}
-            GROUP BY s.id, s.sales_no, s.customer_name_snapshot, c.name, s.product_summary,
+            GROUP BY s.id, s.sales_no, s.customer_name_snapshot,
                      s.receivable_amount, s.total_price, s.pay_status, s.pay_type, s.sales_at
             ORDER BY s.sales_at DESC, s.id DESC
             LIMIT %s
