@@ -1,5 +1,7 @@
 import unittest
+from unittest.mock import patch
 
+from src.channels import http_api
 from src.channels.http_api import _inventory_lookup_rows
 
 
@@ -130,6 +132,46 @@ class InventoryLookupContractTest(unittest.TestCase):
 
         self.assertIn("include_zero=warehouse_id is None", route_source)
         self.assertIn("_inventory_lookup_rows", route_source)
+
+    def test_inventory_lookup_route_filters_stock_before_paging_when_warehouse_selected(self):
+        class FakeInventoryService:
+            def __init__(self):
+                self.calls = []
+
+            def balances(self, **kwargs):
+                self.calls.append(kwargs)
+                count = 5 if kwargs.get("stock_status") == "in_stock" else 3
+                return [
+                    {
+                        "product_id": 300 + index,
+                        "sku_no": f"SJ{300 + index}",
+                        "title": f"【喜悦】半斤 {index}",
+                        "color": "红色",
+                        "warehouse_id": 2,
+                        "warehouse_name": "百鑫仓库",
+                        "unit_name": "套",
+                        "quantity": str(10 + index),
+                    }
+                    for index in range(count)
+                ], count
+
+        service = FakeInventoryService()
+
+        with patch.object(http_api, "_current_web_user", return_value={"id": 1, "native_user_id": 1}):
+            with patch.object(http_api, "get_inventory_service", return_value=service):
+                with http_api.app.test_client() as client:
+                    response = client.get("/api/inventory/lookup?keyword=半斤&warehouse_id=2&limit=40")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["code"], 0)
+        self.assertEqual(len(payload["data"]["list"]), 5)
+        self.assertEqual(service.calls[0]["stock_status"], "in_stock")
+
+    def test_inventory_keyword_normalization_strips_warehouse_words(self):
+        self.assertEqual(http_api._normalize_inventory_keyword("百鑫半斤库存"), "半斤")
+        self.assertEqual(http_api._normalize_inventory_keyword("百鑫仓库半斤"), "半斤")
+        self.assertEqual(http_api._normalize_inventory_keyword("自己店里半斤库存"), "半斤")
 
 
 if __name__ == "__main__":

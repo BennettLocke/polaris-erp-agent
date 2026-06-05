@@ -803,7 +803,32 @@ def _normalize_inventory_keyword(keyword: str) -> str:
     text = str(keyword or "").strip()
     if not text:
         return ""
-    for word in ("库存", "有货", "有库存", "查货", "查一下", "查下", "查询", "看看", "帮我", "礼盒", "盒子", "的", "吗", "呢"):
+    for word in (
+        "百鑫仓库",
+        "百鑫仓",
+        "百鑫",
+        "自己店里",
+        "自己店",
+        "店里",
+        "自己",
+        "门店",
+        "本店",
+        "仓库",
+        "库存",
+        "有货",
+        "有库存",
+        "查货",
+        "查一下",
+        "查下",
+        "查询",
+        "看看",
+        "帮我",
+        "礼盒",
+        "盒子",
+        "的",
+        "吗",
+        "呢",
+    ):
         text = text.replace(word, " ")
     text = re.sub(r"(^|\s)查(?=\s|[\u4e00-\u9fa5A-Za-z0-9])", " ", text)
     return normalize_product_name(text, specs=PRODUCT_SPECS)
@@ -3168,7 +3193,7 @@ def inventory_lookup_api():
             keyword=keyword,
             color=color,
             warehouse_id=warehouse_id,
-            stock_status="",
+            stock_status="in_stock" if warehouse_id else "",
             page=1,
             page_size=limit,
         )
