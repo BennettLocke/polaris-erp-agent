@@ -125,7 +125,7 @@ class AnalyticsService(BusinessService):
 
     def _period_clause(self, period: str) -> tuple[str, list[Any]]:
         if period == "month":
-            return "s.sales_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')", []
+            return "s.sales_at >= DATE_ADD(LAST_DAY(DATE_SUB(CURDATE(), INTERVAL 1 MONTH)), INTERVAL 1 DAY)", []
         if period == "week":
             return "s.sales_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)", []
         if period == "today":

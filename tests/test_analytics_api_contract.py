@@ -70,6 +70,7 @@ class AnalyticsApiContractTests(unittest.TestCase):
         self.assertIn("COUNT(DISTINCT s.customer_id)", source)
         self.assertIn("DATE(s.sales_at)", source)
         self.assertIn("GROUP BY DATE(s.sales_at)", source)
+        self.assertNotIn("DATE_FORMAT", source)
         self.assertNotIn("s.product_summary", source)
         self.assertNotIn("s.total_price", source)
         self.assertNotIn("LEFT JOIN customer", source)
