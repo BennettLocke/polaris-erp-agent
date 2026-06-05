@@ -141,7 +141,8 @@ class TaobaoDetailExportServiceTest(TestCase):
         self.assertNotIn("https://img.513sjbz.com/taobao/detail-01.png", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-1.jpg", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-2.jpg", detail_html)
-        self.assertIn("width:750px", detail_html)
+        self.assertIn("width:800px", detail_html)
+        self.assertNotIn("width:750px", detail_html)
         self.assertNotIn("喜悦半斤茶叶礼品盒", detail_html)
         self.assertNotIn("<p><img", detail_html)
 
@@ -194,4 +195,5 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("AlibabaPuHuiTi-3-55-Regular.woff2", renderer_source)
         self.assertIn("detail-05.jpg", renderer_source)
         self.assertIn('type: "jpeg"', renderer_source)
+        self.assertIn("quality: 100", renderer_source)
         self.assertIn('font-family: "AlibabaPuhuiEditable"', template_source)

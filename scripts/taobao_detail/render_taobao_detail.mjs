@@ -101,7 +101,7 @@ function imageTags(baseUrl, imageWidth) {
 const data = JSON.parse(await readFile(dataPath, "utf8"));
 const template = await readFile(templatePath, "utf8");
 const pageWidth = data.page?.width || 800;
-const taobaoWidth = data.page?.taobaoWidth || 750;
+const taobaoWidth = data.page?.taobaoWidth || 800;
 
 const renderedHtml = injectDataIntoTemplate(template, data)
   .replace("/* __EDITABLE_FONT_FACE__ */", fontFaceOverrideCss());
@@ -131,7 +131,7 @@ for (const slice of slices) {
   await page.screenshot({
     path: path.join(outputDir, slice.name),
     type: "jpeg",
-    quality: 92,
+    quality: 100,
     clip: {
       x: 0,
       y: slice.y,

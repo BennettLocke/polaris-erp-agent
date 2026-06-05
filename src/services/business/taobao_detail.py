@@ -35,7 +35,7 @@ DEFAULT_DATA_PATH = ROOT / "assets" / "taobao_detail" / "default-product-data.js
 TEMPLATE_PATH = ROOT / "assets" / "taobao_detail" / "detail-template.html"
 RENDER_SCRIPT_PATH = ROOT / "scripts" / "taobao_detail" / "render_taobao_detail.mjs"
 
-TAOBAO_IMAGE_WIDTH = 750
+TAOBAO_IMAGE_WIDTH = 800
 DETAIL_SLICE_NAMES = [
     "detail-01.jpg",
     "detail-02.jpg",
