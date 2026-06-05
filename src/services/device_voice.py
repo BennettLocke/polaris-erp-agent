@@ -77,6 +77,12 @@ CUSTOMER_LAST_ORDER_QUERY_WORDS = (
     "上次做是什么时候",
     "上一次做是什么时候",
     "最近的订单",
+    "最近做的订单",
+    "最近做订单",
+    "最近做了什么订单",
+    "最近做了什么东西",
+    "最近做了什么",
+    "最近做的",
     "最近一单",
     "最近订单",
     "上次订单",
@@ -442,7 +448,13 @@ def _is_customer_last_order_query(text: str) -> bool:
     compact = _normalize_customer_last_order_intent_text(text).replace(" ", "")
     if not compact:
         return False
-    return any(word in compact for word in CUSTOMER_LAST_ORDER_QUERY_WORDS)
+    if any(word in compact for word in CUSTOMER_LAST_ORDER_QUERY_WORDS):
+        return True
+    if "订单" in compact and any(word in compact for word in ("最近", "上次", "上一次", "最后", "最新")):
+        return True
+    if "最近" in compact and "做" in compact:
+        return True
+    return False
 
 
 def _strip_price_query_words(text: str) -> str:
