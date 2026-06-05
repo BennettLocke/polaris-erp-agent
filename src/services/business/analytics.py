@@ -16,6 +16,7 @@ _PERIOD_DAYS = {
     "90d": 90,
 }
 _PERIODS = {*_PERIOD_DAYS, "week", "month"}
+_SALES_OVERVIEW_DEFAULT_PERIOD = "7d"
 _DIMENSIONS = {"product", "sku"}
 
 
@@ -65,6 +66,28 @@ def _clean_text_list(value: Any) -> list[str]:
 class AnalyticsService(BusinessService):
     """Read-only analytics backed by current sales order data."""
 
+    def sales_overview(self, *, period: str = _SALES_OVERVIEW_DEFAULT_PERIOD, recent_limit: int = 8) -> dict:
+        clean_period = str(period or _SALES_OVERVIEW_DEFAULT_PERIOD).strip().lower()
+        if clean_period not in _PERIODS:
+            clean_period = _SALES_OVERVIEW_DEFAULT_PERIOD
+
+        period_sql, params = self._period_clause(clean_period)
+        kpi_rows = self.db.query(self._sales_overview_kpi_sql(period_sql), tuple(params))
+        trend_rows = self.db.query(self._sales_overview_trend_sql(period_sql), tuple(params))
+        recent_rows = self.db.query(
+            self._sales_overview_recent_sql(period_sql),
+            tuple(params + [_clean_limit(recent_limit, default=8)]),
+        )
+
+        kpi = self._sales_overview_kpi(kpi_rows[0] if kpi_rows else {})
+        return {
+            "period": clean_period,
+            "kpi": kpi,
+            "trend": [self._sales_overview_trend_item(row) for row in (trend_rows or [])],
+            "recent_sales": [self._sales_overview_recent_item(row) for row in (recent_rows or [])],
+            "source": "sales_order",
+        }
+
     def hot_products(
         self,
         *,
@@ -108,6 +131,71 @@ class AnalyticsService(BusinessService):
         if period == "today":
             return "s.sales_at >= CURDATE()", []
         return "s.sales_at >= DATE_SUB(CURDATE(), INTERVAL %s DAY)", [_PERIOD_DAYS[period]]
+
+    def _sales_overview_base_where(self, period_sql: str) -> str:
+        return f"""
+            s.deleted_at IS NULL
+            AND s.status NOT IN ('canceled', 'deleted')
+            AND {period_sql}
+            AND s.sales_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+        """
+
+    def _sales_overview_kpi_sql(self, period_sql: str) -> str:
+        return f"""
+            /* analytics_sales_overview_kpi */
+            SELECT
+                SUM(COALESCE(s.receivable_amount, s.total_price, 0)) AS sales_amount,
+                COUNT(DISTINCT s.id) AS order_count,
+                SUM(COALESCE(items.item_quantity, 0)) AS item_quantity,
+                COUNT(DISTINCT s.customer_id) AS customer_count,
+                CASE
+                    WHEN COUNT(DISTINCT s.id) > 0
+                    THEN SUM(COALESCE(s.receivable_amount, s.total_price, 0)) / COUNT(DISTINCT s.id)
+                    ELSE 0
+                END AS average_order_amount
+            FROM sales_order s
+            LEFT JOIN (
+                SELECT sales_order_id, SUM(quantity) AS item_quantity
+                FROM sales_order_item
+                GROUP BY sales_order_id
+            ) items ON items.sales_order_id = s.id
+            WHERE {self._sales_overview_base_where(period_sql)}
+        """
+
+    def _sales_overview_trend_sql(self, period_sql: str) -> str:
+        return f"""
+            /* analytics_sales_overview_trend */
+            SELECT
+                DATE(s.sales_at) AS date,
+                SUM(COALESCE(s.receivable_amount, s.total_price, 0)) AS sales_amount,
+                COUNT(DISTINCT s.id) AS order_count
+            FROM sales_order s
+            WHERE {self._sales_overview_base_where(period_sql)}
+            GROUP BY DATE(s.sales_at)
+            ORDER BY DATE(s.sales_at) ASC
+        """
+
+    def _sales_overview_recent_sql(self, period_sql: str) -> str:
+        return f"""
+            /* analytics_sales_overview_recent */
+            SELECT
+                s.id,
+                s.sales_no,
+                COALESCE(NULLIF(s.customer_name_snapshot, ''), c.name, '客户') AS customer_name,
+                COALESCE(NULLIF(s.product_summary, ''), GROUP_CONCAT(i.title_snapshot ORDER BY i.line_no SEPARATOR ' / '), '销售单') AS product_summary,
+                COALESCE(s.receivable_amount, s.total_price, 0) AS receivable_amount,
+                s.pay_status,
+                s.pay_type,
+                s.sales_at
+            FROM sales_order s
+            LEFT JOIN customer c ON c.id = s.customer_id
+            LEFT JOIN sales_order_item i ON i.sales_order_id = s.id
+            WHERE {self._sales_overview_base_where(period_sql)}
+            GROUP BY s.id, s.sales_no, s.customer_name_snapshot, c.name, s.product_summary,
+                     s.receivable_amount, s.total_price, s.pay_status, s.pay_type, s.sales_at
+            ORDER BY s.sales_at DESC, s.id DESC
+            LIMIT %s
+        """
 
     def _category_filter_clause(self, category_names: list[str]) -> tuple[str, list[Any]]:
         if not category_names:
@@ -202,6 +290,58 @@ class AnalyticsService(BusinessService):
             "customer_count": int(row.get("customer_count") or 0),
             "last_sold_at": str(row.get("last_sold_at") or ""),
         }
+
+    def _sales_overview_kpi(self, row: dict) -> dict:
+        return {
+            "sales_amount": _money_text(row.get("sales_amount")),
+            "sales_amount_value": float(_money_text(row.get("sales_amount"))),
+            "order_count": int(row.get("order_count") or 0),
+            "item_quantity": _qty_number(row.get("item_quantity")),
+            "customer_count": int(row.get("customer_count") or 0),
+            "average_order_amount": _money_text(row.get("average_order_amount")),
+            "average_order_amount_value": float(_money_text(row.get("average_order_amount"))),
+        }
+
+    def _sales_overview_trend_item(self, row: dict) -> dict:
+        return {
+            "date": str(row.get("date") or ""),
+            "sales_amount": _money_text(row.get("sales_amount")),
+            "sales_amount_value": float(_money_text(row.get("sales_amount"))),
+            "order_count": int(row.get("order_count") or 0),
+        }
+
+    def _sales_overview_recent_item(self, row: dict) -> dict:
+        pay_status = str(row.get("pay_status") or "").strip()
+        pay_type = str(row.get("pay_type") or "").strip()
+        return {
+            "id": int(row.get("id") or 0),
+            "sales_no": str(row.get("sales_no") or ""),
+            "customer_name": str(row.get("customer_name") or "客户"),
+            "product_summary": str(row.get("product_summary") or "销售单"),
+            "receivable_amount": _money_text(row.get("receivable_amount")),
+            "receivable_amount_value": float(_money_text(row.get("receivable_amount"))),
+            "pay_status": pay_status,
+            "pay_status_text": str(row.get("pay_status_text") or self._pay_status_text(pay_status)),
+            "pay_type": pay_type,
+            "pay_type_text": str(row.get("pay_type_text") or self._pay_type_text(pay_type)),
+            "sales_at": str(row.get("sales_at") or ""),
+        }
+
+    def _pay_status_text(self, status: str) -> str:
+        return {
+            "paid": "已付款",
+            "monthly": "月结",
+            "unpaid": "未付款",
+        }.get(status, status or "未记录")
+
+    def _pay_type_text(self, pay_type: str) -> str:
+        return {
+            "wechat": "微信",
+            "cash": "现金",
+            "balance": "余额",
+            "transfer": "转账",
+            "monthly": "月结",
+        }.get(pay_type, pay_type or "")
 
 
 def get_analytics_service() -> AnalyticsService:

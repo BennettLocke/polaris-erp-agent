@@ -56,6 +56,23 @@ class AnalyticsApiContractTests(unittest.TestCase):
         self.assertIn('"/api/mini/analytics/hot-products"', source)
         self.assertIn("get_analytics_service().hot_products", source)
 
+    def test_sales_overview_service_and_api_contract(self):
+        source = SERVICE_SOURCE.read_text(encoding="utf-8")
+        http_source = HTTP_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("def sales_overview", source)
+        self.assertIn("def _sales_overview_kpi_sql", source)
+        self.assertIn("def _sales_overview_trend_sql", source)
+        self.assertIn("def _sales_overview_recent_sql", source)
+        self.assertIn("s.status NOT IN ('canceled', 'deleted')", source)
+        self.assertIn("s.deleted_at IS NULL", source)
+        self.assertIn("SUM(COALESCE(s.receivable_amount", source)
+        self.assertIn("COUNT(DISTINCT s.customer_id)", source)
+        self.assertIn("DATE(s.sales_at)", source)
+        self.assertIn("GROUP BY DATE(s.sales_at)", source)
+        self.assertIn('@app.route("/api/analytics/sales-overview", methods=["GET"])', http_source)
+        self.assertIn("get_analytics_service().sales_overview", http_source)
+
 
 if __name__ == "__main__":
     unittest.main()

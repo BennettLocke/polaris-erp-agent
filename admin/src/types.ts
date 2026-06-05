@@ -50,6 +50,60 @@ export type AnalyticsHotProductsResult = {
   source: string;
 };
 
+export type AnalyticsSalesOverviewKpi = {
+  sales_amount: string;
+  sales_amount_value?: number;
+  order_count: number;
+  item_quantity: number;
+  customer_count: number;
+  average_order_amount: string;
+  average_order_amount_value?: number;
+};
+
+export type AnalyticsSalesTrendItem = {
+  date: string;
+  sales_amount: string;
+  sales_amount_value?: number;
+  order_count: number;
+};
+
+export type AnalyticsRecentSale = {
+  id: number;
+  sales_no?: string;
+  customer_name: string;
+  product_summary: string;
+  receivable_amount: string;
+  receivable_amount_value?: number;
+  pay_status?: string;
+  pay_status_text?: string;
+  pay_type?: string;
+  pay_type_text?: string;
+  sales_at?: string;
+};
+
+export type AnalyticsSalesOverview = {
+  period: string;
+  kpi: AnalyticsSalesOverviewKpi;
+  trend: AnalyticsSalesTrendItem[];
+  recent_sales: AnalyticsRecentSale[];
+  source: string;
+};
+
+export type TaobaoDetailExportJob = {
+  job_id: string;
+  product_id: number;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  message?: string;
+  filename?: string;
+  html_filename?: string;
+  taobao_title?: string;
+  error?: string;
+  download_url?: string;
+  created_at?: number;
+  updated_at?: number;
+  completed_at?: number;
+};
+
 export type WorkbenchInventoryColor = {
   product_id?: number;
   color: string;

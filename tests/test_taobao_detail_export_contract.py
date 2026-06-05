@@ -178,11 +178,20 @@ class TaobaoDetailExportContractTest(TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('/api/product/<int:product_id>/taobao-detail-export', http_source)
+        self.assertIn('/api/product/<int:product_id>/taobao-detail-export/jobs', http_source)
+        self.assertIn('/api/product/taobao-detail-export/jobs/<job_id>', http_source)
+        self.assertIn('/api/product/taobao-detail-export/jobs/<job_id>/download', http_source)
         self.assertIn("TaobaoDetailExportService", http_source)
+        self.assertIn("get_taobao_detail_export_job_manager", http_source)
         self.assertIn("Content-Disposition", http_source)
         self.assertIn("exportProductTaobaoDetail", api_source)
+        self.assertIn("startProductTaobaoDetailExport", api_source)
+        self.assertIn("productTaobaoDetailExportJob", api_source)
+        self.assertIn("downloadProductTaobaoDetailExportJob", api_source)
         self.assertIn("导出淘宝详情页", product_source)
         self.assertIn("onExportTaobaoDetail", product_source)
+        self.assertIn("已开始后台生成淘宝详情页资料包", product_source)
+        self.assertIn("waitForTaobaoDetailExportJob", product_source)
 
     def test_export_uses_original_playwright_renderer_contract(self):
         service_source = (ROOT / "src" / "services" / "business" / "taobao_detail.py").read_text(encoding="utf-8")

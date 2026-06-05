@@ -281,6 +281,31 @@ class FakeDB:
 
     def query(self, sql: str, params=()):
         self.calls.append(("query", {"sql": sql, "params": params}))
+        if "analytics_sales_overview_kpi" in sql:
+            return [{
+                "sales_amount": "1260.50",
+                "order_count": 9,
+                "item_quantity": "88.000",
+                "customer_count": 4,
+                "average_order_amount": "140.0555",
+            }]
+        if "analytics_sales_overview_trend" in sql:
+            return [
+                {"date": "2026-06-01", "sales_amount": "320.00", "order_count": 2},
+                {"date": "2026-06-02", "sales_amount": "940.50", "order_count": 7},
+            ]
+        if "analytics_sales_overview_recent" in sql:
+            return [{
+                "id": 123,
+                "sales_no": "SO202606020001",
+                "customer_name": "齐唯茶业",
+                "product_summary": "【喜悦】半斤 红色 x2",
+                "receivable_amount": "320.00",
+                "pay_status": "paid",
+                "pay_status_text": "已付款",
+                "pay_type_text": "微信",
+                "sales_at": "2026-06-02 10:30:00",
+            }]
         if "FROM sales_order_item i" in sql and "SUM(i.quantity)" in sql:
             return [
                 {
@@ -1131,6 +1156,29 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertIn("sku.status = 'active'", sql)
         self.assertIn("sku.is_listed = 1", sql)
         self.assertEqual(params[-1], 5)
+
+    def test_analytics_service_returns_sales_overview(self):
+        db = FakeDB()
+        service = AnalyticsService(db=db)
+
+        result = service.sales_overview(period="invalid")
+
+        self.assertEqual(result["period"], "7d")
+        self.assertEqual(result["kpi"]["sales_amount"], "1260.50")
+        self.assertEqual(result["kpi"]["order_count"], 9)
+        self.assertEqual(result["kpi"]["item_quantity"], 88)
+        self.assertEqual(result["kpi"]["customer_count"], 4)
+        self.assertEqual(result["kpi"]["average_order_amount"], "140.06")
+        self.assertEqual(result["trend"][0]["date"], "2026-06-01")
+        self.assertEqual(result["trend"][0]["sales_amount"], "320.00")
+        self.assertEqual(result["trend"][0]["order_count"], 2)
+        self.assertEqual(result["recent_sales"][0]["sales_no"], "SO202606020001")
+        self.assertEqual(result["recent_sales"][0]["pay_status_text"], "已付款")
+
+        sql_text = "\n".join(call[1]["sql"] for call in db.calls if call[0] == "query")
+        self.assertIn("s.deleted_at IS NULL", sql_text)
+        self.assertIn("s.status NOT IN ('canceled', 'deleted')", sql_text)
+        self.assertIn("GROUP BY DATE(s.sales_at)", sql_text)
 
     def test_miniapp_service_collects_home_and_user_center(self):
         db = FakeDB()

@@ -385,6 +385,9 @@ API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/product/(save|delete)$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/\d+/shelves$"), "设置"),
     ({"GET"}, re.compile(r"^/api/product/\d+/taobao-detail-export$"), "设置"),
+    ({"POST"}, re.compile(r"^/api/product/\d+/taobao-detail-export/jobs$"), "设置"),
+    ({"GET"}, re.compile(r"^/api/product/taobao-detail-export/jobs/[^/]+$"), "设置"),
+    ({"GET"}, re.compile(r"^/api/product/taobao-detail-export/jobs/[^/]+/download$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customer/create$"), "开单"),
     ({"POST"}, re.compile(r"^/api/workflow/orders$"), "开单"),
 ]
@@ -2648,6 +2651,19 @@ def analytics_hot_products_api():
         return _api_exception_response(e)
 
 
+@app.route("/api/analytics/sales-overview", methods=["GET"])
+def analytics_sales_overview_api():
+    """Sales overview metrics for the React admin data page."""
+    try:
+        period = str(request.args.get("period") or "7d").strip()
+        recent_limit = request.args.get("recent_limit", default=8, type=int)
+        data = get_analytics_service().sales_overview(period=period, recent_limit=recent_limit)
+        return jsonify({"code": 0, "data": data})
+    except Exception as e:
+        logger.warning(f"销售数据概览查询失败: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/mini/analytics/hot-products", methods=["GET", "POST"])
 def mini_analytics_hot_products_api():
     """Hot product ranking for the mini-program home page and dashboards."""
@@ -4572,6 +4588,50 @@ def product_taobao_detail_export_api(product_id: int):
     except Exception as e:
         logger.error(f"淘宝详情页导出异常: product_id={product_id}, error={e}")
         return _api_exception_response(e)
+
+
+@app.route("/api/product/<int:product_id>/taobao-detail-export/jobs", methods=["POST"])
+def product_taobao_detail_export_job_start_api(product_id: int):
+    """Start a background Taobao detail-page ZIP export job."""
+    try:
+        from src.services.business.taobao_detail_jobs import get_taobao_detail_export_job_manager
+
+        job = get_taobao_detail_export_job_manager().start(product_id)
+        return jsonify({"code": 0, "data": job.snapshot()})
+    except Exception as e:
+        logger.error(f"淘宝详情页后台导出任务创建异常: product_id={product_id}, error={e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/product/taobao-detail-export/jobs/<job_id>", methods=["GET"])
+def product_taobao_detail_export_job_status_api(job_id: str):
+    """Get a background Taobao detail-page export job status."""
+    from src.services.business.taobao_detail_jobs import get_taobao_detail_export_job_manager
+
+    job = get_taobao_detail_export_job_manager().get(job_id)
+    if not job:
+        return jsonify({"code": 404, "msg": "淘宝详情页导出任务不存在或已过期"}), 404
+    return jsonify({"code": 0, "data": job.snapshot()})
+
+
+@app.route("/api/product/taobao-detail-export/jobs/<job_id>/download", methods=["GET"])
+def product_taobao_detail_export_job_download_api(job_id: str):
+    """Download a completed background Taobao detail-page export ZIP."""
+    from src.services.business.taobao_detail_jobs import get_taobao_detail_export_job_manager
+
+    manager = get_taobao_detail_export_job_manager()
+    job = manager.get(job_id)
+    if not job:
+        return jsonify({"code": 404, "msg": "淘宝详情页导出任务不存在或已过期"}), 404
+    if job.status != "completed":
+        return jsonify({"code": 409, "msg": job.error or job.message or "淘宝详情页资料包还在生成"}), 409
+    result = manager.download(job_id)
+    if not result:
+        return jsonify({"code": 404, "msg": "淘宝详情页资料包已过期，请重新导出"}), 404
+    response = Response(result.content, mimetype="application/zip")
+    response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(result.filename)}"
+    response.headers["Content-Length"] = str(len(result.content))
+    return response
 
 
 @app.route("/api/customer/list", methods=["GET"])

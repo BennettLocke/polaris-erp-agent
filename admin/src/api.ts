@@ -5,6 +5,7 @@ import type {
   AgentImageUploadResult,
   AgentSessionSnapshot,
   AnalyticsHotProductsResult,
+  AnalyticsSalesOverview,
   CustomerBalanceActionPayload,
   CustomerBalanceLedgerResult,
   AuthUser,
@@ -48,6 +49,7 @@ import type {
   StockDocumentItem,
   StocktakeItem,
   SystemSetting,
+  TaobaoDetailExportJob,
   TransferItem,
   UserListItem,
   Warehouse
@@ -122,6 +124,7 @@ export type AnalyticsHotProductsQuery = {
 };
 
 const AGENT_HISTORY_ENDPOINT = "/api/agent/history";
+const ANALYTICS_SALES_OVERVIEW_ENDPOINT = "/api/analytics/sales-overview";
 
 export class ApiError extends Error {
   status: number;
@@ -244,6 +247,8 @@ export const api = {
     if (query.categoryNames?.length) params.set("category_names", query.categoryNames.join(","));
     return request<AnalyticsHotProductsResult>(`${endpoint}?${params.toString()}`);
   },
+  analyticsSalesOverview: (period = "7d") =>
+    request<AnalyticsSalesOverview>(`${ANALYTICS_SALES_OVERVIEW_ENDPOINT}?period=${encodeURIComponent(period)}`),
   agentChat: (payload: { message: string; session_id: string; user_id?: string }) =>
     request<AgentChatResponse>("/api/agent/chat", {
       method: "POST",
@@ -403,6 +408,12 @@ export const api = {
   productDetail: (id: number) => request<ProductItem>(`/api/product/${id}`),
   exportProductTaobaoDetail: (id: number) =>
     requestBlob(`/api/product/${id}/taobao-detail-export`, `taobao-detail-${id}.zip`),
+  startProductTaobaoDetailExport: (id: number) =>
+    request<TaobaoDetailExportJob>(`/api/product/${id}/taobao-detail-export/jobs`, { method: "POST" }),
+  productTaobaoDetailExportJob: (jobId: string) =>
+    request<TaobaoDetailExportJob>(`/api/product/taobao-detail-export/jobs/${encodeURIComponent(jobId)}`),
+  downloadProductTaobaoDetailExportJob: (jobId: string, fallbackFilename = "taobao-detail.zip") =>
+    requestBlob(`/api/product/taobao-detail-export/jobs/${encodeURIComponent(jobId)}/download`, fallbackFilename),
   productOptions: (id?: number) => request<ProductOptions>(`/api/product/options${id ? `?id=${id}` : ""}`),
   saveProduct: (payload: ProductSavePayload) =>
     request<{ id?: number; sku_ids?: number[]; spu_id?: number }>("/api/product/save", {

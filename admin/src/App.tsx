@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import {
+  BarChart3,
   Boxes,
   ClipboardList,
   Home,
@@ -14,6 +15,7 @@ import { ApiError, api } from "./api";
 import {
   CustomersPage,
 } from "./components/business/customers";
+import { DataPage } from "./components/business/data";
 import { InventoryPage } from "./components/business/inventory";
 import { OrdersPage } from "./components/business/orders";
 import { ProductsPage } from "./components/business/products";
@@ -102,12 +104,13 @@ import type {
   Warehouse
 } from "./types";
 
-type RouteKey = "dashboard" | "sales-new" | "sales" | "customers" | "products" | "media" | "miniapp-images" | "inventory" | "orders" | "settings";
+type RouteKey = "dashboard" | "sales-new" | "sales" | "data" | "customers" | "products" | "media" | "miniapp-images" | "inventory" | "orders" | "settings";
 
 const navItems: Array<{ key: RouteKey; label: string; icon: typeof Home; badge?: string }> = [
   { key: "dashboard", label: "工作台", icon: Home },
   { key: "sales-new", label: "开单", icon: ShoppingCart },
   { key: "sales", label: "销售单", icon: ReceiptText },
+  { key: "data", label: "数据", icon: BarChart3 },
   { key: "customers", label: "客户", icon: Users },
   { key: "products", label: "商品", icon: Package },
   { key: "inventory", label: "库存", icon: Boxes },
@@ -116,7 +119,7 @@ const navItems: Array<{ key: RouteKey; label: string; icon: typeof Home; badge?:
 ];
 
 const navGroups: Array<AppNavGroup<RouteKey>> = [
-  { label: "主业务", items: navItems.filter((item) => ["dashboard", "sales-new", "sales", "customers"].includes(item.key)) },
+  { label: "主业务", items: navItems.filter((item) => ["dashboard", "sales-new", "sales", "data", "customers"].includes(item.key)) },
   { label: "资产", items: navItems.filter((item) => ["products", "inventory", "orders"].includes(item.key)) },
   { label: "系统", items: navItems.filter((item) => ["settings"].includes(item.key)) }
 ];
@@ -125,6 +128,7 @@ const pageMap: Record<RouteKey, { title: string; desc: string; status: string }>
   dashboard: { title: "工作台", desc: "AI 对话、结构化确认和最近业务记录。", status: "已接入" },
   "sales-new": { title: "开单", desc: "选择客户、商品、结款状态并创建销售单。", status: "已接入基础版" },
   sales: { title: "销售单", desc: "查看销售单卡片和账单详情。", status: "已接入基础版" },
+  data: { title: "数据", desc: "查看销售额、订单、客户和热销商品。", status: "已接入" },
   customers: { title: "客户", desc: "查看客户卡片、最近消费和余额。", status: "已接入基础版" },
   products: { title: "商品", desc: "维护商品 SPU、SKU、颜色、件规、价格、上下架和图片绑定。", status: "已接入" },
   media: { title: "图片资产", desc: "在设置页集中维护图片上传、裁切、绑定、删除和小程序图片。", status: "已整合到设置" },
@@ -1172,6 +1176,8 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
         <SalesNewPage />
       ) : route === "sales" ? (
         <SalesPage />
+      ) : route === "data" ? (
+        <DataPage />
       ) : route === "products" ? (
         <ProductsPage />
       ) : route === "inventory" ? (

@@ -68,6 +68,7 @@ import type {
   ProductMediaAsset,
   ProductSavePayload,
   ProductStatusOption,
+  TaobaoDetailExportJob,
   ProductUnit
 } from "@/types";
 
@@ -132,6 +133,8 @@ const PRODUCT_PAGE_SIZE_BUFFER_ROWS = 1;
 const PRODUCT_CARD_ESTIMATED_HEIGHT = 400;
 const PRODUCT_GRID_TOP_FALLBACK = 520;
 const PRODUCT_PAGE_SIZE_RESIZE_DELAY = 160;
+const TAOBAO_DETAIL_EXPORT_POLL_INTERVAL_MS = 2500;
+const TAOBAO_DETAIL_EXPORT_MAX_POLLS = 120;
 
 type ProductPageSizeMetrics = {
   gridWidth: number;
@@ -2356,16 +2359,37 @@ export function ProductsPage() {
     }
   }
 
+  async function waitForTaobaoDetailExportJob(job: TaobaoDetailExportJob, productName: string) {
+    let current = job;
+    for (let attempt = 0; attempt < TAOBAO_DETAIL_EXPORT_MAX_POLLS; attempt += 1) {
+      if (current.status === "completed") return current;
+      if (current.status === "failed") {
+        throw new Error(current.error || current.message || "淘宝详情页资料包生成失败");
+      }
+      if (attempt === 1) {
+        setNotice(`${productName} 淘宝详情页资料包正在后台生成，完成后会自动下载`);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, TAOBAO_DETAIL_EXPORT_POLL_INTERVAL_MS));
+      current = await api.productTaobaoDetailExportJob(current.job_id);
+    }
+    throw new Error("淘宝详情页资料包生成时间过长，请稍后重试或刷新后再查");
+  }
+
   async function exportProductTaobaoDetail(product: ProductItem) {
     const id = productActionId(product);
     if (!id) return;
+    const productName = product.title || product.name || "商品";
     setActionProductId(id);
     setError("");
     setNotice("");
     try {
-      const file = await api.exportProductTaobaoDetail(id);
+      const job = await api.startProductTaobaoDetailExport(id);
+      setActionProductId(0);
+      setNotice(`${productName} 已开始后台生成淘宝详情页资料包，完成后会自动下载`);
+      const completedJob = await waitForTaobaoDetailExportJob(job, productName);
+      const file = await api.downloadProductTaobaoDetailExportJob(completedJob.job_id, completedJob.filename || `taobao-detail-${id}.zip`);
       downloadBlob(file.blob, file.filename);
-      setNotice(`${product.title || product.name || "商品"} 淘宝详情页资料包已生成`);
+      setNotice(`${productName} 淘宝详情页资料包已生成并开始下载`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "淘宝详情页导出失败");
     } finally {
