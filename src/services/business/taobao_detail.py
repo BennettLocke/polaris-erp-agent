@@ -28,6 +28,7 @@ logger = get_logger("sjagent.taobao_detail")
 
 ImageFetcher = Callable[[str], bytes]
 DimensionRecognizer = Callable[[list[str]], dict]
+TaobaoTitleGenerator = Callable[[dict], str]
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATA_PATH = ROOT / "assets" / "taobao_detail" / "default-product-data.json"
@@ -58,6 +59,8 @@ class TaobaoDetailExportResult:
     template_image_urls: list[str]
     detail_image_urls: list[str]
     dimensions: dict
+    html_filename: str
+    taobao_title: str
 
 
 def _unique(values: Iterable[Any]) -> list[str]:
@@ -108,6 +111,21 @@ def _safe_zip_name(value: str, fallback: str) -> str:
     return text or fallback
 
 
+def _safe_html_filename(stem: str) -> str:
+    safe = _safe_zip_name(stem, "淘宝详情页")
+    safe = re.sub(r"\s+", " ", safe).strip()
+    return f"{safe[:160].rstrip()}.html"
+
+
+def _product_code(product: dict) -> str:
+    for key in ("sku_no", "coding", "product_code", "code"):
+        text = str(product.get(key) or "").strip()
+        if text:
+            return text
+    product_id = str(product.get("id") or product.get("product_id") or "").strip()
+    return f"SKU{product_id}" if product_id else "商品"
+
+
 def _taobao_detail_product_name(product: dict) -> str:
     raw = str(product.get("title") or product.get("name") or "商品").strip()
     match = re.match(r"^[【\[]\s*(?P<brand>[^】\]]+?)\s*[】\]]\s*(?P<spec>.*)$", raw)
@@ -120,6 +138,64 @@ def _taobao_detail_product_name(product: dict) -> str:
     base = re.sub(r"(?:茶叶)?(?:包装)?礼盒(?:（空）)?$", "", base).strip()
     base = re.sub(r"（空）$", "", base).strip()
     return f"{base or '商品'}{TAOBAO_DETAIL_NAME_SUFFIX}"
+
+
+def _taobao_title_core(product: dict) -> str:
+    name = _taobao_detail_product_name(product)
+    core = re.sub(r"茶叶礼盒（空）$", "", name).strip()
+    core = re.sub(r"\s+", "", core)
+    return core or str(product.get("series") or product.get("title") or "茶叶礼盒").strip()
+
+
+def _clean_taobao_listing_title(value: Any, product_code: str = "") -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^```(?:text|json)?|```$", "", text, flags=re.I).strip()
+    text = re.sub(r"^[\"'“”‘’]+|[\"'“”‘’]+$", "", text).strip()
+    text = re.sub(r"\.html?$", "", text, flags=re.I).strip()
+    if product_code:
+        text = re.sub(rf"^{re.escape(product_code)}\s*[-_：:]*\s*", "", text, flags=re.I).strip()
+    text = re.sub(r"[\\/:*?\"<>|\r\n]+", " ", text)
+    text = re.sub(r"\s+", "", text)
+    return text[:120].strip()
+
+
+def fallback_taobao_listing_title(product: dict) -> str:
+    core = _taobao_title_core(product)
+    tea_type = str(product.get("tea_type") or "").strip()
+    if not tea_type:
+        tea_type = "大红袍岩茶"
+    return _clean_taobao_listing_title(
+        f"{core}茶叶礼品盒{tea_type}包装空盒定制logo高端公司红茶订做"
+    )
+
+
+def generate_taobao_listing_title(product: dict) -> str:
+    from src.core.llm import llm_chat
+
+    product_code = _product_code(product)
+    core = _taobao_title_core(product)
+    colors = _json_list(product.get("available_colors")) + [product.get("color_text"), product.get("color")]
+    prompt = {
+        "商品编号": product_code,
+        "原商品名": product.get("title") or product.get("name") or "",
+        "详情页短名": _taobao_detail_product_name(product),
+        "核心名称": core,
+        "规格": product.get("size_label") or "",
+        "件规": product.get("piece_text") or product.get("simple_desc") or "",
+        "颜色": _unique(colors),
+        "茶类关键词": product.get("tea_type") or "大红袍岩茶/红茶",
+        "要求": [
+            "只输出一个淘宝商品标题，不要解释。",
+            "标题正文不要包含商品编号，系统会把编号放到文件名前缀。",
+            "标题适合淘宝搜索，包含茶叶礼品盒、包装空盒、定制logo等关键词。",
+            "不要堆重复词，不要使用标点符号。",
+        ],
+    }
+    text = llm_chat(
+        "你是淘宝茶叶包装礼盒标题生成助手。输出必须是一个中文淘宝商品标题正文。",
+        json.dumps(prompt, ensure_ascii=False, indent=2),
+    )
+    return _clean_taobao_listing_title(text, product_code)
 
 
 def _download_image(url: str) -> bytes:
@@ -276,6 +352,7 @@ class TaobaoDetailExportService:
         renderer: OriginalTaobaoDetailRenderer | None = None,
         image_fetcher: ImageFetcher = _download_image,
         dimension_recognizer: DimensionRecognizer | None = None,
+        title_generator: TaobaoTitleGenerator | None = None,
     ):
         self.product_service = product_service or get_product_service()
         self.uploader = uploader
@@ -284,6 +361,7 @@ class TaobaoDetailExportService:
         self.dimension_recognizer = dimension_recognizer or (
             lambda urls: recognize_dimensions_from_images(urls, image_fetcher=self.image_fetcher)
         )
+        self.title_generator = title_generator or generate_taobao_listing_title
 
     def export_zip(self, product_id: int) -> TaobaoDetailExportResult:
         product = self.product_service.info(product_id)
@@ -306,6 +384,8 @@ class TaobaoDetailExportService:
             dimensions.update(fallback)
 
         template_data = self._template_data(product, color_items, dimensions)
+        taobao_title = self._taobao_title(product)
+        html_filename = self._html_filename(product, taobao_title)
         template_paths = self.renderer.render(template_data)
         try:
             template_urls = self._upload_detail_images(template_paths)
@@ -314,13 +394,15 @@ class TaobaoDetailExportService:
 
         detail_html = self._detail_html(template_urls, detail_urls)
         filename = f"{_safe_zip_name(product.get('title') or product.get('name') or '商品', '商品')}-淘宝详情页.zip"
-        content = self._zip_package(main_urls, color_items, detail_html)
+        content = self._zip_package(main_urls, color_items, detail_html, html_filename)
         return TaobaoDetailExportResult(
             filename=filename,
             content=content,
             template_image_urls=template_urls,
             detail_image_urls=detail_urls,
             dimensions=dimensions,
+            html_filename=html_filename,
+            taobao_title=taobao_title,
         )
 
     def _media_assets(self, product: dict, media_type: str) -> list[dict]:
@@ -408,6 +490,24 @@ class TaobaoDetailExportService:
             return f"1件{case_pack}套"
         return "按商品规格页为准"
 
+    def _taobao_title(self, product: dict) -> str:
+        product_code = _product_code(product)
+        context = dict(product)
+        context["taobao_detail_name"] = _taobao_detail_product_name(product)
+        context["taobao_title_core"] = _taobao_title_core(product)
+        context["taobao_product_code"] = product_code
+        try:
+            title = _clean_taobao_listing_title(self.title_generator(context), product_code)
+        except Exception as exc:
+            logger.warning(f"淘宝标题生成失败，使用规则标题: product_id={product.get('id')}, error={exc}")
+            title = ""
+        return title or fallback_taobao_listing_title(product)
+
+    def _html_filename(self, product: dict, taobao_title: str) -> str:
+        product_code = _safe_zip_name(_product_code(product), "商品")
+        title = _clean_taobao_listing_title(taobao_title, product_code) or fallback_taobao_listing_title(product)
+        return _safe_html_filename(f"{product_code} {title}")
+
     def _upload_detail_images(self, paths: list[Path]) -> list[str]:
         uploader = self.uploader
         if uploader is None:
@@ -454,10 +554,10 @@ class TaobaoDetailExportService:
         lines.append("</div>")
         return "\n".join(lines) + "\n"
 
-    def _zip_package(self, main_urls: list[str], color_items: list[dict], detail_html: str) -> bytes:
+    def _zip_package(self, main_urls: list[str], color_items: list[dict], detail_html: str, html_filename: str) -> bytes:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("detail.html", detail_html.encode("utf-8"))
+            archive.writestr(html_filename, detail_html.encode("utf-8"))
             for index, url in enumerate(main_urls, start=1):
                 self._write_image(archive, url, f"主图/main-{index}")
             for index, item in enumerate(color_items, start=1):

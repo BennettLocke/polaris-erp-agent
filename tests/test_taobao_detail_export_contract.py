@@ -15,6 +15,7 @@ class FakeProductService:
         return {
             "id": 9,
             "spu_id": 3,
+            "sku_no": "SJ1587",
             "title": "【喜悦】半斤",
             "piece_text": "1件30套",
             "case_pack_qty": "30",
@@ -67,6 +68,20 @@ class FakeRenderer:
         return paths
 
 
+class FakeTaobaoTitleGenerator:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, product):
+        self.calls.append(product)
+        return "喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做"
+
+
+class FailingTaobaoTitleGenerator:
+    def __call__(self, product):
+        raise RuntimeError("LLM unavailable")
+
+
 def fake_fetch(url: str) -> bytes:
     from PIL import Image
 
@@ -82,10 +97,12 @@ class TaobaoDetailExportServiceTest(TestCase):
 
         uploader = FakeUploader()
         renderer = FakeRenderer()
+        title_generator = FakeTaobaoTitleGenerator()
         service = TaobaoDetailExportService(
             product_service=FakeProductService(),
             uploader=uploader,
             renderer=renderer,
+            title_generator=title_generator,
             image_fetcher=fake_fetch,
             dimension_recognizer=lambda urls: {
                 "text": "35×22.3×7.2CM",
@@ -99,6 +116,8 @@ class TaobaoDetailExportServiceTest(TestCase):
         self.assertTrue(result.filename.endswith(".zip"))
         self.assertEqual(len(uploader.uploaded), 5)
         self.assertEqual(len(renderer.rendered_payloads), 1)
+        self.assertEqual(len(title_generator.calls), 1)
+        self.assertEqual(title_generator.calls[0]["sku_no"], "SJ1587")
         rendered_product = renderer.rendered_payloads[0]["product"]
         self.assertEqual(rendered_product["capacity"], [
             "15CM款岩茶泡袋：30泡",
@@ -109,19 +128,44 @@ class TaobaoDetailExportServiceTest(TestCase):
         with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
             names = sorted(archive.namelist())
             self.assertEqual(names, [
-                "detail.html",
+                "SJ1587 喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做.html",
                 "主图/main-1.jpg",
                 "颜色图/红色-1.jpg",
                 "颜色图/蓝色-2.jpg",
             ])
-            detail_html = archive.read("detail.html").decode("utf-8")
+            self.assertNotIn("detail.html", names)
+            detail_html = archive.read(names[0]).decode("utf-8")
+        self.assertEqual(result.html_filename, "SJ1587 喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做.html")
         self.assertIn("https://img.513sjbz.com/taobao/detail-01.jpg", detail_html)
         self.assertIn("https://img.513sjbz.com/taobao/detail-05.jpg", detail_html)
         self.assertNotIn("https://img.513sjbz.com/taobao/detail-01.png", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-1.jpg", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-2.jpg", detail_html)
         self.assertIn("width:750px", detail_html)
+        self.assertNotIn("喜悦半斤茶叶礼品盒", detail_html)
         self.assertNotIn("<p><img", detail_html)
+
+    def test_export_html_filename_falls_back_when_llm_title_generation_fails(self):
+        from src.services.business.taobao_detail import TaobaoDetailExportService
+
+        service = TaobaoDetailExportService(
+            product_service=FakeProductService(),
+            uploader=FakeUploader(),
+            renderer=FakeRenderer(),
+            title_generator=FailingTaobaoTitleGenerator(),
+            image_fetcher=fake_fetch,
+            dimension_recognizer=lambda urls: {"text": "35×22.3×7.2CM"},
+        )
+
+        result = service.export_zip(9)
+
+        self.assertEqual(
+            result.html_filename,
+            "SJ1587 喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做.html",
+        )
+        with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
+            self.assertIn(result.html_filename, archive.namelist())
+            self.assertNotIn("detail.html", archive.namelist())
 
 
 class TaobaoDetailExportContractTest(TestCase):
