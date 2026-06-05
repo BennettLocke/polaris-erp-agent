@@ -1656,11 +1656,15 @@ def _inventory_lookup_rows(rows: list[dict], *, include_zero: bool = True) -> di
             str(item.get("name") or ""),
         ),
     )
-    for item in lookup.values():
+    visible_items = [
+        item for item in lookup.values()
+        if _inventory_lookup_qty(item.get("total_stock", 0)) > 0
+    ]
+    for item in visible_items:
         for warehouse in warehouse_list:
             item["warehouses"].setdefault(warehouse["name"], 0)
     return {
-        "list": list(lookup.values()),
+        "list": visible_items,
         "warehouses": warehouse_list,
     }
 

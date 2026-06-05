@@ -50,6 +50,42 @@ class InventoryLookupContractTest(unittest.TestCase):
         self.assertEqual(row["warehouses"], {"自己店里": 0, "百鑫仓库": 12})
         self.assertEqual(row["total_stock"], 12)
 
+    def test_lookup_hides_total_zero_skus_for_dialog_broad_query(self):
+        rows = [
+            {
+                "product_id": 101,
+                "sku_no": "SJ1001",
+                "title": "【云岭】半斤",
+                "color": "红色",
+                "warehouse_id": 1,
+                "warehouse_name": "自己店里",
+                "quantity": "0",
+            },
+            {
+                "product_id": 101,
+                "sku_no": "SJ1001",
+                "title": "【云岭】半斤",
+                "color": "红色",
+                "warehouse_id": 2,
+                "warehouse_name": "百鑫仓库",
+                "quantity": "0",
+            },
+            {
+                "product_id": 102,
+                "sku_no": "SJ1002",
+                "title": "【喜悦】半斤",
+                "color": "红色",
+                "warehouse_id": 2,
+                "warehouse_name": "百鑫仓库",
+                "quantity": "25",
+            },
+        ]
+
+        result = _inventory_lookup_rows(rows)
+
+        self.assertEqual([item["sku_no"] for item in result["list"]], ["SJ1002"])
+        self.assertEqual(result["list"][0]["warehouses"], {"自己店里": 0, "百鑫仓库": 25})
+
     def test_lookup_can_hide_zero_stock_for_selected_warehouse(self):
         rows = [
             {
@@ -93,6 +129,7 @@ class InventoryLookupContractTest(unittest.TestCase):
         route_source = http_source.split("def inventory_lookup_api", 1)[1].split("\n\n@app.route", 1)[0]
 
         self.assertIn("include_zero=warehouse_id is None", route_source)
+        self.assertIn("_inventory_lookup_rows", route_source)
 
 
 if __name__ == "__main__":
