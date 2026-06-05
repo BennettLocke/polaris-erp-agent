@@ -71,6 +71,7 @@ class AnalyticsApiContractTests(unittest.TestCase):
         self.assertIn("DATE(s.sales_at)", source)
         self.assertIn("GROUP BY DATE(s.sales_at)", source)
         self.assertNotIn("s.product_summary", source)
+        self.assertNotIn("s.total_price", source)
         self.assertNotIn("LEFT JOIN customer", source)
         self.assertIn('@app.route("/api/analytics/sales-overview", methods=["GET"])', http_source)
         self.assertIn("get_analytics_service().sales_overview", http_source)

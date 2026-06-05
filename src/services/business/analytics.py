@@ -144,13 +144,13 @@ class AnalyticsService(BusinessService):
         return f"""
             /* analytics_sales_overview_kpi */
             SELECT
-                SUM(COALESCE(s.receivable_amount, s.total_price, 0)) AS sales_amount,
+                SUM(COALESCE(s.receivable_amount, s.goods_amount, 0)) AS sales_amount,
                 COUNT(DISTINCT s.id) AS order_count,
                 SUM(COALESCE(items.item_quantity, 0)) AS item_quantity,
                 COUNT(DISTINCT s.customer_id) AS customer_count,
                 CASE
                     WHEN COUNT(DISTINCT s.id) > 0
-                    THEN SUM(COALESCE(s.receivable_amount, s.total_price, 0)) / COUNT(DISTINCT s.id)
+                    THEN SUM(COALESCE(s.receivable_amount, s.goods_amount, 0)) / COUNT(DISTINCT s.id)
                     ELSE 0
                 END AS average_order_amount
             FROM sales_order s
@@ -167,7 +167,7 @@ class AnalyticsService(BusinessService):
             /* analytics_sales_overview_trend */
             SELECT
                 DATE(s.sales_at) AS date,
-                SUM(COALESCE(s.receivable_amount, s.total_price, 0)) AS sales_amount,
+                SUM(COALESCE(s.receivable_amount, s.goods_amount, 0)) AS sales_amount,
                 COUNT(DISTINCT s.id) AS order_count
             FROM sales_order s
             WHERE {self._sales_overview_base_where(period_sql)}
@@ -183,7 +183,7 @@ class AnalyticsService(BusinessService):
                 s.sales_no,
                 COALESCE(NULLIF(s.customer_name_snapshot, ''), '客户') AS customer_name,
                 COALESCE(GROUP_CONCAT(i.title_snapshot ORDER BY i.line_no SEPARATOR ' / '), '销售单') AS product_summary,
-                COALESCE(s.receivable_amount, s.total_price, 0) AS receivable_amount,
+                COALESCE(s.receivable_amount, s.goods_amount, 0) AS receivable_amount,
                 s.pay_status,
                 s.pay_type,
                 s.sales_at
@@ -191,7 +191,7 @@ class AnalyticsService(BusinessService):
             LEFT JOIN sales_order_item i ON i.sales_order_id = s.id
             WHERE {self._sales_overview_base_where(period_sql)}
             GROUP BY s.id, s.sales_no, s.customer_name_snapshot,
-                     s.receivable_amount, s.total_price, s.pay_status, s.pay_type, s.sales_at
+                     s.receivable_amount, s.goods_amount, s.pay_status, s.pay_type, s.sales_at
             ORDER BY s.sales_at DESC, s.id DESC
             LIMIT %s
         """
