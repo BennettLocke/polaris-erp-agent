@@ -226,6 +226,62 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
         self.assertEqual(result["display"]["query"]["customer_name"], "宴袍")
         self.assertIn("宴袍最近一次订单是2026年6月5日", result["speak"])
 
+    def test_general_question_uses_llm_chat_not_inventory(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.core.llm.llm_chat", return_value="PS 里全选快捷键是 **Ctrl+A**。") as llm_chat:
+                result = build_device_voice_command_response(
+                    text="PS 全选快捷键是什么",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-general-chat",
+                    trace_id="trace-general-chat",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        llm_chat.assert_called_once()
+        self.assertEqual(result["intent"], "chat")
+        self.assertEqual(result["display"]["mode"], "chat_result")
+        self.assertEqual(result["speak"], "PS 里全选快捷键是 Ctrl+A。")
+
+    def test_general_math_question_uses_llm_chat_not_inventory(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.core.llm.llm_chat", return_value="一加一等于二。") as llm_chat:
+                result = build_device_voice_command_response(
+                    text="加一等于几",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-math-chat",
+                    trace_id="trace-math-chat",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        llm_chat.assert_called_once()
+        self.assertEqual(result["intent"], "chat")
+        self.assertEqual(result["display"]["mode"], "chat_result")
+        self.assertEqual(result["speak"], "一加一等于二。")
+
+    def test_non_business_text_defaults_to_llm_chat(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        inventory_service = FakeInventoryService([])
+        with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+            with patch("src.core.llm.llm_chat", return_value="我可以简单回答这个问题。") as llm_chat:
+                result = build_device_voice_command_response(
+                    text="随便问一个生活问题",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id="voice-session-default-chat",
+                    trace_id="trace-default-chat",
+                )
+
+        self.assertEqual(inventory_service.calls, [])
+        llm_chat.assert_called_once()
+        self.assertEqual(result["intent"], "chat")
+        self.assertEqual(result["display"]["mode"], "chat_result")
+
     def test_broad_inventory_command_speaks_matching_product_names(self):
         from src.services.device_voice import build_device_voice_command_response
 

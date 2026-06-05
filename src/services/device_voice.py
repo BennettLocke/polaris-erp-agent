@@ -92,6 +92,74 @@ CUSTOMER_LAST_ORDER_QUERY_WORDS = (
     "上一次做",
     "什么时候做",
 )
+GENERAL_CHAT_QUERY_WORDS = (
+    "快捷键",
+    "等于",
+    "算一下",
+    "计算",
+    "怎么",
+    "如何",
+    "为什么",
+    "是什么",
+    "什么是",
+    "什么意思",
+    "什么",
+    "区别",
+    "告诉我",
+    "解释一下",
+    "你叫什么",
+    "你是谁",
+    "你好",
+    "谢谢",
+    "感谢",
+)
+GENERAL_CHAT_BLOCK_WORDS = (
+    "库存",
+    "有货",
+    "缺货",
+    "仓库",
+    "百鑫",
+    "自己店",
+    "店里",
+    "订单",
+    "销售单",
+    "工作流",
+    "价格",
+    "单价",
+    "多少钱",
+    "一件",
+    "几套",
+    "多少套",
+    "多少个",
+    "件规",
+    "盘点",
+    "调拨",
+    "进货",
+    "上传泡袋",
+)
+INVENTORY_QUERY_WORDS = (
+    "库存",
+    "有库存",
+    "有货",
+    "没货",
+    "缺货",
+    "仓库",
+    "百鑫",
+    "自己店",
+    "店里",
+    "库里",
+    "还有",
+    "剩几",
+    "剩多少",
+    "有没有",
+)
+DEVICE_CHAT_SYSTEM_PROMPT = """你是桌面机器人小星，正在通过语音回答用户。
+请回答非业务查询类的问题，例如软件快捷键、常识、简单解释、闲聊。
+要求：
+1. 用中文，语气自然简短，适合直接播报。
+2. 尽量 1 到 3 句，最多 80 个中文字符。
+3. 不要编造本店库存、订单、价格、客户资料；这些业务数据只能由系统查询。
+4. 如果问题需要实时联网或你不确定，就直接说明现在不能实时确认。"""
 
 
 def build_device_voice_command_response(
@@ -138,6 +206,14 @@ def build_device_voice_command_response(
 
     if _is_case_pack_query(normalized_text):
         return _build_case_pack_response(
+            raw_text=raw_text,
+            normalized_text=normalized_text,
+            trace_id=trace_id,
+            started_at=started_at,
+        )
+
+    if not _is_inventory_query(normalized_text):
+        return _build_general_chat_response(
             raw_text=raw_text,
             normalized_text=normalized_text,
             trace_id=trace_id,
@@ -424,6 +500,40 @@ def _build_case_pack_response(*, raw_text: str, normalized_text: str, trace_id: 
     )
 
 
+def _build_general_chat_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
+    answer = _general_chat_answer(normalized_text)
+    return _base_response(
+        trace_id=trace_id,
+        intent="chat",
+        speak=answer,
+        display={
+            "mode": "chat_result",
+            "title": "小星回答",
+            "summary": answer,
+            "query": {
+                "original_text": raw_text,
+                "normalized_text": normalized_text,
+            },
+            "items": [],
+        },
+        device_action={"next_state": "idle", "listen_again": False, "command_window_seconds": 2, "screen_mode": "result"},
+        started_at=started_at,
+    )
+
+
+def _general_chat_answer(text: str) -> str:
+    try:
+        from src.core.llm import llm_chat
+
+        answer = llm_chat(DEVICE_CHAT_SYSTEM_PROMPT, str(text or "").strip())
+        answer = _clean_general_chat_answer(answer)
+        if answer:
+            return answer
+    except Exception:
+        pass
+    return "这个我暂时答不上来，你可以换个说法再问我。"
+
+
 def _is_price_query(text: str) -> bool:
     compact = str(text or "").replace(" ", "")
     return any(word in compact for word in PRICE_QUERY_WORDS)
@@ -455,6 +565,38 @@ def _is_customer_last_order_query(text: str) -> bool:
     if "最近" in compact and "做" in compact:
         return True
     return False
+
+
+def _is_general_chat_query(text: str) -> bool:
+    compact = str(text or "").replace(" ", "")
+    if not compact:
+        return False
+    if any(word in compact for word in GENERAL_CHAT_BLOCK_WORDS):
+        return False
+    if _is_general_math_query(compact):
+        return True
+    if any(word in compact for word in GENERAL_CHAT_QUERY_WORDS):
+        return True
+    return compact.endswith(("?", "？"))
+
+
+def _is_inventory_query(text: str) -> bool:
+    compact = str(text or "").replace(" ", "")
+    if not compact:
+        return False
+    return any(word in compact for word in INVENTORY_QUERY_WORDS)
+
+
+def _is_general_math_query(compact: str) -> bool:
+    operators = ("加", "减", "乘", "除", "+", "-", "×", "x", "X", "*", "/")
+    if "等于" in compact and any(op in compact for op in operators):
+        return True
+    number = r"(?:\d|零|一|二|两|三|四|五|六|七|八|九|十)"
+    operator = r"(?:加|减|乘|除|\+|-|×|x|X|\*|/)"
+    return bool(
+        re.search(rf"{number}.{{0,8}}{operator}.{{0,8}}{number}.{{0,8}}(?:等于|多少|几)", compact)
+        or re.search(rf"(?:算一下|计算).{{0,8}}{number}.{{0,8}}{operator}.{{0,8}}{number}", compact)
+    )
 
 
 def _strip_price_query_words(text: str) -> str:
@@ -535,6 +677,20 @@ def _is_unclear_command(text: str, asr_confidence: float | None) -> bool:
     if compact in {"嗯", "啊", "哦", "呃", "那个", "这个", "查一下", "查下", "库存"}:
         return True
     return len(compact) <= 1
+
+
+def _clean_general_chat_answer(text: str, max_chars: int = 80) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    value = re.sub(r"[*_`#>]+", "", value)
+    value = re.sub(r"^(?:小星|北极星)[:：]\s*", "", value)
+    if len(value) <= max_chars:
+        return value
+    clipped = value[:max_chars]
+    punctuation_positions = [clipped.rfind(mark) for mark in ("。", "！", "？", "；", "，")]
+    cut = max(punctuation_positions)
+    if cut >= 24:
+        return clipped[: cut + 1].strip()
+    return clipped.rstrip("，,；;：:") + "。"
 
 
 def _row_text(row: dict, *keys: str) -> str:
