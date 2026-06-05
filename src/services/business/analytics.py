@@ -200,19 +200,20 @@ class AnalyticsService(BusinessService):
         if not category_names:
             return "", []
         placeholders = ", ".join(["%s"] * len(category_names))
+        like_sql = " OR ".join(["pc.name LIKE %s"] * len(category_names))
         return f"""
               AND EXISTS (
                   SELECT 1
                   FROM product_category pc
                   WHERE pc.is_enabled = 1
-                    AND pc.name IN ({placeholders})
+                    AND (pc.name IN ({placeholders}) OR {like_sql})
                     AND (
                         sku.primary_category_id = pc.id
                         OR sp.default_category_id = pc.id
                         OR JSON_CONTAINS(sku.category_ids, CAST(pc.id AS CHAR))
                     )
               )
-        """, list(category_names)
+        """, list(category_names) + [f"%{name}%" for name in category_names]
 
     def _hot_products_sql(self, dimension: str, period_sql: str, category_filter_sql: str = "") -> str:
         if dimension == "sku":

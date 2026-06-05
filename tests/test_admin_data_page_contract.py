@@ -32,15 +32,23 @@ class AdminDataPageContractTest(unittest.TestCase):
         self.assertIn('"/api/analytics/sales-overview"', api_source)
         self.assertIn("api.analyticsSalesOverview", page_source)
         self.assertIn("api.analyticsHotProducts", page_source)
+        self.assertIn('categoryNames: ["礼盒"]', page_source)
+        self.assertIn('categoryNames: ["泡袋"]', page_source)
+        self.assertIn("hotGiftBoxes", page_source)
+        self.assertIn("hotBags", page_source)
+        self.assertIn("礼盒热销", page_source)
+        self.assertIn("泡袋热销", page_source)
         self.assertIn('const DEFAULT_PERIOD = "7d"', page_source)
         self.assertIn("data-page-shell", page_source)
         self.assertIn("data-kpi-grid", page_source)
+        self.assertIn("data-hot-products-grid", page_source)
         self.assertIn("data-trend-table", page_source)
         self.assertIn("data-hot-products-table", page_source)
         self.assertIn("data-recent-sales", page_source)
         self.assertIn('export { DataPage } from "./data-page"', index_source)
         self.assertIn(".data-page-shell", styles_source)
         self.assertIn(".data-kpi-grid", styles_source)
+        self.assertIn(".data-hot-products-grid", styles_source)
 
 
 if __name__ == "__main__":

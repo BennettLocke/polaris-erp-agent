@@ -39,6 +39,7 @@ class AnalyticsApiContractTests(unittest.TestCase):
         self.assertIn("category_names", source)
         self.assertIn("product_category pc", source)
         self.assertIn("pc.name IN", source)
+        self.assertIn("pc.name LIKE", source)
         self.assertIn("sku.primary_category_id = pc.id", source)
         self.assertIn("JSON_CONTAINS(sku.category_ids, CAST(pc.id AS CHAR))", source)
         self.assertIn("category_names", http_source)

@@ -1157,6 +1157,20 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertIn("sku.is_listed = 1", sql)
         self.assertEqual(params[-1], 5)
 
+    def test_analytics_hot_products_category_group_uses_contains_filter(self):
+        db = FakeDB()
+        service = AnalyticsService(db=db)
+
+        result = service.hot_products(period="7d", limit=5, dimension="sku", category_names=["礼盒"])
+
+        self.assertEqual(result["category_names"], ["礼盒"])
+        sql = db.calls[0][1]["sql"]
+        params = db.calls[0][1]["params"]
+        self.assertIn("pc.name IN", sql)
+        self.assertIn("pc.name LIKE", sql)
+        self.assertIn("%礼盒%", params)
+        self.assertEqual(params[-1], 5)
+
     def test_analytics_service_returns_sales_overview(self):
         db = FakeDB()
         service = AnalyticsService(db=db)

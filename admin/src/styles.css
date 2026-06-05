@@ -118,6 +118,12 @@
   gap: 12px;
 }
 
+.data-hot-products-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
+  gap: 12px;
+}
+
 .data-section-card {
   min-width: 0;
 }
@@ -208,6 +214,10 @@
   }
 
   .data-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .data-hot-products-grid {
     grid-template-columns: 1fr;
   }
 }

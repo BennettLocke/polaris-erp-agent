@@ -220,7 +220,8 @@ function RecentSalesList({ items }: { items: AnalyticsRecentSale[] }) {
 export function DataPage() {
   const [period, setPeriod] = useState(DEFAULT_PERIOD);
   const [overview, setOverview] = useState<AnalyticsSalesOverview | null>(null);
-  const [hotProducts, setHotProducts] = useState<AnalyticsHotProduct[]>([]);
+  const [hotGiftBoxes, setHotGiftBoxes] = useState<AnalyticsHotProduct[]>([]);
+  const [hotBags, setHotBags] = useState<AnalyticsHotProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -228,12 +229,14 @@ export function DataPage() {
     setLoading(true);
     setError("");
     try {
-      const [overviewData, hotData] = await Promise.all([
+      const [overviewData, giftBoxData, bagData] = await Promise.all([
         api.analyticsSalesOverview(nextPeriod),
-        api.analyticsHotProducts({ period: nextPeriod, limit: 8, dimension: "sku" })
+        api.analyticsHotProducts({ period: nextPeriod, limit: 8, dimension: "sku", categoryNames: ["礼盒"] }),
+        api.analyticsHotProducts({ period: nextPeriod, limit: 8, dimension: "sku", categoryNames: ["泡袋"] })
       ]);
       setOverview(overviewData);
-      setHotProducts(hotData.items || []);
+      setHotGiftBoxes(giftBoxData.items || []);
+      setHotBags(bagData.items || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "销售数据加载失败");
     } finally {
@@ -315,15 +318,27 @@ export function DataPage() {
         </Card>
       </div>
 
-      <Card className="data-section-card">
-        <CardHeader>
-          <CardTitle>热销商品</CardTitle>
-          <CardDescription>按 SKU 统计当前周期销量。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? <Skeleton className="data-table-skeleton" /> : <HotProductsTable items={hotProducts} />}
-        </CardContent>
-      </Card>
+      <div className="data-hot-products-grid">
+        <Card className="data-section-card">
+          <CardHeader>
+            <CardTitle>礼盒热销</CardTitle>
+            <CardDescription>按 SKU 统计当前周期礼盒销量。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="data-table-skeleton" /> : <HotProductsTable items={hotGiftBoxes} />}
+          </CardContent>
+        </Card>
+
+        <Card className="data-section-card">
+          <CardHeader>
+            <CardTitle>泡袋热销</CardTitle>
+            <CardDescription>按 SKU 统计当前周期泡袋销量。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="data-table-skeleton" /> : <HotProductsTable items={hotBags} />}
+          </CardContent>
+        </Card>
+      </div>
     </section>
   );
 }
