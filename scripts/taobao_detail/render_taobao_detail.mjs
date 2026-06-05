@@ -32,11 +32,11 @@ const fontMediumPath = process.env.TAOBAO_DETAIL_FONT_MEDIUM || path.join(
 );
 
 const slices = [
-  { name: "detail-01.png", y: 0, height: 1139 },
-  { name: "detail-02.png", y: 1139, height: 696 },
-  { name: "detail-03.png", y: 1835, height: 893 },
-  { name: "detail-04.png", y: 2728, height: 842 },
-  { name: "detail-05.png", y: 3570, height: 918 },
+  { name: "detail-01.jpg", y: 0, height: 1139 },
+  { name: "detail-02.jpg", y: 1139, height: 696 },
+  { name: "detail-03.jpg", y: 1835, height: 893 },
+  { name: "detail-04.jpg", y: 2728, height: 842 },
+  { name: "detail-05.jpg", y: 3570, height: 918 },
 ];
 
 function fontUrl(filePath) {
@@ -130,13 +130,14 @@ await page.waitForTimeout(100);
 for (const slice of slices) {
   await page.screenshot({
     path: path.join(outputDir, slice.name),
+    type: "jpeg",
+    quality: 92,
     clip: {
       x: 0,
       y: slice.y,
       width: pageWidth,
       height: slice.height,
     },
-    omitBackground: false,
   });
 }
 

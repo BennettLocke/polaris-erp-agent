@@ -36,11 +36,11 @@ RENDER_SCRIPT_PATH = ROOT / "scripts" / "taobao_detail" / "render_taobao_detail.
 
 TAOBAO_IMAGE_WIDTH = 750
 DETAIL_SLICE_NAMES = [
-    "detail-01.png",
-    "detail-02.png",
-    "detail-03.png",
-    "detail-04.png",
-    "detail-05.png",
+    "detail-01.jpg",
+    "detail-02.jpg",
+    "detail-03.jpg",
+    "detail-04.jpg",
+    "detail-05.jpg",
 ]
 FIXED_CAPACITY = [
     "15CM款岩茶泡袋：30泡",
@@ -194,7 +194,7 @@ def recognize_dimensions_from_images(image_urls: list[str], image_fetcher: Image
 
 
 class OriginalTaobaoDetailRenderer:
-    """Render the original Taobao detail HTML template into the 5 fixed PNG slices."""
+    """Render the original Taobao detail HTML template into the 5 fixed JPG slices."""
 
     def __init__(
         self,

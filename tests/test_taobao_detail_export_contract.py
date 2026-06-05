@@ -48,7 +48,7 @@ class FakeUploader:
 
     def upload(self, local_path):
         self.uploaded.append(local_path)
-        return {"url": f"https://img.513sjbz.com/taobao/detail-{len(self.uploaded):02d}.png"}
+        return {"url": f"https://img.513sjbz.com/taobao/detail-{len(self.uploaded):02d}.jpg"}
 
 
 class FakeRenderer:
@@ -61,8 +61,8 @@ class FakeRenderer:
         base.mkdir(parents=True, exist_ok=True)
         paths = []
         for index in range(1, 6):
-            path = base / f"detail-{index:02d}.png"
-            path.write_bytes(b"fake-png")
+            path = base / f"detail-{index:02d}.jpg"
+            path.write_bytes(b"fake-jpg")
             paths.append(path)
         return paths
 
@@ -114,8 +114,9 @@ class TaobaoDetailExportServiceTest(TestCase):
                 "颜色图/蓝色-2.jpg",
             ])
             detail_html = archive.read("detail.html").decode("utf-8")
-        self.assertIn("https://img.513sjbz.com/taobao/detail-01.png", detail_html)
-        self.assertIn("https://img.513sjbz.com/taobao/detail-05.png", detail_html)
+        self.assertIn("https://img.513sjbz.com/taobao/detail-01.jpg", detail_html)
+        self.assertIn("https://img.513sjbz.com/taobao/detail-05.jpg", detail_html)
+        self.assertNotIn("https://img.513sjbz.com/taobao/detail-01.png", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-1.jpg", detail_html)
         self.assertIn("https://img.513sjbz.com/detail/detail-2.jpg", detail_html)
         self.assertIn("width:750px", detail_html)
@@ -146,5 +147,6 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("playwright-core", renderer_source)
         self.assertIn("TAOBAO_DETAIL_CHROMIUM_PATH", renderer_source)
         self.assertIn("AlibabaPuHuiTi-3-55-Regular.woff2", renderer_source)
-        self.assertIn("detail-05.png", renderer_source)
+        self.assertIn("detail-05.jpg", renderer_source)
+        self.assertIn('type: "jpeg"', renderer_source)
         self.assertIn('font-family: "AlibabaPuhuiEditable"', template_source)
