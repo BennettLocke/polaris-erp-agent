@@ -729,6 +729,76 @@ function inventoryLookupQueryFromMessage(message: string, session?: AgentSession
   };
 }
 
+function normalizeInventoryWarehouseName(value: string) {
+  const text = value.trim();
+  if (/自己店里|自己店|店里|自己|门店/.test(text)) return "自己店里";
+  if (/百鑫仓库|百鑫仓|百鑫/.test(text)) return "百鑫仓库";
+  return text;
+}
+
+function inventoryLookupFromResponse(response: string, query: ReturnType<typeof inventoryLookupQueryFromMessage>): InventoryLookupResult | null {
+  const rows = new Map<string, WorkbenchInventoryLookupRow>();
+  const warehouses = new Map<string, { id?: number | string | null; name: string }>();
+  response.split(/\r?\n/).forEach((line) => {
+    const cells = line.split("|").map((cell) => cell.trim()).filter(Boolean);
+    if (cells.length < 4) return;
+    const [warehouseCell, titleCell, colorCell, quantityCell] = cells;
+    if (
+      /仓库/.test(titleCell)
+      || /^-+$/.test(warehouseCell.replace(/:/g, ""))
+      || titleCell === "产品"
+      || colorCell === "颜色"
+      || titleCell.includes("合计")
+      || colorCell.includes("记录")
+    ) {
+      return;
+    }
+    const warehouseName = normalizeInventoryWarehouseName(warehouseCell);
+    if (!warehouseName || !/自己店里|百鑫仓库/.test(warehouseName)) return;
+    const quantityMatch = quantityCell.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+    if (!quantityMatch) return;
+    const quantity = Number(quantityMatch[0]);
+    if (!Number.isFinite(quantity)) return;
+    const warehouseId = warehouseName === "自己店里" ? 1 : warehouseName === "百鑫仓库" ? 2 : null;
+    warehouses.set(warehouseName, { id: warehouseId, name: warehouseName });
+    const key = `${titleCell}|${colorCell}`;
+    const current = rows.get(key) || {
+      sku_no: "",
+      title: titleCell,
+      color: colorCell,
+      unit_name: "套",
+      piece_text: "",
+      warehouses: {},
+      warehouse_ids: {},
+      total_stock: 0
+    };
+    current.warehouses[warehouseName] = Number(current.warehouses[warehouseName] || 0) + quantity;
+    if (current.warehouse_ids) current.warehouse_ids[warehouseName] = warehouseId;
+    current.total_stock = Number(current.total_stock || 0) + quantity;
+    rows.set(key, current);
+  });
+  const list = Array.from(rows.values()).filter((row) => Number(row.total_stock || 0) > 0);
+  if (!list.length || !warehouses.size) return null;
+  const warehouseList = Array.from(warehouses.values()).sort((a, b) => {
+    const order = (name: string) => (name === "自己店里" ? 0 : name === "百鑫仓库" ? 1 : 9);
+    return order(a.name) - order(b.name);
+  });
+  list.forEach((row) => {
+    warehouseList.forEach((warehouse) => {
+      row.warehouses[warehouse.name] = Number(row.warehouses[warehouse.name] || 0);
+    });
+  });
+  return {
+    list,
+    warehouses: warehouseList,
+    total: list.length,
+    keyword: query.keyword,
+    color: query.color,
+    warehouse_id: query.warehouseId,
+    source: "agent_response"
+  };
+}
+
 function shouldLoadInventoryCards(message: string, response: string, session?: AgentSessionSnapshot | null) {
   return inferHistoryType(response, session) === "inventory" || /库存|仓库/.test(message);
 }
@@ -737,6 +807,8 @@ async function loadInventoryLookupForMessage(message: string, response: string, 
   if (!shouldLoadInventoryCards(message, response, session)) return null;
   const query = inventoryLookupQueryFromMessage(message, session);
   if (!query.keyword && !query.color) return null;
+  const responseLookup = inventoryLookupFromResponse(response, query);
+  if (responseLookup) return responseLookup;
   try {
     return await api.inventoryLookup(query);
   } catch {

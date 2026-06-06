@@ -311,6 +311,18 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("自己店里", workbench_source)
         self.assertIn("百鑫仓库", workbench_source)
 
+    def test_workbench_inventory_dialog_prefers_table_rows_from_agent_response(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        load_section = extract_function_section(workbench_source, "loadInventoryLookupForMessage")
+
+        self.assertIn("inventoryLookupFromResponse(response, query)", load_section)
+        self.assertIn("if (responseLookup) return responseLookup", load_section)
+        self.assertIn("function inventoryLookupFromResponse", workbench_source)
+        self.assertIn("normalizeInventoryWarehouseName", workbench_source)
+        self.assertIn("line.split(\"|\")", workbench_source)
+
     def test_workbench_image_workflow_confirm_skips_empty_root_section(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
