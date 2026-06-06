@@ -322,6 +322,7 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("function inventoryLookupFromResponse", workbench_source)
         self.assertIn("normalizeInventoryWarehouseName", workbench_source)
         self.assertIn("line.split(\"|\")", workbench_source)
+        self.assertIn("inventoryLookupFromResponse(", extract_function_section(workbench_source, "resultFromHistory"))
 
     def test_workbench_prefers_backend_inventory_lookup_payload(self):
         types_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")

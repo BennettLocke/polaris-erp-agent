@@ -660,6 +660,13 @@ function buildHistoryItem(
 }
 
 function resultFromHistory(item: BusinessHistoryItem): WorkbenchResult {
+  const inventoryLookup =
+    item.type === "inventory"
+      ? inventoryLookupFromResponse(
+          item.response || item.summary || "",
+          inventoryLookupQueryFromMessage(`${item.summary || ""}\n${item.response || ""}`)
+        ) || item.inventoryLookup
+      : item.inventoryLookup;
   return {
     id: item.id,
     type: item.resultType || resultTypeFor(item.type, "text"),
@@ -669,7 +676,7 @@ function resultFromHistory(item: BusinessHistoryItem): WorkbenchResult {
     response: item.response || item.summary,
     createdAt: item.createdAt,
     inventoryCards: item.inventoryCards,
-    inventoryLookup: item.inventoryLookup,
+    inventoryLookup,
     inventorySource: item.inventorySource
   };
 }
