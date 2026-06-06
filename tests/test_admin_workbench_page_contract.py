@@ -289,6 +289,16 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn(".workbench-inventory-lookup-table", styles_source)
         self.assertIn(".workbench-inventory-lookup-zero", styles_source)
 
+    def test_workbench_inventory_lookup_ignores_session_warehouse_when_message_unspecified(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        lookup_query = extract_function_section(workbench_source, "inventoryLookupQueryFromMessage")
+
+        self.assertIn("const messageWarehouseId = inventoryWarehouseIdFromMessage(message)", lookup_query)
+        self.assertIn("messageWarehouseId !== undefined ? messageWarehouseId : undefined", lookup_query)
+        self.assertNotIn("textParam(params.warehouse_id) || inventoryWarehouseIdFromMessage(message)", lookup_query)
+
     def test_workbench_image_workflow_confirm_skips_empty_root_section(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

@@ -24,6 +24,15 @@ class InventoryNaturalQueryContractTest(unittest.TestCase):
 
         self.assertEqual(result, {"intent": "inventory", "color": "红色", "product_name": "二三两"})
 
+    def test_fast_inventory_without_warehouse_keeps_lookup_unscoped(self):
+        engine = object.__new__(SkillEngine)
+
+        result = engine._extract_inventory_params("喜悦半斤库存")
+
+        self.assertEqual(result["intent"], "inventory")
+        self.assertEqual(result["product_name"].replace(" ", ""), "喜悦半斤")
+        self.assertNotIn("warehouse_id", result)
+
     def test_fast_inventory_extracts_warehouse_spec_and_color(self):
         engine = object.__new__(SkillEngine)
 

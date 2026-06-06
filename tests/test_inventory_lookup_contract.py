@@ -168,6 +168,50 @@ class InventoryLookupContractTest(unittest.TestCase):
         self.assertEqual(len(payload["data"]["list"]), 5)
         self.assertEqual(service.calls[0]["stock_status"], "in_stock")
 
+    def test_inventory_lookup_route_keeps_both_warehouses_when_warehouse_unspecified(self):
+        class FakeInventoryService:
+            def __init__(self):
+                self.calls = []
+
+            def balances(self, **kwargs):
+                self.calls.append(kwargs)
+                return [
+                    {
+                        "product_id": 401,
+                        "sku_no": "SJ401",
+                        "title": "【喜悦】半斤",
+                        "color": "红色",
+                        "warehouse_id": 1,
+                        "warehouse_name": "自己店里",
+                        "unit_name": "套",
+                        "quantity": "0",
+                    },
+                    {
+                        "product_id": 401,
+                        "sku_no": "SJ401",
+                        "title": "【喜悦】半斤",
+                        "color": "红色",
+                        "warehouse_id": 2,
+                        "warehouse_name": "百鑫仓库",
+                        "unit_name": "套",
+                        "quantity": "12",
+                    },
+                ], 1
+
+        service = FakeInventoryService()
+
+        with patch.object(http_api, "_current_web_user", return_value={"id": 1, "native_user_id": 1}):
+            with patch.object(http_api, "get_inventory_service", return_value=service):
+                with http_api.app.test_client() as client:
+                    response = client.get("/api/inventory/lookup?keyword=喜悦半斤&limit=40")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(service.calls[0]["warehouse_id"], None)
+        self.assertEqual(service.calls[0]["stock_status"], "")
+        self.assertEqual(payload["data"]["warehouses"], [{"id": 1, "name": "自己店里"}, {"id": 2, "name": "百鑫仓库"}])
+        self.assertEqual(payload["data"]["list"][0]["warehouses"], {"自己店里": 0, "百鑫仓库": 12})
+
     def test_inventory_keyword_normalization_strips_warehouse_words(self):
         self.assertEqual(http_api._normalize_inventory_keyword("百鑫半斤库存"), "半斤")
         self.assertEqual(http_api._normalize_inventory_keyword("百鑫仓库半斤"), "半斤")

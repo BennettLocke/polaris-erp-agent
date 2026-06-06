@@ -719,7 +719,8 @@ function inventoryLookupQueryFromMessage(message: string, session?: AgentSession
   const params = recordParam(extraction.params);
   const keyword = textParam(params.product_name || params.keyword) || inventoryKeywordFromMessage(message);
   const color = textParam(params.color) || inventoryColorFromMessage(message);
-  const warehouseId = textParam(params.warehouse_id) || inventoryWarehouseIdFromMessage(message);
+  const messageWarehouseId = inventoryWarehouseIdFromMessage(message);
+  const warehouseId = messageWarehouseId !== undefined ? messageWarehouseId : undefined;
   return {
     keyword,
     color,
