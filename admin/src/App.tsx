@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   Boxes,
@@ -11,7 +12,7 @@ import {
   ShoppingCart,
   Users
 } from "lucide-react";
-import { ApiError, api } from "./api";
+import { ApiError, api, type SalesListQuery } from "./api";
 import {
   CustomersPage,
 } from "./components/business/customers";
@@ -47,6 +48,7 @@ import type { AppNavGroup } from "./components/layout/app-sidebar";
 import { PageHeader } from "./components/layout/page-header";
 import { Toolbar } from "./components/layout/toolbar";
 import { hasPermission } from "./lib/permissions";
+import { queryKeys } from "./lib/admin-query";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import {
@@ -137,6 +139,20 @@ const pageMap: Record<RouteKey, { title: string; desc: string; status: string }>
   orders: { title: "订单", desc: "跟进客户订单、制作、发货和完成状态。", status: "已接入基础版" },
   settings: { title: "设置", desc: "编号、商品基础、库存规则、收款结款、图片、用户和打印。", status: "已接入" }
 };
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      retry: 1
+    },
+    mutations: {
+      retry: false
+    }
+  }
+});
 
 function routeFromLocation(): RouteKey {
   const segment = window.location.pathname.replace(/^\/admin\/?/, "").split("/")[0];
@@ -898,6 +914,7 @@ function salesDateRange(dateFilter: SalesListFilters["dateFilter"]) {
 }
 
 function SalesPage() {
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<SalesListFilters>(defaultSalesFilters);
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<SalesCard[]>([]);
@@ -914,14 +931,19 @@ function SalesPage() {
   async function load(nextPage = page, nextFilters = filters) {
     setLoading(true);
     setError("");
+    const query: SalesListQuery = {
+      keyword: nextFilters.keyword.trim(),
+      page: nextPage,
+      pageSize: 20,
+      payStatus: nextFilters.payStatus,
+      status: nextFilters.status,
+      ...salesDateRange(nextFilters.dateFilter)
+    };
     try {
-      const data = await api.salesCards({
-        keyword: nextFilters.keyword.trim(),
-        page: nextPage,
-        pageSize: 20,
-        payStatus: nextFilters.payStatus,
-        status: nextFilters.status,
-        ...salesDateRange(nextFilters.dateFilter)
+      const data = await queryClient.fetchQuery({
+        queryKey: queryKeys.sales.cards(query),
+        queryFn: ({ signal }) => api.salesCards(query, 1, 20, { signal }),
+        staleTime: 30_000
       });
       setItems(data.list || []);
       setTotal(data.total || 0);
@@ -935,8 +957,21 @@ function SalesPage() {
 
   async function openDetail(id: number) {
     setError("");
+    const detailKey = queryKeys.sales.detail(id);
+    const cached = queryClient.getQueryData<SalesDetail>(detailKey);
+    const preview = items.find((item) => Number(item.id || item.sales_id || 0) === id);
+    if (cached) {
+      setDetail(cached);
+    } else if (preview) {
+      setDetail(preview as SalesDetail);
+    }
     try {
-      setDetail(await api.salesDetail(id));
+      const data = await queryClient.fetchQuery({
+        queryKey: detailKey,
+        queryFn: ({ signal }) => api.salesDetail(id, { signal }),
+        staleTime: 30_000
+      });
+      setDetail(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "销售单详情加载失败");
     }
@@ -973,7 +1008,12 @@ function SalesPage() {
       const result = await api.updateSalesPayment(id, payload);
       const paymentText = [result.pay_status_text, result.pay_type_text].filter(Boolean).join(" / ") || "已更新";
       setNotice(`销售单收款方式已更新：${paymentText}`);
-      setDetail(await api.salesDetail(id));
+      queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
+      setDetail(await queryClient.fetchQuery({
+        queryKey: queryKeys.sales.detail(id),
+        queryFn: ({ signal }) => api.salesDetail(id, { signal }),
+        staleTime: 0
+      }));
       await load(page, filters);
     } catch (err) {
       setError(err instanceof Error ? err.message : "收款方式更新失败");
@@ -996,6 +1036,7 @@ function SalesPage() {
       if (detail && Number(detail.id || detail.sales_id || 0) === id) {
         setDetail(null);
       }
+      queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
       await load(page, filters);
     } catch (err) {
       setError(err instanceof Error ? err.message : "销售单删除失败");
@@ -1190,7 +1231,7 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
     </AppShell>
   );
 }
-export default function App() {
+function AppContent() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsLogin, setNeedsLogin] = useState(window.location.pathname.startsWith("/admin/login"));
@@ -1230,4 +1271,12 @@ export default function App() {
   }
 
   return <AdminArea user={user} onLogout={() => setUser(null)} />;
+}
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppContent />
+    </QueryClientProvider>
+  );
 }

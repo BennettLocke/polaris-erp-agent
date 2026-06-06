@@ -126,6 +126,10 @@ export type AnalyticsHotProductsQuery = {
 const AGENT_HISTORY_ENDPOINT = "/api/agent/history";
 const ANALYTICS_SALES_OVERVIEW_ENDPOINT = "/api/analytics/sales-overview";
 
+export type ApiRequestOptions = {
+  signal?: AbortSignal;
+};
+
 export class ApiError extends Error {
   status: number;
   code: number;
@@ -151,6 +155,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(payload?.msg || response.statusText || "请求失败", response.status, payload?.code ?? -1);
   }
   return payload.data;
+}
+
+function withRequestOptions(init?: RequestInit, options?: ApiRequestOptions): RequestInit | undefined {
+  if (!init && !options?.signal) return undefined;
+  return {
+    ...(init || {}),
+    ...(options?.signal ? { signal: options.signal } : {})
+  };
 }
 
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
@@ -269,13 +281,13 @@ export const api = {
   },
   recentOrders: (limit = 6) =>
     request<{ sales: RecentSale[]; workflows: RecentWorkflow[] }>(`/api/orders/recent?limit=${limit}`),
-  workflowOrders: (query: ProcessOrderListQuery = {}) => {
+  workflowOrders: (query: ProcessOrderListQuery = {}, options?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set("keyword", query.keyword || "");
     params.set("page", String(query.page || 1));
     params.set("page_size", String(query.pageSize || 30));
     params.set("filter", query.filter || "active");
-    return request<ProcessOrderListResult>(`/api/workflow/orders?${params.toString()}`);
+    return request<ProcessOrderListResult>(`/api/workflow/orders?${params.toString()}`, withRequestOptions(undefined, options));
   },
   saveWorkflowOrder: (payload: ProcessOrderPayload) =>
     request<ProcessOrderRaw>("/api/workflow/orders", {
@@ -296,10 +308,11 @@ export const api = {
     request<{ id: number; affected?: number }>(`/api/workflow/orders/${id}`, {
       method: "DELETE"
     }),
-  customers: (query: CustomerListQuery | string = "", limit = 80) => {
+  customers: (query: CustomerListQuery | string = "", limit = 80, options?: ApiRequestOptions) => {
     if (typeof query === "string") {
       return request<CustomerListResult>(
-        `/api/customers?keyword=${encodeURIComponent(query)}&limit=${limit}`
+        `/api/customers?keyword=${encodeURIComponent(query)}&limit=${limit}`,
+        withRequestOptions(undefined, options)
       );
     }
     const params = new URLSearchParams();
@@ -307,7 +320,7 @@ export const api = {
     params.set("page", String(query.page || 1));
     params.set("page_size", String(query.pageSize || 18));
     params.set("filter", query.filter || "all");
-    return request<CustomerListResult>(`/api/customers?${params.toString()}`);
+    return request<CustomerListResult>(`/api/customers?${params.toString()}`, withRequestOptions(undefined, options));
   },
   quickCustomers: (keyword = "") =>
     request<CustomerItem[]>(`/api/customer/list?keyword=${encodeURIComponent(keyword)}`),
@@ -352,19 +365,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  salesCards: (query: SalesListQuery | string = "", page = 1, pageSize = 20) => {
-    const options: SalesListQuery = typeof query === "string" ? { keyword: query, page, pageSize } : query;
+  salesCards: (query: SalesListQuery | string = "", page = 1, pageSize = 20, requestOptions?: ApiRequestOptions) => {
+    const salesQuery: SalesListQuery = typeof query === "string" ? { keyword: query, page, pageSize } : query;
     const params = new URLSearchParams();
-    params.set("keyword", options.keyword || "");
-    params.set("page", String(options.page || 1));
-    params.set("page_size", String(options.pageSize || 20));
-    if (options.payStatus) params.set("pay_status", options.payStatus);
-    if (options.status) params.set("status", options.status);
-    if (options.dateFrom) params.set("date_from", options.dateFrom);
-    if (options.dateTo) params.set("date_to", options.dateTo);
-    return request<ListResult<SalesCard>>(`/api/sales/cards?${params.toString()}`);
+    params.set("keyword", salesQuery.keyword || "");
+    params.set("page", String(salesQuery.page || 1));
+    params.set("page_size", String(salesQuery.pageSize || 20));
+    if (salesQuery.payStatus) params.set("pay_status", salesQuery.payStatus);
+    if (salesQuery.status) params.set("status", salesQuery.status);
+    if (salesQuery.dateFrom) params.set("date_from", salesQuery.dateFrom);
+    if (salesQuery.dateTo) params.set("date_to", salesQuery.dateTo);
+    return request<ListResult<SalesCard>>(`/api/sales/cards?${params.toString()}`, withRequestOptions(undefined, requestOptions));
   },
-  salesDetail: (id: number) => request<SalesDetail>(`/api/sales/${id}/detail`),
+  salesDetail: (id: number, options?: ApiRequestOptions) =>
+    request<SalesDetail>(`/api/sales/${id}/detail`, withRequestOptions(undefined, options)),
   updateSalesPayment: (id: number, payload: SalesPaymentUpdatePayload) =>
     request<{
       id: number;
@@ -391,7 +405,7 @@ export const api = {
     listedState?: string;
     stockMode?: string;
     quality?: string;
-  } = {}) => {
+  } = {}, requestOptions?: ApiRequestOptions) => {
     const params = new URLSearchParams();
     params.set("keyword", options.keyword || "");
     params.set("page", String(options.page || 1));
@@ -402,10 +416,12 @@ export const api = {
     if (options.listedState) params.set("listed_state", options.listedState);
     if (options.stockMode) params.set("stock_mode", options.stockMode);
     if (options.quality) params.set("quality", options.quality);
-    return request<ListResult<ProductItem>>(`/api/product/list?${params.toString()}`);
+    return request<ListResult<ProductItem>>(`/api/product/list?${params.toString()}`, withRequestOptions(undefined, requestOptions));
   },
-  productCategories: () => request<ListResult<ProductCategory>>("/api/product/categories"),
-  productDetail: (id: number) => request<ProductItem>(`/api/product/${id}`),
+  productCategories: (options?: ApiRequestOptions) =>
+    request<ListResult<ProductCategory>>("/api/product/categories", withRequestOptions(undefined, options)),
+  productDetail: (id: number, options?: ApiRequestOptions) =>
+    request<ProductItem>(`/api/product/${id}`, withRequestOptions(undefined, options)),
   exportProductTaobaoDetail: (id: number) =>
     requestBlob(`/api/product/${id}/taobao-detail-export`, `taobao-detail-${id}.zip`),
   startProductTaobaoDetailExport: (id: number) =>
@@ -414,7 +430,8 @@ export const api = {
     request<TaobaoDetailExportJob>(`/api/product/taobao-detail-export/jobs/${encodeURIComponent(jobId)}`),
   downloadProductTaobaoDetailExportJob: (jobId: string, fallbackFilename = "taobao-detail.zip") =>
     requestBlob(`/api/product/taobao-detail-export/jobs/${encodeURIComponent(jobId)}/download`, fallbackFilename),
-  productOptions: (id?: number) => request<ProductOptions>(`/api/product/options${id ? `?id=${id}` : ""}`),
+  productOptions: (id?: number, options?: ApiRequestOptions) =>
+    request<ProductOptions>(`/api/product/options${id ? `?id=${id}` : ""}`, withRequestOptions(undefined, options)),
   saveProduct: (payload: ProductSavePayload) =>
     request<{ id?: number; sku_ids?: number[]; spu_id?: number }>("/api/product/save", {
       method: "POST",
@@ -473,14 +490,17 @@ export const api = {
     request<{ id: number; affected?: number }>(`/api/miniapp/image-config/assets/${id}`, {
       method: "DELETE"
     }),
-  productMedia: (options: { page?: number; pageSize?: number; mediaType?: string; productId?: number; includePending?: boolean } = {}) => {
+  productMedia: (
+    options: { page?: number; pageSize?: number; mediaType?: string; productId?: number; includePending?: boolean } = {},
+    requestOptions?: ApiRequestOptions
+  ) => {
     const params = new URLSearchParams();
     params.set("page", String(options.page || 1));
     params.set("page_size", String(options.pageSize || 24));
     if (options.mediaType) params.set("media_type", options.mediaType);
     if (options.productId) params.set("product_id", String(options.productId));
     if (options.includePending !== undefined) params.set("include_pending", options.includePending ? "1" : "0");
-    return request<ListResult<ProductMediaAsset>>(`/api/product/media?${params.toString()}`);
+    return request<ListResult<ProductMediaAsset>>(`/api/product/media?${params.toString()}`, withRequestOptions(undefined, requestOptions));
   },
   deleteProductMedia: (id: number) =>
     request<{ id: number; affected: number }>(`/api/product/media/${id}`, {
@@ -545,7 +565,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
-  warehouses: () => request<ListResult<Warehouse>>("/api/warehouses"),
+  warehouses: (options?: ApiRequestOptions) =>
+    request<ListResult<Warehouse>>("/api/warehouses", withRequestOptions(undefined, options)),
   inventoryCards: (query: InventoryCardsQuery = {}) => {
     const endpoint = "/api/inventory/cards";
     const params = new URLSearchParams();
@@ -565,16 +586,16 @@ export const api = {
     params.set("limit", String(query.limit || 40));
     return request<InventoryLookupResult>(`${endpoint}?${params.toString()}`);
   },
-  inventoryBalances: (query: InventoryListQuery = {}) =>
-    request<InventoryBalanceResult>(`/api/inventory/balances?${listParams(query)}`),
-  inventoryLedger: (query: InventoryListQuery = {}) =>
-    request<ListResult<InventoryLedgerItem>>(`/api/inventory/ledger?${listParams(query)}`),
-  stockDocuments: (query: InventoryListQuery = {}) =>
-    request<ListResult<StockDocumentItem>>(`/api/stock-documents?${listParams(query)}`),
-  stocktakes: (query: InventoryListQuery = {}) =>
-    request<ListResult<StocktakeItem>>(`/api/stocktakes?${listParams(query)}`),
-  transfers: (query: InventoryListQuery = {}) =>
-    request<ListResult<TransferItem>>(`/api/transfers?${listParams(query)}`),
+  inventoryBalances: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
+    request<InventoryBalanceResult>(`/api/inventory/balances?${listParams(query)}`, withRequestOptions(undefined, options)),
+  inventoryLedger: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
+    request<ListResult<InventoryLedgerItem>>(`/api/inventory/ledger?${listParams(query)}`, withRequestOptions(undefined, options)),
+  stockDocuments: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
+    request<ListResult<StockDocumentItem>>(`/api/stock-documents?${listParams(query)}`, withRequestOptions(undefined, options)),
+  stocktakes: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
+    request<ListResult<StocktakeItem>>(`/api/stocktakes?${listParams(query)}`, withRequestOptions(undefined, options)),
+  transfers: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
+    request<ListResult<TransferItem>>(`/api/transfers?${listParams(query)}`, withRequestOptions(undefined, options)),
   createInventoryPurchase: (payload: InventoryActionPayload) =>
     request<InventoryActionResult>("/api/inventory/purchase", {
       method: "POST",

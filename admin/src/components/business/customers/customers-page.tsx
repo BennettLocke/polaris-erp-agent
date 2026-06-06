@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw, Search } from "lucide-react";
 
 import { api } from "@/api";
@@ -26,6 +27,7 @@ import {
   PaginationPrevious
 } from "@/components/ui/pagination";
 import { hasPermission } from "@/lib/permissions";
+import { queryKeys } from "@/lib/admin-query";
 import type { AuthUser, CustomerBalanceActionPayload, CustomerItem, CustomerListSummary } from "@/types";
 import {
   customerFilterOptions,
@@ -102,6 +104,7 @@ function customerPageRangeText(page: number, customerPageSize: number, total: nu
 }
 
 function CustomersPage({ currentUser }: { currentUser?: AuthUser } = {}) {
+  const queryClient = useQueryClient();
   const [keyword, setKeyword] = useState("");
   const [items, setItems] = useState<CustomerItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -128,12 +131,17 @@ function CustomersPage({ currentUser }: { currentUser?: AuthUser } = {}) {
   async function load(nextPage = page, nextKeyword = keyword, nextFilter = filter, nextPageSize = customerPageSize) {
     setLoading(true);
     setError("");
+    const query = {
+      keyword: nextKeyword,
+      page: nextPage,
+      pageSize: nextPageSize,
+      filter: nextFilter
+    };
     try {
-      const data = await api.customers({
-        keyword: nextKeyword,
-        page: nextPage,
-        pageSize: nextPageSize,
-        filter: nextFilter
+      const data = await queryClient.fetchQuery({
+        queryKey: queryKeys.customers.list(query),
+        queryFn: ({ signal }) => api.customers(query, 80, { signal }),
+        staleTime: 30_000
       });
       const nextList = data.list || [];
       const nextTotal = data.total || 0;
@@ -211,6 +219,7 @@ function CustomersPage({ currentUser }: { currentUser?: AuthUser } = {}) {
     setNotice("");
     try {
       await api.updateCustomerMonthly(customer.id, next);
+      queryClient.invalidateQueries({ queryKey: queryKeys.customers.root });
       await load(page, keyword, filter);
       setNotice(next ? "已设为月结客户" : "已取消月结");
     } catch (err) {
@@ -219,6 +228,7 @@ function CustomersPage({ currentUser }: { currentUser?: AuthUser } = {}) {
   }
 
   function afterBalanceSaved() {
+    queryClient.invalidateQueries({ queryKey: queryKeys.customers.root });
     setNotice("客户余额已更新");
     void load(page, keyword, filter);
   }

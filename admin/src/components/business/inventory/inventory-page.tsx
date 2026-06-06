@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRightLeft,
   ClipboardCheck,
@@ -78,6 +79,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { hasPermission } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { queryKeys } from "@/lib/admin-query";
 import type {
   AuthUser,
   InventoryActionPayload,
@@ -1064,6 +1066,7 @@ function InventoryActionDialog({
   onClose: () => void;
   onSaved: (mode: InventoryActionMode, result: InventoryActionResult) => void;
 }) {
+  const queryClient = useQueryClient();
   const [selectedRow, setSelectedRow] = useState<InventoryBalance | null>(null);
   const [lookupKeyword, setLookupKeyword] = useState("");
   const [lookupRows, setLookupRows] = useState<InventoryBalance[]>([]);
@@ -1112,12 +1115,17 @@ function InventoryActionDialog({
     }
     setLoadingLookup(true);
     setError("");
+    const query = {
+      keyword,
+      stockStatus: "all",
+      page: 1,
+      pageSize: INVENTORY_ACTION_LOOKUP_PAGE_SIZE
+    };
     try {
-      const data = await api.inventoryBalances({
-        keyword,
-        stockStatus: "all",
-        page: 1,
-        pageSize: INVENTORY_ACTION_LOOKUP_PAGE_SIZE
+      const data = await queryClient.fetchQuery({
+        queryKey: queryKeys.inventory.balances(query),
+        queryFn: ({ signal }) => api.inventoryBalances(query, { signal }),
+        staleTime: 20_000
       });
       setLookupRows(filterStockTrackedBalances(data.list || []));
     } catch (err) {
@@ -1451,6 +1459,8 @@ function InventoryPager({
 }
 
 export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) {
+  const queryClient = useQueryClient();
+  const pageSizeReadyRef = useRef(false);
   const [keyword, setKeyword] = useState("");
   const [warehouseId, setWarehouseId] = useState("all");
   const [status, setStatus] = useState<InventoryStatusFilter>("all");
@@ -1489,13 +1499,18 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
     setError("");
     try {
       if (isBalanceTab(nextTab)) {
-        const data = await api.inventoryBalances({
+        const query = {
           keyword: nextKeyword,
           warehouseId: nextWarehouseId,
           stockStatus: nextStatus,
           groupByProduct: nextTab === "overview",
           page: nextPage,
           pageSize: nextPageSize
+        };
+        const data = await queryClient.fetchQuery({
+          queryKey: queryKeys.inventory.balances(query),
+          queryFn: ({ signal }) => api.inventoryBalances(query, { signal }),
+          staleTime: 20_000
         });
         const stockRows = filterStockTrackedBalances(data.list || []);
         setBalances(stockRows);
@@ -1503,22 +1518,42 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
         setTotal(data.total || 0);
         setPage(data.page || nextPage);
       } else if (nextTab === "ledger") {
-        const data = await api.inventoryLedger({ keyword: nextKeyword, page: nextPage, pageSize: nextPageSize });
+        const query = { keyword: nextKeyword, page: nextPage, pageSize: nextPageSize };
+        const data = await queryClient.fetchQuery({
+          queryKey: queryKeys.inventory.ledger(query),
+          queryFn: ({ signal }) => api.inventoryLedger(query, { signal }),
+          staleTime: 20_000
+        });
         setLedger(data.list || []);
         setTotal(data.total || 0);
         setPage(data.page || nextPage);
       } else if (nextTab === "documents") {
-        const data = await api.stockDocuments({ keyword: nextKeyword, page: nextPage, pageSize: nextPageSize });
+        const query = { keyword: nextKeyword, page: nextPage, pageSize: nextPageSize };
+        const data = await queryClient.fetchQuery({
+          queryKey: queryKeys.inventory.documents(query),
+          queryFn: ({ signal }) => api.stockDocuments(query, { signal }),
+          staleTime: 20_000
+        });
         setDocuments(data.list || []);
         setTotal(data.total || 0);
         setPage(data.page || nextPage);
       } else if (nextTab === "stocktakes") {
-        const data = await api.stocktakes({ keyword: nextKeyword, page: nextPage, pageSize: nextPageSize });
+        const query = { keyword: nextKeyword, page: nextPage, pageSize: nextPageSize };
+        const data = await queryClient.fetchQuery({
+          queryKey: queryKeys.inventory.stocktakes(query),
+          queryFn: ({ signal }) => api.stocktakes(query, { signal }),
+          staleTime: 20_000
+        });
         setStocktakes(data.list || []);
         setTotal(data.total || 0);
         setPage(data.page || nextPage);
       } else {
-        const data = await api.transfers({ keyword: nextKeyword, page: nextPage, pageSize: nextPageSize });
+        const query = { keyword: nextKeyword, page: nextPage, pageSize: nextPageSize };
+        const data = await queryClient.fetchQuery({
+          queryKey: queryKeys.inventory.transfers(query),
+          queryFn: ({ signal }) => api.transfers(query, { signal }),
+          staleTime: 20_000
+        });
         setTransfers(data.list || []);
         setTotal(data.total || 0);
         setPage(data.page || nextPage);
@@ -1531,7 +1566,11 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
   }
 
   useEffect(() => {
-    api.warehouses()
+    queryClient.fetchQuery({
+      queryKey: queryKeys.inventory.warehouses(),
+      queryFn: ({ signal }) => api.warehouses({ signal }),
+      staleTime: 5 * 60_000
+    })
       .then((data) => setWarehouses(data.list || []))
       .catch(() => undefined);
     void loadTab("overview", 1, "", "all", pageSize, "all");
@@ -1555,6 +1594,10 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
   }, []);
 
   useEffect(() => {
+    if (!pageSizeReadyRef.current) {
+      pageSizeReadyRef.current = true;
+      return;
+    }
     void loadTab(activeTab, 1, keyword, warehouseId, pageSize, status);
   }, [pageSize]);
 
@@ -1590,6 +1633,7 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
   }
 
   function afterActionSaved(mode: InventoryActionMode, result: InventoryActionResult) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
     const docNo = result.doc_no || result.transfer_no || result.stocktake_no || result.id || "";
     const actionText = mode === "purchase" ? "进货已保存" : mode === "transfer" ? "调拨已保存" : "盘点已保存";
     setNotice(docNo ? `${actionText}：${docNo}` : actionText);

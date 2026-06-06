@@ -488,6 +488,9 @@ class NativeDBClient:
     _default_operator_ready = False
     _default_operator_user_id: int | None = None
     _default_operator_lock = threading.Lock()
+    _inventory_policy_sync_lock = threading.Lock()
+    _inventory_policy_last_sync_at = 0.0
+    _inventory_policy_sync_ttl_seconds = 15.0
 
     def __new__(cls) -> "NativeDBClient":
         if cls._instance is None:
@@ -2129,6 +2132,198 @@ class NativeDBClient:
             })
         return result[:requested_limit]
 
+    def product_media_assets_page(
+        self,
+        *,
+        spu_id: int | None = None,
+        sku_ids: list[int] | None = None,
+        media_type: str = "",
+        include_pending: bool = True,
+        page: int = 1,
+        page_size: int = 80,
+    ) -> tuple[list[dict], int]:
+        scope_parts: list[str] = []
+        params: list[Any] = []
+        type_clause = ""
+        type_params: list[Any] = []
+        normalized_media_type = _media_type(media_type)
+        if normalized_media_type:
+            raw_types = {
+                "main_image": ["main_image", "main"],
+                "detail_image": ["detail_image", "detail"],
+                "color_image": ["color_image", "image"],
+                "pending": ["pending"],
+            }.get(normalized_media_type, [normalized_media_type])
+            placeholders = ",".join(["%s"] * len(raw_types))
+            type_clause = f" AND pm.media_type IN ({placeholders})"
+            type_params.extend(raw_types)
+        if spu_id:
+            scope_parts.append("(pm.spu_id=%s OR s.spu_id=%s)")
+            params.extend([int(spu_id), int(spu_id)])
+        clean_sku_ids = [int(item) for item in (sku_ids or []) if item]
+        if clean_sku_ids:
+            placeholders = ",".join(["%s"] * len(clean_sku_ids))
+            scope_parts.append(f"pm.sku_id IN ({placeholders})")
+            params.extend(clean_sku_ids)
+        if include_pending and (spu_id or clean_sku_ids):
+            scope_parts.append("(pm.sku_id IS NULL AND pm.spu_id IS NULL AND pm.media_type='pending')")
+        if not scope_parts:
+            scope_parts.append("1=1")
+        select_parts = [
+            f"""
+            SELECT pm.id, pm.sku_id, COALESCE(pm.spu_id, s.spu_id) AS spu_id,
+                   pm.spu_id AS media_spu_id, pm.media_type, pm.url, pm.storage, pm.file_name,
+                   pm.sort_order, pm.is_active, pm.source, pm.created_at, pm.updated_at,
+                   sp.title AS spu_title, sp.product_type, sp.series, sp.size_label,
+                   COALESCE(sp.default_category_id, s.primary_category_id) AS category_id,
+                   pc.name AS category_name, pc.product_type AS category_product_type,
+                   s.sku_no, s.color AS sku_color, s.bag_type, COALESCE(s.tea_type, sp.tea_type) AS tea_type,
+                   CASE pm.media_type
+                     WHEN 'main_image' THEN 0
+                     WHEN 'main' THEN 0
+                     WHEN 'color_image' THEN 1
+                     WHEN 'image' THEN 1
+                     WHEN 'detail_image' THEN 2
+                     WHEN 'detail' THEN 2
+                     WHEN 'pending' THEN 3
+                     ELSE 9
+                   END AS asset_sort_rank
+            FROM product_media pm
+            LEFT JOIN product_sku s ON s.id = pm.sku_id AND s.deleted_at IS NULL
+            LEFT JOIN product_spu sp ON sp.id = COALESCE(pm.spu_id, s.spu_id) AND sp.deleted_at IS NULL
+            LEFT JOIN product_category pc ON pc.id = COALESCE(sp.default_category_id, s.primary_category_id)
+            WHERE pm.is_active=1 AND ({' OR '.join(scope_parts)}){type_clause}
+            """
+        ]
+        select_params: list[Any] = params + type_params
+        if not normalized_media_type or normalized_media_type == "color_image":
+            color_scope_parts: list[str] = ["s.deleted_at IS NULL", "NULLIF(s.main_image_url, '') IS NOT NULL"]
+            color_params: list[Any] = []
+            if spu_id:
+                color_scope_parts.append("s.spu_id=%s")
+                color_params.append(int(spu_id))
+            if clean_sku_ids:
+                placeholders = ",".join(["%s"] * len(clean_sku_ids))
+                color_scope_parts.append(f"s.id IN ({placeholders})")
+                color_params.extend(clean_sku_ids)
+            select_parts.append(
+                f"""
+                SELECT NULL AS id, s.id AS sku_id, s.spu_id,
+                       NULL AS media_spu_id, 'color_image' AS media_type,
+                       s.main_image_url AS url, 'oss' AS storage, '' AS file_name,
+                       0 AS sort_order, 1 AS is_active, 'sku_image' AS source,
+                       s.created_at, s.updated_at,
+                       sp.title AS spu_title, sp.product_type, sp.series, sp.size_label,
+                       COALESCE(sp.default_category_id, s.primary_category_id) AS category_id,
+                       pc.name AS category_name, pc.product_type AS category_product_type,
+                       s.sku_no, s.color AS sku_color, s.bag_type, COALESCE(s.tea_type, sp.tea_type) AS tea_type,
+                       1 AS asset_sort_rank
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id = s.spu_id AND sp.deleted_at IS NULL
+                LEFT JOIN product_category pc ON pc.id = COALESCE(sp.default_category_id, s.primary_category_id)
+                WHERE {' AND '.join(color_scope_parts)}
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM product_media pm2
+                    WHERE pm2.is_active=1
+                      AND pm2.sku_id=s.id
+                      AND pm2.url=s.main_image_url
+                      AND pm2.media_type IN ('color_image', 'image')
+                    LIMIT 1
+                  )
+                """
+            )
+            select_params.extend(color_params)
+        union_sql = " UNION ALL ".join(select_parts)
+        safe_page = max(1, int(page or 1))
+        safe_page_size = max(1, min(int(page_size or 80), 200))
+        count_rows = self.query(
+            f"SELECT COUNT(*) AS total FROM ({union_sql}) media_page_count",
+            select_params,
+        )
+        rows = self.query(
+            f"""
+            SELECT *
+            FROM ({union_sql}) media_page_rows
+            ORDER BY asset_sort_rank ASC, sort_order ASC, id DESC
+            LIMIT %s OFFSET %s
+            """,
+            select_params + [safe_page_size, (safe_page - 1) * safe_page_size],
+        )
+        total = int(count_rows[0].get("total") or 0) if count_rows else 0
+        return self._format_product_media_asset_rows(rows), total
+
+    def _format_product_media_asset_rows(self, rows: list[dict]) -> list[dict]:
+        type_text = {
+            "main": "主图",
+            "main_image": "主图",
+            "detail": "详情页",
+            "detail_image": "详情页",
+            "color_image": "颜色图",
+            "pending": "待绑定",
+            "image": "颜色图",
+        }
+        result = []
+        seen_assets: set[tuple[str, str, str, str]] = set()
+        for row in rows:
+            normalized_type = _media_type(row.get("media_type"))
+            url = str(row.get("url") or "")
+            row_spu_id = str(row.get("spu_id") or "")
+            if normalized_type == "main_image":
+                dedupe_key = (normalized_type, row_spu_id or f"url:{url}", "", "")
+            elif normalized_type == "detail_image":
+                dedupe_key = (normalized_type, row_spu_id, url, "")
+            elif normalized_type == "color_image":
+                dedupe_key = (normalized_type, row_spu_id, str(row.get("sku_color") or row.get("sku_id") or ""), url)
+            else:
+                dedupe_key = (normalized_type, row_spu_id, url, str(row.get("id") or ""))
+            if dedupe_key in seen_assets:
+                continue
+            seen_assets.add(dedupe_key)
+            product_name = row.get("spu_title") or ""
+            color = row.get("sku_color") or ""
+            if not product_name and row.get("spu_id"):
+                product_name = f"产品#{row.get('spu_id')}"
+            binding_text = "待绑定"
+            if product_name:
+                binding_text = product_name
+                if normalized_type == "color_image" and color:
+                    binding_text = f"{product_name} / {color}"
+            group_key, group_text, series, size_label, group_order = _asset_group_info(row)
+            result.append({
+                "id": row.get("id"),
+                "sku_id": row.get("sku_id"),
+                "spu_id": row.get("spu_id"),
+                "media_spu_id": row.get("media_spu_id"),
+                "spu_title": row.get("spu_title") or "",
+                "product_type": row.get("product_type") or "",
+                "category_product_type": row.get("category_product_type") or "",
+                "bag_type": row.get("bag_type") or "",
+                "tea_type": row.get("tea_type") or "",
+                "series": series,
+                "size_label": size_label,
+                "product_name": product_name,
+                "binding_text": binding_text,
+                "category_id": row.get("category_id"),
+                "category_name": _normalize_asset_category_name(row.get("category_name")),
+                "asset_group_key": group_key,
+                "asset_group_text": group_text,
+                "asset_group_order": group_order,
+                "sku_no": row.get("sku_no") or "",
+                "sku_color": color,
+                "media_type": normalized_type,
+                "raw_media_type": row.get("media_type") or "",
+                "media_type_text": type_text.get(normalized_type, type_text.get(str(row.get("media_type") or ""), str(row.get("media_type") or ""))),
+                "url": url,
+                "storage": row.get("storage") or "",
+                "source": row.get("source") or "",
+                "source_text": _source_text(row.get("source")),
+                "sort_order": int(row.get("sort_order") or 0),
+                "created_at": str(row.get("created_at") or ""),
+                "updated_at": str(row.get("updated_at") or ""),
+            })
+        return result
+
     def delete_product_media(self, media_id: int) -> dict:
         rows = self.query(
             """
@@ -3325,6 +3520,11 @@ class NativeDBClient:
 
     def _sync_inventory_policy_categories(self, cursor=None) -> dict:
         if cursor is None:
+            now_monotonic = time.monotonic()
+            with self._inventory_policy_sync_lock:
+                if now_monotonic - self._inventory_policy_last_sync_at < self._inventory_policy_sync_ttl_seconds:
+                    return {"sku": 0, "spu": 0}
+                self._inventory_policy_last_sync_at = now_monotonic
             with self.transaction() as local_cursor:
                 return self._sync_inventory_policy_categories(local_cursor)
         if not self._table_exists(cursor, "product_category"):
@@ -3356,6 +3556,8 @@ class NativeDBClient:
             )
             synced["sku"] += result.get("sku", 0)
             synced["spu"] += result.get("spu", 0)
+        with self._inventory_policy_sync_lock:
+            self._inventory_policy_last_sync_at = time.monotonic()
         return synced
 
     def _apply_inventory_rule_keywords_to_categories(self, cursor, rules: dict) -> None:

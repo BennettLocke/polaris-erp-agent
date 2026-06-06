@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { ArrowDown, ArrowUp, Download, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, api } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +63,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { queryKeys } from "@/lib/admin-query";
 import type {
   ProductCategory,
   ProductItem,
@@ -736,6 +738,7 @@ function ImageAssetPickerDialog({
   onSelect: (urls: string[]) => void;
   selectionMode?: "single" | "multiple";
 }) {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<"pending" | "product_assets" | "all">("pending");
   const [keyword, setKeyword] = useState("");
   const [assets, setAssets] = useState<ProductMediaAsset[]>([]);
@@ -753,13 +756,18 @@ function ImageAssetPickerDialog({
     }
     setLoading(true);
     setError("");
+    const query = {
+      page: 1,
+      pageSize: 80,
+      mediaType: nextTab === "pending" ? "pending" : "",
+      productId: nextTab === "product_assets" && productId ? productId : undefined,
+      ...(nextTab === "product_assets" ? { includePending: false } : { includePending: true })
+    };
     try {
-      const data = await api.productMedia({
-        page: 1,
-        pageSize: 80,
-        mediaType: nextTab === "pending" ? "pending" : "",
-        productId: nextTab === "product_assets" && productId ? productId : undefined,
-        ...(nextTab === "product_assets" ? { includePending: false } : { includePending: true })
+      const data = await queryClient.fetchQuery({
+        queryKey: queryKeys.products.media(query),
+        queryFn: ({ signal }) => api.productMedia(query, { signal }),
+        staleTime: 30_000
       });
       setAssets(data.list || []);
     } catch (err) {
@@ -822,6 +830,7 @@ function ImageAssetPickerDialog({
           if (url) uploadedUrls.push(url);
         }
         if (!uploadedUrls.length) throw new Error("上传成功但没有返回图片地址");
+        queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
         const nextAssets = uploadedUrls.map(uploadedProductAsset);
         setUploadedAssets((prev) => uniqueAssets(nextAssets.concat(prev)));
         if (selectionMode === "multiple") {
@@ -1221,6 +1230,7 @@ function ProductEditorDialog({
   onClose: () => void;
   onSaved: (context?: ProductSaveContext) => void | Promise<void>;
 }) {
+  const queryClient = useQueryClient();
   const open = Boolean(product);
   const [title, setTitle] = useState("");
   const [productType, setProductType] = useState("gift_box");
@@ -1272,8 +1282,18 @@ function ProductEditorDialog({
     const id = Number(product.id || product.product_id || 0);
     setLoading(true);
     Promise.all([
-      id ? api.productDetail(id).catch(() => null) : Promise.resolve(null),
-      api.productOptions(id || undefined)
+      id
+        ? queryClient.fetchQuery({
+          queryKey: queryKeys.products.detail(id),
+          queryFn: ({ signal }) => api.productDetail(id, { signal }),
+          staleTime: 30_000
+        }).catch(() => null)
+        : Promise.resolve(null),
+      queryClient.fetchQuery({
+        queryKey: queryKeys.products.options(id || undefined),
+        queryFn: ({ signal }) => api.productOptions(id || undefined, { signal }),
+        staleTime: 5 * 60_000
+      })
     ])
       .then(([detail, options]) => {
         const optionProduct = productDataFromOptions(options);
@@ -1288,7 +1308,7 @@ function ProductEditorDialog({
       })
       .catch((err) => setError(err instanceof Error ? err.message : "商品详情加载失败"))
       .finally(() => setLoading(false));
-  }, [product, availableCategories]);
+  }, [product, availableCategories, queryClient]);
 
   useEffect(() => {
     if (forcedNonStock && stockItem) setStockItem(false);
@@ -1352,6 +1372,7 @@ function ProductEditorDialog({
       const url = uploadedImageUrl(result);
       if (!url) throw new Error("裁剪图上传成功但没有返回图片地址");
       applySelectedImage(pendingSquareCrop.target, url);
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       setPendingSquareCrop(null);
     } catch (err) {
       setCropError(
@@ -1419,6 +1440,7 @@ function ProductEditorDialog({
     setError("");
     try {
       const saved = await api.saveProduct(buildPayload());
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       onSaved({ created: isCreate, title: title.trim(), result: saved });
       onClose();
     } catch (err) {
@@ -2241,6 +2263,7 @@ function ProductPager({
 }
 
 export function ProductsPage() {
+  const queryClient = useQueryClient();
   const [keyword, setKeyword] = useState("");
   const [productType, setProductType] = useState("");
   const [categoryId, setCategoryId] = useState<string | number>("");
@@ -2275,16 +2298,21 @@ export function ProductsPage() {
   ) {
     setLoading(true);
     setError("");
+    const query = {
+      keyword: nextKeyword,
+      page: nextPage,
+      pageSize: nextPageSize,
+      categoryId: nextCategory,
+      productType: productTypeQueryValue(nextProductType),
+      listedState: nextListedState,
+      stockMode: nextStockMode,
+      quality: nextQuality
+    };
     try {
-      const data = await api.productList({
-        keyword: nextKeyword,
-        page: nextPage,
-        pageSize: nextPageSize,
-        categoryId: nextCategory,
-        productType: productTypeQueryValue(nextProductType),
-        listedState: nextListedState,
-        stockMode: nextStockMode,
-        quality: nextQuality
+      const data = await queryClient.fetchQuery({
+        queryKey: queryKeys.products.list(query),
+        queryFn: ({ signal }) => api.productList(query, { signal }),
+        staleTime: 30_000
       });
       setItems(data.list || []);
       setTotal(data.total || 0);
@@ -2297,6 +2325,7 @@ export function ProductsPage() {
   }
 
   async function afterProductSaved(context?: ProductSaveContext) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
     setNotice("商品已保存");
     if (context?.created && context.title) {
       setKeyword(context.title);
@@ -2332,6 +2361,7 @@ export function ProductsPage() {
         spuId: Number(product.spu_id || 0) || undefined,
         skuIds: productSkuIds(product)
       });
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       setNotice(`${product.title || product.name || "商品"} 已${state ? "上架" : "下架"}`);
       await loadProducts(page, keyword, categoryId, productType, listedState, stockMode, quality);
     } catch (err) {
@@ -2349,6 +2379,7 @@ export function ProductsPage() {
     setNotice("");
     try {
       await api.deleteProduct([id]);
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       setNotice(`${product.title || product.name || "商品"} 已删除`);
       const nextPage = items.length <= 1 && page > 1 ? page - 1 : page;
       await loadProducts(nextPage, keyword, categoryId, productType, listedState, stockMode, quality);
@@ -2398,7 +2429,11 @@ export function ProductsPage() {
   }
 
   useEffect(() => {
-    api.productCategories()
+    queryClient.fetchQuery({
+      queryKey: queryKeys.products.categories(),
+      queryFn: ({ signal }) => api.productCategories({ signal }),
+      staleTime: 5 * 60_000
+    })
       .then((data) => setCategories(data.list || []))
       .catch(() => undefined);
     void loadProducts(1, "", "", "");

@@ -110,6 +110,25 @@ class ProductService(BusinessService):
             limit=limit,
         )
 
+    def media_assets_page(
+        self,
+        *,
+        spu_id: int | None = None,
+        sku_ids: list[int] | None = None,
+        media_type: str = "",
+        include_pending: bool = True,
+        page: int = 1,
+        page_size: int = 80,
+    ) -> tuple[list[dict], int]:
+        return self.db.product_media_assets_page(
+            spu_id=spu_id,
+            sku_ids=sku_ids,
+            media_type=media_type,
+            include_pending=include_pending,
+            page=page,
+            page_size=page_size,
+        )
+
     def delete_media(self, media_id: int) -> dict:
         return self.db.delete_product_media(media_id)
 

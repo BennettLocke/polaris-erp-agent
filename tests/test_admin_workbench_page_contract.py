@@ -299,6 +299,18 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("messageWarehouseId !== undefined ? messageWarehouseId : undefined", lookup_query)
         self.assertNotIn("textParam(params.warehouse_id) || inventoryWarehouseIdFromMessage(message)", lookup_query)
 
+    def test_workbench_inventory_lookup_dialog_fills_default_warehouses_when_unscoped(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        table_section = extract_function_section(workbench_source, "InventoryLookupTable")
+
+        self.assertIn("DEFAULT_INVENTORY_LOOKUP_WAREHOUSES", workbench_source)
+        self.assertIn("inventoryLookupWarehouses(lookup, rows)", table_section)
+        self.assertIn("if (lookup.warehouse_id !== undefined && lookup.warehouse_id !== null && lookup.warehouse_id !== \"\")", workbench_source)
+        self.assertIn("自己店里", workbench_source)
+        self.assertIn("百鑫仓库", workbench_source)
+
     def test_workbench_image_workflow_confirm_skips_empty_root_section(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

@@ -1619,6 +1619,22 @@ function inventoryLookupWarehousesFromRows(rows: WorkbenchInventoryLookupRow[]) 
   return Array.from(names).map((name) => ({ name }));
 }
 
+const DEFAULT_INVENTORY_LOOKUP_WAREHOUSES = [
+  { id: 1, name: "自己店里" },
+  { id: 2, name: "百鑫仓库" }
+];
+
+function inventoryLookupWarehouses(lookup: InventoryLookupResult, rows: WorkbenchInventoryLookupRow[]) {
+  const source = lookup.warehouses?.length ? lookup.warehouses : inventoryLookupWarehousesFromRows(rows);
+  if (lookup.warehouse_id !== undefined && lookup.warehouse_id !== null && lookup.warehouse_id !== "") {
+    return source;
+  }
+  const merged = new Map<string, { id?: number | string | null; name: string }>();
+  DEFAULT_INVENTORY_LOOKUP_WAREHOUSES.forEach((warehouse) => merged.set(warehouse.name, warehouse));
+  source.forEach((warehouse) => merged.set(warehouse.name, warehouse));
+  return Array.from(merged.values());
+}
+
 function inventoryLookupWarehouseName(lookup: InventoryLookupResult) {
   if (String(lookup.warehouse_id || "") === "1") return "自己店里";
   if (String(lookup.warehouse_id || "") === "2") return "百鑫仓库";
@@ -1632,7 +1648,7 @@ function inventoryLookupEmptyTitle(lookup: InventoryLookupResult) {
 
 function InventoryLookupTable({ lookup }: { lookup: InventoryLookupResult }) {
   const rows = lookup.list || [];
-  const warehouses = lookup.warehouses?.length ? lookup.warehouses : inventoryLookupWarehousesFromRows(rows);
+  const warehouses = inventoryLookupWarehouses(lookup, rows);
   if (!rows.length) {
     return (
       <Empty className="workbench-inventory-lookup-empty">

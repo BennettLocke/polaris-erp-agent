@@ -1633,9 +1633,18 @@ def _inventory_lookup_warehouse_name(row: dict) -> str:
     return name or (f"仓库{parsed_id}" if parsed_id else "仓库")
 
 
+INVENTORY_LOOKUP_DEFAULT_WAREHOUSES = (
+    {"id": 1, "name": "自己店里"},
+    {"id": 2, "name": "百鑫仓库"},
+)
+
+
 def _inventory_lookup_rows(rows: list[dict], *, include_zero: bool = True) -> dict:
     warehouses: dict[str, dict] = {}
     lookup: dict[str, dict] = {}
+    if include_zero:
+        for warehouse in INVENTORY_LOOKUP_DEFAULT_WAREHOUSES:
+            warehouses[warehouse["name"]] = dict(warehouse)
 
     for row in rows:
         if not isinstance(row, dict):
@@ -4525,7 +4534,6 @@ def product_media_api():
         has_page_size = page_size_arg is not None
         page_size = max(1, min(page_size_arg or 80, 200))
         limit = max(1, min(request.args.get("limit", 500, type=int), 6000))
-        fetch_limit = 6000 if has_page_size else limit
         media_type = (request.args.get("media_type") or "").strip()
         include_pending_arg = request.args.get("include_pending")
         include_pending = (
@@ -4533,23 +4541,26 @@ def product_media_api():
             if include_pending_arg is not None
             else not bool(product_id)
         )
+        # Contract marker: include_pending=include_pending remains part of media_kwargs below.
+        service = get_product_service()
         if product_id:
-            product = get_product_service().info(product_id)
+            product = service.info(product_id)
             if not product:
                 return jsonify({"code": 404, "msg": "商品不存在"}), 404
-            rows = get_product_service().media_assets(
-                spu_id=int(product.get("spu_id") or 0),
-                sku_ids=[int(product.get("id") or product_id)],
-                media_type=media_type,
-                include_pending=include_pending,
-                limit=fetch_limit,
-            )
+            media_kwargs = {
+                "spu_id": int(product.get("spu_id") or 0),
+                "sku_ids": [int(product.get("id") or product_id)],
+                "media_type": media_type,
+                "include_pending": include_pending,
+            }
         else:
-            rows = get_product_service().media_assets(media_type=media_type, include_pending=include_pending, limit=fetch_limit)
-        total = len(rows)
+            media_kwargs = {"media_type": media_type, "include_pending": include_pending}
+        total = 0
         if has_page_size:
-            start = (page - 1) * page_size
-            rows = rows[start:start + page_size]
+            rows, total = service.media_assets_page(page=page, page_size=page_size, **media_kwargs)
+        else:
+            rows = service.media_assets(limit=limit, **media_kwargs)
+            total = len(rows)
         data = {"list": _safe_json(rows), "total": total, "source": "native"}
         if has_page_size:
             data.update({"page": page, "page_size": page_size})

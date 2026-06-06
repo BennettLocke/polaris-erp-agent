@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
   Eye,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { api } from "@/api";
+import { queryKeys } from "@/lib/admin-query";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1377,6 +1379,7 @@ function MediaSummaryCards({ summary }: { summary?: MediaSummary }) {
 }
 
 function MediaSettingsPanel({ markDirty, onSaved, onError, registerSave }: PanelCallbacks) {
+  const queryClient = useQueryClient();
   const [setting, setSetting] = useState<SystemSetting | null>(null);
   const [mediaType, setMediaType] = useState("");
   const [items, setItems] = useState<ProductMediaAsset[]>([]);
@@ -1396,10 +1399,19 @@ function MediaSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
 
   async function loadMedia(nextPage = page, nextType = mediaType) {
     setLoading(true);
+    const mediaQuery = { page: nextPage, pageSize, mediaType: nextType };
     try {
       const [imageSetting, mediaData] = await Promise.all([
-        api.systemSetting("image_rules"),
-        api.productMedia({ page: nextPage, pageSize, mediaType: nextType })
+        queryClient.fetchQuery({
+          queryKey: queryKeys.settings.system("image_rules"),
+          queryFn: () => api.systemSetting("image_rules"),
+          staleTime: 5 * 60_000
+        }),
+        queryClient.fetchQuery({
+          queryKey: queryKeys.products.media(mediaQuery),
+          queryFn: ({ signal }) => api.productMedia(mediaQuery, { signal }),
+          staleTime: 30_000
+        })
       ]);
       const mediaList = mediaData.list || [];
       setSetting(imageSetting);
@@ -1468,6 +1480,7 @@ function MediaSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
       }
       setMediaType("pending");
       setSelectedMediaIds([]);
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       await loadMedia(1, "pending");
       onSaved(files.length === 1 ? "上传待绑定图片成功，已进入未绑定图片列表" : `已上传 ${uploadedCount} 张待绑定图片，已进入未绑定图片列表`);
     } catch (err) {
@@ -1488,6 +1501,7 @@ function MediaSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
     setDeleting(true);
     try {
       await api.deleteProductMedia(Number(deleteTarget.id));
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       setDeleteTarget(null);
       setSelectedMediaIds((current) => current.filter((id) => id !== Number(deleteTarget.id)));
       await loadMedia(page, mediaType);
@@ -1505,6 +1519,7 @@ function MediaSettingsPanel({ markDirty, onSaved, onError, registerSave }: Panel
     setDeleting(true);
     try {
       await api.deletePendingProductMedia(selectedPendingMediaIds);
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       setSelectedMediaIds([]);
       setConfirmBatchDelete(false);
       await loadMedia(page, "pending");

@@ -88,6 +88,31 @@ class InventoryLookupContractTest(unittest.TestCase):
         self.assertEqual([item["sku_no"] for item in result["list"]], ["SJ1002"])
         self.assertEqual(result["list"][0]["warehouses"], {"自己店里": 0, "百鑫仓库": 25})
 
+    def test_lookup_adds_missing_default_warehouse_columns_for_unscoped_dialog(self):
+        rows = [
+            {
+                "product_id": 301,
+                "sku_no": "SJ1046",
+                "title": "【喜悦】半斤",
+                "color": "橙色",
+                "warehouse_id": 1,
+                "warehouse_name": "自己店里",
+                "unit_name": "套",
+                "quantity": "15",
+            },
+        ]
+
+        result = _inventory_lookup_rows(rows)
+
+        self.assertEqual(
+            result["warehouses"],
+            [
+                {"id": 1, "name": "自己店里"},
+                {"id": 2, "name": "百鑫仓库"},
+            ],
+        )
+        self.assertEqual(result["list"][0]["warehouses"], {"自己店里": 15, "百鑫仓库": 0})
+
     def test_lookup_can_hide_zero_stock_for_selected_warehouse(self):
         rows = [
             {

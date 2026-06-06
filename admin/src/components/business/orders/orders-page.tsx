@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { api, type ProcessOrderListQuery } from "@/api";
+import { queryKeys } from "@/lib/admin-query";
 import { Toolbar } from "@/components/layout/toolbar";
 import {
   AlertDialog,
@@ -1137,6 +1139,7 @@ function OrderDeleteDialog({
 }
 
 function OrdersPage() {
+  const queryClient = useQueryClient();
   const [orders, setOrders] = useState<ProcessOrder[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -1159,12 +1162,22 @@ function OrdersPage() {
   async function load(nextPage = page, nextKeyword = keyword, nextFilter = filter) {
     setLoading(true);
     setError("");
+    const query: ProcessOrderListQuery = {
+      keyword: nextKeyword.trim(),
+      page: nextPage,
+      pageSize: ORDER_PAGE_SIZE,
+      filter: nextFilter
+    };
     try {
-      const data = await api.workflowOrders({
-        keyword: nextKeyword.trim(),
-        page: nextPage,
-        pageSize: ORDER_PAGE_SIZE,
-        filter: nextFilter
+      const data = await queryClient.fetchQuery({
+        queryKey: queryKeys.workflowOrders.list(query),
+        queryFn: ({ signal }) => api.workflowOrders({
+          keyword: query.keyword,
+          page: query.page,
+          pageSize: query.pageSize,
+          filter: query.filter
+        }, { signal }),
+        staleTime: 30_000
       });
       const normalized = (data.list || []).map(normalizeProcessOrder).filter((order) => order.id);
       setOrders(normalized);
@@ -1221,6 +1234,7 @@ function OrdersPage() {
     setFormSaving(true);
     try {
       await api.saveWorkflowOrder(payloadFromForm(form, editingOrder));
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowOrders.root });
       setNotice(editingOrder ? "订单已保存" : "订单已创建");
       setFormOpen(false);
       setEditingOrder(null);
@@ -1268,6 +1282,7 @@ function OrdersPage() {
     setNotice("");
     try {
       await api.updateWorkflowOrderStatus(order.id, { field: field, value });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowOrders.root });
       setOrders((current) => current.map((item) => {
         if (item.id !== order.id) return item;
         const raw: ProcessOrderRaw = { ...item.raw, [field]: value };
@@ -1295,6 +1310,7 @@ function OrdersPage() {
     setNotice("");
     try {
       await api.deleteWorkflowOrder(deleteOrder.id);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowOrders.root });
       setNotice("订单已删除");
       setDeleteOrder(null);
       setDetailOrder((current) => current?.id === deleteOrder.id ? null : current);

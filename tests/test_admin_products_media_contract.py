@@ -80,6 +80,28 @@ class AdminProductsMediaContractTest(unittest.TestCase):
         self.assertIn("else not bool(product_id)", http_source)
         self.assertIn("include_pending=include_pending", http_source)
 
+    def test_product_media_page_uses_database_pagination_instead_of_fetching_all_assets(self):
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        service_source = (ROOT / "src" / "services" / "business" / "products.py").read_text(encoding="utf-8")
+        db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+
+        self.assertIn("media_assets_page", http_source)
+        self.assertIn("def media_assets_page", service_source)
+        self.assertIn("def product_media_assets_page", db_source)
+        self.assertIn("COUNT(*) AS total", db_source)
+        self.assertIn("LIMIT %s OFFSET %s", db_source)
+        self.assertNotIn("fetch_limit = 6000 if has_page_size else limit", http_source)
+        self.assertNotIn("rows = rows[start:start + page_size]", http_source)
+
+    def test_react_admin_declares_tanstack_query_cache_layer(self):
+        package_source = (ROOT / "admin" / "package.json").read_text(encoding="utf-8")
+        main_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+
+        self.assertIn("@tanstack/react-query", package_source)
+        self.assertIn("QueryClientProvider", main_source)
+        self.assertIn("signal?: AbortSignal", api_source)
+
 
 if __name__ == "__main__":
     unittest.main()
