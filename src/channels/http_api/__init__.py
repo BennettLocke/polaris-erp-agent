@@ -834,6 +834,15 @@ def _normalize_inventory_keyword(keyword: str) -> str:
     return normalize_product_name(text, specs=PRODUCT_SPECS)
 
 
+def _inventory_lookup_warehouse_id_from_text(text: str) -> int | None:
+    value = str(text or "")
+    if any(word in value for word in ("自己店里", "自己店", "店里", "自己", "门店", "本店")):
+        return 1
+    if any(word in value for word in ("百鑫仓库", "百鑫仓", "百鑫")):
+        return 2
+    return None
+
+
 def _image_first(value) -> str:
     if not value:
         return ""
@@ -1703,6 +1712,56 @@ def _inventory_lookup_rows(rows: list[dict], *, include_zero: bool = True) -> di
     }
 
 
+def _inventory_lookup_from_agent_response(
+    response: str,
+    *,
+    keyword: str = "",
+    color: str = "",
+    warehouse_id: int | None = None,
+) -> dict | None:
+    parsed_rows: list[dict] = []
+    for raw_line in str(response or "").splitlines():
+        cells = [cell.strip() for cell in raw_line.split("|") if cell.strip()]
+        if len(cells) < 4:
+            continue
+        warehouse_cell, title_cell, color_cell, quantity_cell = cells[:4]
+        if (
+            title_cell in {"产品", "商品", "商品/SKU"}
+            or color_cell in {"颜色", "颜色/规格"}
+            or title_cell.startswith("---")
+        ):
+            continue
+        if "合计" in title_cell or "记录" in color_cell:
+            continue
+        warehouse_name = _inventory_lookup_warehouse_name({"warehouse_name": warehouse_cell})
+        if warehouse_name not in {"自己店里", "百鑫仓库"}:
+            continue
+        quantity = _inventory_lookup_qty(quantity_cell)
+        parsed_rows.append({
+            "product_id": f"{title_cell}|{color_cell}",
+            "sku_no": "",
+            "title": title_cell,
+            "color": color_cell,
+            "warehouse_id": 1 if warehouse_name == "自己店里" else 2,
+            "warehouse_name": warehouse_name,
+            "unit_name": "套",
+            "quantity": quantity,
+        })
+    if not parsed_rows:
+        return None
+    data = _inventory_lookup_rows(parsed_rows, include_zero=warehouse_id is None)
+    if not data.get("list"):
+        return None
+    data.update({
+        "total": len(data.get("list") or []),
+        "keyword": keyword,
+        "color": color,
+        "warehouse_id": warehouse_id,
+        "source": "agent_response",
+    })
+    return data
+
+
 def _merge_product_color_options(card: dict, products: list[dict]) -> None:
     """Add same-product color options that currently have no stock rows."""
     color_map = {item.get("color"): item for item in card.get("colors", [])}
@@ -2360,13 +2419,20 @@ def chat():
             user_id=user_id,
             session_id=session_id,
         )
-        update_screen_state(status="talk", role="assistant", text=str(response or ""), source="web-chat")
+        response_text = str(response or "")
+        inventory_lookup = _inventory_lookup_from_agent_response(
+            response_text,
+            keyword=_normalize_inventory_keyword(message),
+            warehouse_id=_inventory_lookup_warehouse_id_from_text(message),
+        )
+        update_screen_state(status="talk", role="assistant", text=response_text, source="web-chat")
         return jsonify({
             "code": 0,
             "data": {
                 "response": response,
                 "session_id": session_id,
                 "session": _session_snapshot(session_id),
+                "inventory_lookup": _safe_json(inventory_lookup),
             }
         })
     except Exception as e:

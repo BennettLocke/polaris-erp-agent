@@ -173,6 +173,7 @@ export type AgentChatResponse = {
   response: string;
   session_id: string;
   session?: AgentSessionSnapshot;
+  inventory_lookup?: InventoryLookupResult | null;
 };
 
 export type AgentHistoryResult = {

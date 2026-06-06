@@ -1012,7 +1012,7 @@ export function WorkbenchPage() {
       setConfirmOpen(true);
     } else {
       setConfirmOpen(false);
-      const inventoryLookup = await loadInventoryLookupForMessage(message, responseText, nextSession);
+      const inventoryLookup = data.inventory_lookup || await loadInventoryLookupForMessage(message, responseText, nextSession);
       const inventoryResult = inventoryLookup ? null : await loadInventoryCardsForMessage(message, responseText, nextSession);
       const historyItem = pushBusinessHistory(responseText, nextSession, "text", {
         inventoryCards: inventoryResult?.list || [],

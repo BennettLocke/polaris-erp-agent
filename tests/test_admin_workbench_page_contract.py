@@ -323,6 +323,19 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("normalizeInventoryWarehouseName", workbench_source)
         self.assertIn("line.split(\"|\")", workbench_source)
 
+    def test_workbench_prefers_backend_inventory_lookup_payload(self):
+        types_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        send_section = extract_function_section(workbench_source, "sendTextMessage")
+
+        self.assertIn("inventory_lookup?: InventoryLookupResult | null", types_source)
+        self.assertIn("_inventory_lookup_from_agent_response", http_source)
+        self.assertIn('"inventory_lookup": _safe_json(inventory_lookup)', http_source)
+        self.assertIn("data.inventory_lookup || await loadInventoryLookupForMessage", send_section)
+
     def test_workbench_image_workflow_confirm_skips_empty_root_section(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

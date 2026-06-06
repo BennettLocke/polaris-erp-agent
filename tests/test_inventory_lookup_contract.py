@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from src.channels import http_api
-from src.channels.http_api import _inventory_lookup_rows
+from src.channels.http_api import _inventory_lookup_from_agent_response, _inventory_lookup_rows
 
 
 class InventoryLookupContractTest(unittest.TestCase):
@@ -112,6 +112,37 @@ class InventoryLookupContractTest(unittest.TestCase):
             ],
         )
         self.assertEqual(result["list"][0]["warehouses"], {"自己店里": 15, "百鑫仓库": 0})
+
+    def test_agent_response_inventory_table_becomes_structured_lookup(self):
+        response = """
+库存查询：喜悦 半斤
+总计：6 条有库存记录，83 套
+
+**自己店里**
+| 仓库 | 产品 | 颜色 | 库存 |
+| --- | --- | --- | ---: |
+| 自己店里 | 【喜悦】半斤 | 橙色 | 15 |
+| 自己店里 | 【喜悦】半斤 | 蓝色 | 11 |
+| 自己店里 | 【喜悦】半斤 | 黄色 | 18 |
+
+**百鑫仓库**
+| 仓库 | 产品 | 颜色 | 库存 |
+| --- | --- | --- | ---: |
+| 百鑫仓库 | 【喜悦】半斤 | 橙色 | 19 |
+| 百鑫仓库 | 【喜悦】半斤 | 红色 | 6 |
+| 百鑫仓库 | 【喜悦】半斤 | 黄色 | 14 |
+"""
+
+        result = _inventory_lookup_from_agent_response(response, keyword="喜悦 半斤")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["warehouses"], [{"id": 1, "name": "自己店里"}, {"id": 2, "name": "百鑫仓库"}])
+        by_color = {row["color"]: row for row in result["list"]}
+        self.assertEqual(by_color["橙色"]["warehouses"], {"自己店里": 15, "百鑫仓库": 19})
+        self.assertEqual(by_color["红色"]["warehouses"], {"自己店里": 0, "百鑫仓库": 6})
+        self.assertEqual(by_color["蓝色"]["warehouses"], {"自己店里": 11, "百鑫仓库": 0})
+        self.assertEqual(by_color["黄色"]["warehouses"], {"自己店里": 18, "百鑫仓库": 14})
 
     def test_lookup_can_hide_zero_stock_for_selected_warehouse(self):
         rows = [
