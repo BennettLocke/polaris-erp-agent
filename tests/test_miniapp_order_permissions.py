@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -288,6 +289,66 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
         finally:
             api_module._mini_workflow_inventory_payload = original_inventory_payload
             api_module._verify_native_token = original_verify_native_token
+
+    def test_mini_inventory_payload_groups_skus_into_product_matrix(self):
+        class FakeInventoryService:
+            def search(self, **kwargs):
+                return [
+                    {
+                        "product_id": 101,
+                        "spu_id": 10,
+                        "sku_no": "SJ1001",
+                        "title": "【喜悦】半斤",
+                        "color": "红色",
+                        "simple_desc": "1件20套",
+                        "unit_name": "套",
+                        "warehouse_id": 1,
+                        "warehouse_name": "自己店里",
+                        "quantity": "0",
+                    },
+                    {
+                        "product_id": 101,
+                        "spu_id": 10,
+                        "sku_no": "SJ1001",
+                        "title": "【喜悦】半斤",
+                        "color": "红色",
+                        "simple_desc": "1件20套",
+                        "unit_name": "套",
+                        "warehouse_id": 2,
+                        "warehouse_name": "百鑫仓库",
+                        "quantity": "12",
+                    },
+                    {
+                        "product_id": 102,
+                        "spu_id": 10,
+                        "sku_no": "SJ1002",
+                        "title": "【喜悦】半斤",
+                        "color": "黄色",
+                        "simple_desc": "1件20套",
+                        "unit_name": "套",
+                        "warehouse_id": 1,
+                        "warehouse_name": "自己店里",
+                        "quantity": "5",
+                    },
+                ]
+
+        with patch.object(api_module, "get_inventory_service", return_value=FakeInventoryService()):
+            payload = api_module._mini_workflow_inventory_payload("喜悦半斤")
+
+        self.assertEqual(
+            payload["warehouses"],
+            [{"id": 1, "name": "自己店里"}, {"id": 2, "name": "百鑫仓库"}],
+        )
+        self.assertEqual(len(payload["groups"]), 1)
+        group = payload["groups"][0]
+        self.assertEqual(group["title"], "【喜悦】半斤")
+        self.assertEqual(group["piece_text"], "1件20套")
+        self.assertEqual(group["total_qty"], 17)
+        self.assertEqual([row["code"] for row in group["rows"]], ["SJ1001", "SJ1002"])
+        red_row = next(row for row in group["rows"] if row["code"] == "SJ1001")
+        self.assertEqual(red_row["warehouses"], {"自己店里": 0, "百鑫仓库": 12})
+        self.assertEqual(red_row["total_qty"], 12)
+        self.assertEqual(payload["items"][0]["code"], "SJ1001")
 
     def test_empty_payload_never_contains_order_rows(self):
         payload = _mini_orderflow_empty_payload(page=2, page_size=30)

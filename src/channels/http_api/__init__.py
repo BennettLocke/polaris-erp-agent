@@ -4214,6 +4214,148 @@ def _mini_workflow_inventory_payload(keyword: str = "") -> dict:
     }
 
 
+def _mini_inventory_row_qty(row: dict) -> float:
+    for key in ("inventory", "stock", "quantity"):
+        if row.get(key) not in (None, ""):
+            return _mini_number(row.get(key))
+    return 0.0
+
+
+def _mini_inventory_default_warehouses() -> list[dict]:
+    return [dict(warehouse) for warehouse in INVENTORY_LOOKUP_DEFAULT_WAREHOUSES]
+
+
+def _mini_inventory_sorted_warehouses(warehouse_map: dict[str, dict]) -> list[dict]:
+    return sorted(
+        warehouse_map.values(),
+        key=lambda item: (
+            0 if item.get("name") == INVENTORY_LOOKUP_DEFAULT_WAREHOUSES[0]["name"] else 1 if item.get("name") == INVENTORY_LOOKUP_DEFAULT_WAREHOUSES[1]["name"] else 9,
+            int(item.get("id") or 0),
+            str(item.get("name") or ""),
+        ),
+    )
+
+
+def _mini_inventory_row_warehouse(row: dict, warehouse_map: dict[str, dict]) -> str:
+    name = _inventory_lookup_warehouse_name(row)
+    if name not in warehouse_map:
+        warehouse_map[name] = {"id": row.get("warehouse_id"), "name": name}
+    return name
+
+
+def _mini_workflow_inventory_payload(keyword: str = "") -> dict:
+    rows = get_inventory_service().search(keyword=keyword, only_in_stock=False, limit=3000)
+    warehouse_map = {warehouse["name"]: dict(warehouse) for warehouse in _mini_inventory_default_warehouses()}
+    grouped: dict[str, dict] = {}
+    product_groups: dict[str, dict] = {}
+
+    for row in (rows if isinstance(rows, list) else []):
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("sku_no") or row.get("code") or row.get("product_code") or "").strip()
+        name = str(row.get("title") or row.get("name") or "").strip()
+        color = str(row.get("color") or row.get("spec") or "").strip()
+        unit_name = str(row.get("unit_name") or row.get("unit") or "").strip()
+        piece_text = str(row.get("simple_desc") or row.get("box_spec") or "").strip()
+        warehouse_name = _mini_inventory_row_warehouse(row, warehouse_map)
+        qty = _mini_inventory_row_qty(row)
+
+        item_key = f"{code}|{name}|{color}"
+        item = grouped.setdefault(item_key, {
+            "id": row.get("product_id") or row.get("id"),
+            "spu_id": row.get("spu_id"),
+            "name": name or "商品",
+            "code": code,
+            "spec": color,
+            "color": color,
+            "unit_name": unit_name,
+            "box_spec": piece_text,
+            "qty_baixin": 0.0,
+            "qty_shop": 0.0,
+            "total_qty": 0.0,
+        })
+        if warehouse_name == INVENTORY_LOOKUP_DEFAULT_WAREHOUSES[0]["name"]:
+            item["qty_shop"] += qty
+        elif warehouse_name == INVENTORY_LOOKUP_DEFAULT_WAREHOUSES[1]["name"]:
+            item["qty_baixin"] += qty
+        item["total_qty"] += qty
+
+        group_key = str(row.get("spu_id") or name or code or "product")
+        group = product_groups.setdefault(group_key, {
+            "id": row.get("spu_id") or row.get("product_id") or row.get("id"),
+            "title": name or "商品",
+            "piece_text": piece_text,
+            "total_qty": 0.0,
+            "rows": {},
+        })
+        if not group.get("piece_text") and piece_text:
+            group["piece_text"] = piece_text
+        sku_key = str(row.get("product_id") or row.get("id") or code or color or f"sku-{len(group['rows']) + 1}")
+        sku = group["rows"].setdefault(sku_key, {
+            "id": row.get("product_id") or row.get("id"),
+            "code": code,
+            "color": color,
+            "spec": color,
+            "unit_name": unit_name or "套",
+            "piece_text": piece_text,
+            "warehouses": {warehouse["name"]: 0.0 for warehouse in _mini_inventory_default_warehouses()},
+            "warehouse_ids": {},
+            "total_qty": 0.0,
+        })
+        if code and not sku.get("code"):
+            sku["code"] = code
+        if color and not sku.get("color"):
+            sku["color"] = color
+            sku["spec"] = color
+        if unit_name and not sku.get("unit_name"):
+            sku["unit_name"] = unit_name
+        if piece_text and not sku.get("piece_text"):
+            sku["piece_text"] = piece_text
+        sku["warehouses"].setdefault(warehouse_name, 0.0)
+        sku["warehouses"][warehouse_name] += qty
+        sku["warehouse_ids"][warehouse_name] = row.get("warehouse_id")
+        sku["total_qty"] += qty
+        group["total_qty"] += qty
+
+    items = []
+    total_qty = 0.0
+    for item in grouped.values():
+        total_qty += _mini_number(item.get("total_qty"))
+        item["qty_baixin"] = _mini_inventory_qty_text(_mini_number(item.get("qty_baixin")))
+        item["qty_shop"] = _mini_inventory_qty_text(_mini_number(item.get("qty_shop")))
+        item["total_qty"] = _mini_inventory_qty_text(_mini_number(item.get("total_qty")))
+        items.append(item)
+    items.sort(key=lambda item: (-_mini_number(item.get("total_qty")), str(item.get("name") or "")))
+
+    warehouses = _mini_inventory_sorted_warehouses(warehouse_map)
+    groups = []
+    for group in product_groups.values():
+        sku_rows = []
+        for sku in group.get("rows", {}).values():
+            for warehouse in warehouses:
+                sku["warehouses"].setdefault(warehouse["name"], 0.0)
+            sku["warehouses"] = {
+                warehouse["name"]: _mini_inventory_qty_text(_mini_number(sku["warehouses"].get(warehouse["name"])))
+                for warehouse in warehouses
+            }
+            sku["total_qty"] = _mini_inventory_qty_text(_mini_number(sku.get("total_qty")))
+            sku_rows.append(sku)
+        sku_rows.sort(key=lambda sku: (-_mini_number(sku.get("total_qty")), str(sku.get("color") or ""), str(sku.get("code") or "")))
+        group["rows"] = sku_rows
+        group["total_qty"] = _mini_inventory_qty_text(_mini_number(group.get("total_qty")))
+        groups.append(group)
+    groups.sort(key=lambda group: (-_mini_number(group.get("total_qty")), str(group.get("title") or "")))
+
+    return {
+        "items": _safe_json(items),
+        "warehouses": _safe_json(warehouses),
+        "groups": _safe_json(groups),
+        "total_qty": _mini_inventory_qty_text(total_qty),
+        "total_items": len(items),
+        "source": "sjagent_core",
+    }
+
+
 @app.route("/api/mini/workflow-order/customer-list", methods=["GET", "POST"])
 def mini_workflow_customer_list_api():
     if not _mini_order_user_can_edit(_mini_request_user()):
@@ -4284,8 +4426,12 @@ def mini_inventory_list_api():
         if not isinstance(data, dict):
             data = {"items": []}
         items = data.get("items") if isinstance(data.get("items"), list) else []
+        warehouses = data.get("warehouses") if isinstance(data.get("warehouses"), list) else _mini_inventory_default_warehouses()
+        groups = data.get("groups") if isinstance(data.get("groups"), list) else []
         data.update({
             "items": _safe_json(items),
+            "warehouses": _safe_json(warehouses),
+            "groups": _safe_json(groups),
             "total_items": int(data.get("total_items") or len(items)),
             "page": page,
             "page_size": page_size,
