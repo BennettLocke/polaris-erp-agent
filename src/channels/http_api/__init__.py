@@ -4271,6 +4271,32 @@ def mini_workflow_inventory_search_api():
         return _api_exception_response(e)
 
 
+@app.route("/api/mini/inventory/list", methods=["GET", "POST"])
+def mini_inventory_list_api():
+    """Readonly mini-program inventory list for internal users."""
+    if not _mini_order_user_can_edit(_mini_request_user()):
+        return _mini_order_edit_denied_response()
+    payload = _mini_request_payload()
+    page, page_size = _mini_page_payload(payload)
+    keyword = _normalize_inventory_keyword(str(_mini_value(payload, "keyword", "q", "wd", default="")).strip())
+    try:
+        data = _mini_workflow_inventory_payload(keyword)
+        if not isinstance(data, dict):
+            data = {"items": []}
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        data.update({
+            "items": _safe_json(items),
+            "total_items": int(data.get("total_items") or len(items)),
+            "page": page,
+            "page_size": page_size,
+            "source": data.get("source") or "sjagent_core",
+        })
+        return jsonify({"code": 0, "data": _safe_json(data)})
+    except Exception as e:
+        logger.error(f"mini inventory list query failed: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/mini/workflow-order/save", methods=["POST"])
 def mini_workflow_save_api():
     if not _mini_order_user_can_edit(_mini_request_user()):

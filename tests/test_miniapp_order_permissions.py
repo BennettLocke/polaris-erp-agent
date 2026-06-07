@@ -24,6 +24,7 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
         self.assertTrue(_miniapp_path_is_public("/api/mini/home"))
         self.assertFalse(_miniapp_path_is_public("/api/mini/user"))
         self.assertFalse(_miniapp_path_is_public("/api/mini/orderflow/list"))
+        self.assertFalse(_miniapp_path_is_public("/api/mini/inventory/list"))
         self.assertFalse(_miniapp_path_is_public("/api/mini/workflow-order/search"))
         self.assertFalse(_miniapp_path_is_public("/api/mini/workflow-order/inventory-search"))
 
@@ -218,16 +219,74 @@ class MiniAppOrderPermissionTests(unittest.TestCase):
                     "/api/mini/workflow-order/inventory-search?keyword=岩彩",
                     headers={"X-SJ-Token": "valid-token"},
                 )
+                inventory_list_response = client.get(
+                    "/api/mini/inventory/list?keyword=岩彩",
+                    headers={"X-SJ-Token": "valid-token"},
+                )
                 customer_response = client.get(
                     "/api/mini/workflow-order/customer-list?nickname=齐唯",
                     headers={"X-SJ-Token": "valid-token"},
                 )
 
             self.assertEqual(inventory_response.status_code, 403)
+            self.assertEqual(inventory_list_response.status_code, 403)
             self.assertEqual(customer_response.status_code, 403)
         finally:
             api_module._mini_workflow_inventory_payload = original_inventory_payload
             api_module._mini_workflow_order_list = original_workflow_order_list
+            api_module._verify_native_token = original_verify_native_token
+
+    def test_staff_can_use_readonly_mini_inventory_list(self):
+        captured = {}
+        original_inventory_payload = api_module._mini_workflow_inventory_payload
+        original_verify_native_token = api_module._verify_native_token
+        try:
+            api_module._verify_native_token = lambda token: {
+                "role": "staff",
+                "id": 7,
+                "is_active": 1,
+                "approval_status": "approved",
+                "miniapp_allowed": True,
+            }
+
+            def fake_inventory_payload(keyword=""):
+                captured["keyword"] = keyword
+                return {
+                    "items": [
+                        {
+                            "id": 1,
+                            "code": "SJ1576",
+                            "name": "六小盒",
+                            "color": "红色",
+                            "qty_shop": 3,
+                            "qty_baixin": 6,
+                            "total_qty": 9,
+                        }
+                    ],
+                    "total_items": 1,
+                    "total_qty": 9,
+                    "source": "sjagent_core",
+                }
+
+            api_module._mini_workflow_inventory_payload = fake_inventory_payload
+
+            with api_module.app.test_client() as client:
+                response = client.get(
+                    "/api/mini/inventory/list?keyword=百鑫半斤库存&page=2&page_size=60",
+                    headers={"X-SJ-Token": "valid-token"},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["code"], 0)
+            self.assertEqual(captured["keyword"], "半斤")
+            self.assertEqual(payload["data"]["page"], 2)
+            self.assertEqual(payload["data"]["page_size"], 60)
+            self.assertEqual(payload["data"]["items"][0]["code"], "SJ1576")
+            self.assertEqual(payload["data"]["total_items"], 1)
+            self.assertEqual(payload["data"]["total_qty"], 9)
+        finally:
+            api_module._mini_workflow_inventory_payload = original_inventory_payload
             api_module._verify_native_token = original_verify_native_token
 
     def test_empty_payload_never_contains_order_rows(self):
