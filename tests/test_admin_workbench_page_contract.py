@@ -110,6 +110,26 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("document.addEventListener(\"visibilitychange\"", workbench_section)
         self.assertIn("document.hidden", workbench_section)
 
+    def test_workbench_new_session_resets_conversation_state(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        new_session_section = extract_function_section(workbench_source, "createNewSession")
+
+        for statement in [
+            "setSessionId(next)",
+            "setMessages([WELCOME_MESSAGE])",
+            "setBusinessHistory([])",
+            "setSessionSnapshot(null)",
+            "setResultDialog(null)",
+            "setInput(\"\")",
+            "setFiles([])",
+            "setError(\"\")",
+            "setConfirmOpen(false)",
+            "setConfirming(false)",
+        ]:
+            self.assertIn(statement, new_session_section)
+
     def test_workbench_only_renders_real_image_urls_as_images(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
@@ -290,6 +310,11 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn(".workbench-inventory-lookup-zero", styles_source)
         self.assertIn(".sj-dialog-content.workbench-result-dialog", styles_source)
         self.assertIn("overflow-x: auto", styles_source)
+        self.assertIn('<th>商品</th>', workbench_source)
+        self.assertIn("{inventoryQuantityText(qty)} {unitName}", workbench_source)
+        self.assertIn("{inventoryQuantityText(row.total_stock)} {row.unit_name || \"套\"}", workbench_source)
+        self.assertNotIn("未编号", workbench_source)
+        self.assertNotIn("piece_text || row.unit_name", workbench_source)
 
     def test_workbench_inventory_lookup_ignores_session_warehouse_when_message_unspecified(self):
         workbench_source = (

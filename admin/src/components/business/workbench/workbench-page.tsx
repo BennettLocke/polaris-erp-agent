@@ -1101,11 +1101,15 @@ export function WorkbenchPage() {
   function createNewSession() {
     const next = newSessionId();
     setSessionId(next);
+    setMessages([WELCOME_MESSAGE]);
+    setBusinessHistory([]);
     setSessionSnapshot(null);
     setResultDialog(null);
     setInput("");
     setFiles([]);
+    setError("");
     setConfirmOpen(false);
+    setConfirming(false);
   }
 
   function chooseFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -1743,7 +1747,7 @@ function InventoryLookupTable({ lookup }: { lookup: InventoryLookupResult }) {
       <table className="workbench-inventory-lookup-table">
         <thead>
           <tr>
-            <th>商品/SKU</th>
+            <th>商品</th>
             <th>颜色/规格</th>
             {warehouses.map((warehouse) => (
               <th key={warehouse.name}>{warehouse.name}</th>
@@ -1756,24 +1760,21 @@ function InventoryLookupTable({ lookup }: { lookup: InventoryLookupResult }) {
             <tr key={`${row.product_id || row.sku_no || row.title}-${row.color || ""}`}>
               <td>
                 <strong>{row.title}</strong>
-                <span>{row.sku_no || "未编号"}</span>
               </td>
               <td>
                 <strong>{row.color || "默认颜色"}</strong>
-                <span>{row.piece_text || row.unit_name || "单位"}</span>
               </td>
               {warehouses.map((warehouse) => {
                 const qty = Number(row.warehouses?.[warehouse.name] || 0);
+                const unitName = row.unit_name || "套";
                 return (
                   <td key={`${row.product_id || row.sku_no}-${warehouse.name}`} className={qty === 0 ? "workbench-inventory-lookup-zero" : ""}>
-                    {inventoryQuantityText(qty)}
-                    <span>{row.unit_name || "套"}</span>
+                    <strong>{inventoryQuantityText(qty)} {unitName}</strong>
                   </td>
                 );
               })}
               <td>
-                <strong>{inventoryQuantityText(row.total_stock)}</strong>
-                <span>{row.unit_name || "套"}</span>
+                <strong>{inventoryQuantityText(row.total_stock)} {row.unit_name || "套"}</strong>
               </td>
             </tr>
           ))}
