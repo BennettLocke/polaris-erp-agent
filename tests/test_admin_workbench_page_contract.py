@@ -288,6 +288,8 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("暂无匹配库存", workbench_source)
         self.assertIn(".workbench-inventory-lookup-table", styles_source)
         self.assertIn(".workbench-inventory-lookup-zero", styles_source)
+        self.assertIn(".sj-dialog-content.workbench-result-dialog", styles_source)
+        self.assertIn("overflow-x: auto", styles_source)
 
     def test_workbench_inventory_lookup_ignores_session_warehouse_when_message_unspecified(self):
         workbench_source = (
