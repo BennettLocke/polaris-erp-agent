@@ -446,6 +446,11 @@ export type SalesProduct = {
   series?: string;
   size_label?: string;
   product_type?: string;
+  default_supplier_id?: number | string | null;
+  default_supplier_name?: string;
+  default_supplier_status?: string;
+  manufacturer_id?: number | string | null;
+  manufacturer_name?: string;
   color?: string;
   spec?: string;
   coding?: string;
@@ -512,6 +517,7 @@ export type ProductOptions = {
   product_category?: ProductCategory[];
   unit_list?: ProductUnit[];
   product_status_list?: ProductStatusOption[];
+  manufacturer_list?: ProductManufacturer[];
   media_assets?: ProductMediaAsset[];
 };
 
@@ -520,6 +526,7 @@ export type ProductSavePayload = {
   title: string;
   product_type?: string;
   product_category_id: Array<string | number>;
+  default_supplier_id?: string | number | null;
   status?: string | number;
   purchase_policy: "one_case" | "order_qty";
   simple_desc?: string;
@@ -700,6 +707,31 @@ export type ProductUnit = {
   id?: number;
   name: string;
   code?: string;
+};
+
+export type ProductManufacturer = {
+  id: number;
+  manufacturer_id?: number;
+  name: string;
+  kind?: string;
+  contact_name?: string;
+  phone?: string;
+  address?: string;
+  note?: string;
+  status?: string;
+  is_enabled?: number;
+  product_count?: number;
+};
+
+export type ManufacturerSavePayload = {
+  id?: number;
+  manufacturer_id?: number;
+  name: string;
+  contact_name?: string;
+  phone?: string;
+  address?: string;
+  note?: string;
+  status?: string;
 };
 
 export type Warehouse = {

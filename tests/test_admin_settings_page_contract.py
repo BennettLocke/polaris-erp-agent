@@ -112,6 +112,24 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         self.assertIn('"/api/product/categories"', api_source)
         self.assertIn("ProductCategorySavePayload", types_source)
 
+    def test_settings_page_can_manage_manufacturers(self):
+        settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        types_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+
+        self.assertIn('"manufacturers"', settings_source)
+        self.assertIn("ManufacturersPanel", settings_source)
+        self.assertIn("manufacturerDraft", settings_source)
+        self.assertIn("api.manufacturers", settings_source)
+        self.assertIn("api.saveManufacturer", settings_source)
+        self.assertIn("api.updateManufacturerStatus", settings_source)
+        self.assertIn("product_count", settings_source)
+        self.assertIn("/api/settings/manufacturers", api_source)
+        self.assertIn("saveManufacturer", api_source)
+        self.assertIn("updateManufacturerStatus", api_source)
+        self.assertIn("ProductManufacturer", types_source)
+        self.assertIn("ManufacturerSavePayload", types_source)
+
     def test_print_settings_has_print_preview_dialog(self):
         settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
         print_source = settings_source.split("function PrintSettingsPanel", 1)[1].split("function MiniappImageConfigTable", 1)[0]

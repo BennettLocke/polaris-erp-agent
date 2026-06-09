@@ -151,6 +151,24 @@ class AdminProductEditContractTest(unittest.TestCase):
         self.assertIn("ProductOptions", type_source)
         self.assertIn("ProductSavePayload", type_source)
 
+    def test_product_editor_can_bind_manufacturer_to_spu(self):
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+        editor_source = product_source.split("function ProductEditorDialog", 1)[1].split(
+            "function ProductToolbar", 1
+        )[0]
+        type_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+
+        self.assertIn("manufacturerId", editor_source)
+        self.assertIn("setManufacturerId", editor_source)
+        self.assertIn("manufacturer_list", editor_source)
+        self.assertIn("default_supplier_id", editor_source)
+        self.assertIn("manufacturerOptions", editor_source)
+        self.assertIn("ProductManufacturer", type_source)
+        self.assertIn("manufacturer_list?: ProductManufacturer[]", type_source)
+        self.assertIn("default_supplier_id?:", type_source)
+
     def test_product_image_picker_supports_multi_upload_scoped_tabs_and_detail_multi_select(self):
         api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
         product_source = (

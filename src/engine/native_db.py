@@ -1079,7 +1079,9 @@ class NativeDBClient:
                 s.is_stock_item, s.is_sellable, s.is_listed, s.status,
                 s.main_image_url, s.detail_image_urls, s.content_html, s.created_at, s.updated_at,
                 sp.title, sp.product_type, sp.series, sp.size_label, sp.available_colors,
-                sp.case_pack_qty, sp.default_category_id, sp.inventory_policy AS spu_inventory_policy,
+                sp.case_pack_qty, sp.default_category_id, sp.default_supplier_id,
+                supplier.name AS default_supplier_name, supplier.status AS default_supplier_status,
+                sp.inventory_policy AS spu_inventory_policy,
                 sp.purchase_policy AS spu_purchase_policy,
                 (
                     SELECT pm.url
@@ -1095,6 +1097,7 @@ class NativeDBClient:
                 COALESCE(inv.total_qty, 0) AS inventory
             FROM product_sku s
             JOIN product_spu sp ON sp.id = s.spu_id
+            LEFT JOIN party supplier ON supplier.id = sp.default_supplier_id AND supplier.deleted_at IS NULL
             LEFT JOIN product_unit u ON u.id = s.unit_id
             LEFT JOIN product_category c ON c.id = s.primary_category_id
             LEFT JOIN (
@@ -1176,6 +1179,11 @@ class NativeDBClient:
             "series": row.get("series") or "",
             "size_label": row.get("size_label") or "",
             "product_type": row.get("product_type") or "",
+            "default_supplier_id": row.get("default_supplier_id"),
+            "default_supplier_name": row.get("default_supplier_name") or "",
+            "default_supplier_status": row.get("default_supplier_status") or "",
+            "manufacturer_id": row.get("default_supplier_id"),
+            "manufacturer_name": row.get("default_supplier_name") or "",
             "inventory_policy": row.get("inventory_policy") or row.get("spu_inventory_policy") or "",
             "purchase_policy": purchase_policy,
             "is_one_case_purchase": 1 if purchase_policy == "one_case" else 0,
@@ -1674,6 +1682,156 @@ class NativeDBClient:
         )
         return {"code": 0, "data": {"id": int(category_id), field: clean_url, "affected": affected}}
 
+    def _manufacturer_id_value(self, value: Any) -> int | None:
+        try:
+            parsed = int(value or 0)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def _manufacturer_payload(self, row: dict) -> dict:
+        manufacturer_id = int(row.get("id") or row.get("manufacturer_id") or 0)
+        status = str(row.get("status") or "active")
+        return {
+            "id": manufacturer_id,
+            "manufacturer_id": manufacturer_id,
+            "name": row.get("name") or "",
+            "kind": row.get("kind") or "supplier",
+            "contact_name": row.get("contact_name") or "",
+            "phone": row.get("phone") or "",
+            "address": row.get("address") or "",
+            "note": row.get("note") or "",
+            "status": status,
+            "is_enabled": 1 if status == "active" else 0,
+            "product_count": int(row.get("product_count") or 0),
+        }
+
+    def _manufacturer_rows_sql(self) -> str:
+        return """
+            SELECT
+                p.id, p.name, p.kind, p.contact_name, p.phone, p.address,
+                p.note, p.status, COALESCE(bound.product_count, 0) AS product_count
+            FROM party p
+            LEFT JOIN (
+                SELECT default_supplier_id, COUNT(*) AS product_count
+                FROM product_spu
+                WHERE deleted_at IS NULL AND default_supplier_id IS NOT NULL
+                GROUP BY default_supplier_id
+            ) bound ON bound.default_supplier_id = p.id
+        """
+
+    def product_manufacturers(
+        self,
+        *,
+        active_only: bool = False,
+        include_ids: Iterable[Any] | None = None,
+    ) -> list[dict]:
+        include_values = [
+            int(value)
+            for value in (include_ids or [])
+            if self._manufacturer_id_value(value)
+        ]
+        where = ["p.deleted_at IS NULL", "p.kind IN ('supplier', 'both')"]
+        params: list[Any] = []
+        if active_only:
+            if include_values:
+                placeholders = ",".join(["%s"] * len(include_values))
+                where.append(f"(p.status='active' OR p.id IN ({placeholders}))")
+                params.extend(include_values)
+            else:
+                where.append("p.status='active'")
+        rows = self.query(
+            f"""
+            {self._manufacturer_rows_sql()}
+            WHERE {' AND '.join(where)}
+            ORDER BY CASE WHEN p.status='active' THEN 0 ELSE 1 END, p.name ASC, p.id ASC
+            """,
+            params,
+        )
+        return [self._manufacturer_payload(row) for row in rows]
+
+    def product_manufacturer(self, manufacturer_id: Any) -> dict | None:
+        clean_id = self._manufacturer_id_value(manufacturer_id)
+        if not clean_id:
+            return None
+        rows = self.query(
+            f"""
+            {self._manufacturer_rows_sql()}
+            WHERE p.deleted_at IS NULL
+              AND p.kind IN ('supplier', 'both')
+              AND p.id=%s
+            LIMIT 1
+            """,
+            (clean_id,),
+        )
+        return self._manufacturer_payload(rows[0]) if rows else None
+
+    def save_product_manufacturer(self, payload: dict) -> dict:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return {"code": 400, "msg": "厂家名称不能为空"}
+        manufacturer_id = self._manufacturer_id_value(payload.get("id") or payload.get("manufacturer_id"))
+        contact_name = str(payload.get("contact_name") or "").strip()
+        phone = str(payload.get("phone") or "").strip()
+        phone_normalized = _phone_digits(phone) or None
+        address = str(payload.get("address") or "").strip()
+        note = str(payload.get("note") or "").strip()
+        raw_status = str(payload.get("status") or "active").strip().lower()
+        status = "inactive" if raw_status in {"inactive", "disabled", "0", "false", "off"} else "active"
+
+        with self.transaction() as cursor:
+            now = _now()
+            if manufacturer_id:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM party
+                    WHERE id=%s AND kind IN ('supplier', 'both') AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (manufacturer_id,),
+                )
+                if not cursor.fetchone():
+                    return {"code": 404, "msg": "厂家不存在"}
+                cursor.execute(
+                    """
+                    UPDATE party
+                    SET name=%s, contact_name=%s, phone=%s, phone_normalized=%s,
+                        address=%s, note=%s, status=%s, updated_at=%s
+                    WHERE id=%s
+                    """,
+                    (name, contact_name, phone, phone_normalized, address, note, status, now, manufacturer_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO party
+                        (name, kind, contact_name, phone, phone_normalized, address, note, source, status, created_at, updated_at)
+                    VALUES (%s, 'supplier', %s, %s, %s, %s, %s, 'admin', %s, %s, %s)
+                    """,
+                    (name, contact_name, phone, phone_normalized, address, note, status, now, now),
+                )
+                manufacturer_id = int(cursor.lastrowid)
+        return {"code": 0, "data": {"manufacturer": self.product_manufacturer(manufacturer_id)}}
+
+    def update_product_manufacturer_status(self, manufacturer_id: Any, status: Any) -> dict:
+        clean_id = self._manufacturer_id_value(manufacturer_id)
+        if not clean_id:
+            return {"code": 400, "msg": "厂家 ID 无效"}
+        raw_status = str(status or "").strip().lower()
+        next_status = "active" if raw_status in {"active", "enabled", "1", "true", "on"} else "inactive"
+        affected = self.execute(
+            """
+            UPDATE party
+            SET status=%s, updated_at=%s
+            WHERE id=%s AND kind IN ('supplier', 'both') AND deleted_at IS NULL
+            """,
+            (next_status, _now(), clean_id),
+        )
+        if not affected:
+            return {"code": 404, "msg": "厂家不存在"}
+        return {"code": 0, "data": {"manufacturer": self.product_manufacturer(clean_id)}}
+
     def product_options(self, product_id: int | None = None) -> dict:
         categories = self.product_categories()
         units = self.query(
@@ -1690,9 +1848,11 @@ class NativeDBClient:
                 {"value": 3, "name": "停产"},
             ],
         }
+        current_supplier_id = None
         if product_id:
             product = self.product_info(product_id)
             if product:
+                current_supplier_id = product.get("default_supplier_id")
                 items, _ = self.product_list(keyword="", page=1, page_size=1, group=True)
                 spu_id = product.get("spu_id")
                 grouped = None
@@ -1718,6 +1878,10 @@ class NativeDBClient:
                     if variants:
                         grouped["product_category_ids"] = variants[0].get("product_category_ids", [])
                 data["data"] = grouped or product
+        data["manufacturer_list"] = self.product_manufacturers(
+            active_only=True,
+            include_ids=[current_supplier_id] if current_supplier_id else None,
+        )
         return data
 
     def _parse_case_pack_qty(self, simple_desc: str) -> Decimal | None:
@@ -2411,6 +2575,10 @@ class NativeDBClient:
         detail_images = _html_image_urls(content_html)
         case_pack_qty = self._parse_case_pack_qty(payload.get("simple_desc") or "")
         purchase_policy = _normalize_purchase_policy(payload.get("purchase_policy") or payload.get("is_one_case_purchase"))
+        supplier_requested = any(key in payload for key in ("default_supplier_id", "defaultSupplierId", "manufacturer_id"))
+        default_supplier_id = self._manufacturer_id_value(
+            payload.get("default_supplier_id") or payload.get("defaultSupplierId") or payload.get("manufacturer_id")
+        ) if supplier_requested else None
         base = payload.get("base") or {}
         if not isinstance(base, dict):
             return {"code": 400, "msg": "规格数据格式不正确"}
@@ -2419,6 +2587,18 @@ class NativeDBClient:
         product_id = payload.get("id") or payload.get("product_id")
         with self.transaction() as cursor:
             now = _now()
+            if default_supplier_id:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM party
+                    WHERE id=%s AND kind IN ('supplier', 'both') AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (default_supplier_id,),
+                )
+                if not cursor.fetchone():
+                    return {"code": 400, "msg": "厂家不存在或已删除"}
             spu_id = None
             if product_id:
                 sku_id = self.resolve_sku_id(int(product_id), cursor=cursor)
@@ -2430,21 +2610,33 @@ class NativeDBClient:
                 cursor.execute(
                     """
                     INSERT INTO product_spu
-                        (title, product_type, default_category_id, case_pack_qty, purchase_policy, source, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, 'native_api', %s, %s)
+                        (title, product_type, default_category_id, default_supplier_id, case_pack_qty, purchase_policy, source, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'native_api', %s, %s)
                     """,
-                    (title, product_type, primary_category_id, case_pack_qty, purchase_policy, now, now),
+                    (title, product_type, primary_category_id, default_supplier_id, case_pack_qty, purchase_policy, now, now),
                 )
                 spu_id = cursor.lastrowid
             else:
                 cursor.execute(
                     """
                     UPDATE product_spu
-                    SET title=%s, product_type=%s, default_category_id=%s, case_pack_qty=COALESCE(%s, case_pack_qty),
+                    SET title=%s, product_type=%s, default_category_id=%s,
+                        default_supplier_id=CASE WHEN %s THEN %s ELSE default_supplier_id END,
+                        case_pack_qty=COALESCE(%s, case_pack_qty),
                         purchase_policy=%s, updated_at=%s
                     WHERE id=%s
                     """,
-                    (title, product_type, primary_category_id, case_pack_qty, purchase_policy, now, spu_id),
+                    (
+                        title,
+                        product_type,
+                        primary_category_id,
+                        1 if supplier_requested else 0,
+                        default_supplier_id,
+                        case_pack_qty,
+                        purchase_policy,
+                        now,
+                        spu_id,
+                    ),
                 )
 
             saved_ids: list[int] = []

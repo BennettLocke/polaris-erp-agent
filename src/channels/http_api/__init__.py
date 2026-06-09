@@ -357,6 +357,8 @@ def _permission_denied(permission: str):
 API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/settings/number/sku$"), "设置"),
     ({"GET", "POST"}, re.compile(r"^/api/settings/system/"), "设置"),
+    ({"GET", "POST"}, re.compile(r"^/api/settings/manufacturers$"), "设置"),
+    ({"POST"}, re.compile(r"^/api/settings/manufacturers/\d+/status$"), "设置"),
     ({"POST"}, re.compile(r"^/api/settings/print/sales$"), "设置"),
     ({"GET"}, re.compile(r"^/api/users$"), "设置"),
     ({"POST", "PATCH"}, re.compile(r"^/api/users/\d+$"), "设置"),
@@ -2924,6 +2926,45 @@ def system_setting_api(setting_key: str):
     except Exception as e:
         logger.error(f"system setting failed: key={clean_key}, error={e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/settings/manufacturers", methods=["GET"])
+def product_manufacturers_api():
+    """Manufacturer settings backed by supplier parties."""
+    try:
+        items = get_product_service().manufacturers(active_only=False)
+        return jsonify({"code": 0, "data": {"list": _safe_json(items), "total": len(items)}})
+    except Exception as e:
+        logger.error(f"manufacturers list failed: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/settings/manufacturers", methods=["POST"])
+def product_manufacturer_save_api():
+    """Create or update a manufacturer/supplier party."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        result = get_product_service().save_manufacturer(payload)
+        if isinstance(result, dict) and result.get("code") not in (None, 0):
+            return jsonify(result), 400 if int(result.get("code") or 400) != 404 else 404
+        return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
+    except Exception as e:
+        logger.error(f"manufacturer save failed: {e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/settings/manufacturers/<int:manufacturer_id>/status", methods=["POST"])
+def product_manufacturer_status_api(manufacturer_id: int):
+    """Enable or disable a manufacturer without deleting bound products."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        result = get_product_service().update_manufacturer_status(manufacturer_id, payload.get("status"))
+        if isinstance(result, dict) and result.get("code") not in (None, 0):
+            return jsonify(result), 400 if int(result.get("code") or 400) != 404 else 404
+        return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
+    except Exception as e:
+        logger.error(f"manufacturer status update failed: id={manufacturer_id}, error={e}")
+        return _api_exception_response(e)
 
 
 @app.route("/api/settings/print/sales", methods=["POST"])

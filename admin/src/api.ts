@@ -21,6 +21,7 @@ import type {
   InventoryLedgerItem,
   InventoryLookupResult,
   ListResult,
+  ManufacturerSavePayload,
   MiniappImageCreatePayload,
   MiniappImageConfig,
   MiniappImageUpdatePayload,
@@ -31,6 +32,7 @@ import type {
   ProcessOrderRaw,
   ProcessOrderStatusPayload,
   ProductCategory,
+  ProductManufacturer,
   ProductCategorySavePayload,
   ProductItem,
   ProductMediaAsset,
@@ -549,6 +551,17 @@ export const api = {
     request<{ category: ProductCategory; synced?: { sku?: number; spu?: number } }>("/api/product/categories", {
       method: payload.id ? "PATCH" : "POST",
       body: JSON.stringify(payload)
+    }),
+  manufacturers: () => request<ListResult<ProductManufacturer>>("/api/settings/manufacturers"),
+  saveManufacturer: (payload: ManufacturerSavePayload) =>
+    request<{ manufacturer: ProductManufacturer }>("/api/settings/manufacturers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateManufacturerStatus: (id: number, status: "active" | "inactive") =>
+    request<{ manufacturer: ProductManufacturer }>(`/api/settings/manufacturers/${id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status })
     }),
   salesPrintSettings: () => request<PrintSettings>("/api/settings/print/sales"),
   saveSalesPrintSettings: (payload: Partial<PrintSettings>) =>

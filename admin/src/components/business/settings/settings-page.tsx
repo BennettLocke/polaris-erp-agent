@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
   Eye,
+  Factory,
   Hash,
   Image,
   Images,
@@ -90,7 +91,9 @@ import type {
   MiniappImageUpdatePayload,
   NumberSequenceSettings,
   PrintSettings,
+  ManufacturerSavePayload,
   ProductCategory,
+  ProductManufacturer,
   ProductCategorySavePayload,
   ProductMediaAsset,
   ProductUploadResult,
@@ -102,6 +105,7 @@ import type {
 type SettingsSectionKey =
   | "number"
   | "product"
+  | "manufacturers"
   | "inventory"
   | "payment"
   | "media"
@@ -145,6 +149,7 @@ const sectionItems: Array<{
 }> = [
   { key: "number", label: "编号", desc: "SKU 编号规则", icon: Hash },
   { key: "product", label: "商品基础", desc: "分类、单位、件规", icon: Package },
+  { key: "manufacturers", label: "厂家设置", desc: "厂家资料和停用", icon: Factory },
   { key: "inventory", label: "库存规则", desc: "扣库存和仓库", icon: Boxes },
   { key: "payment", label: "收款结款", desc: "付款状态和余额", icon: WalletCards },
   { key: "media", label: "图片资产", desc: "商品图资产库", icon: Images },
@@ -359,6 +364,7 @@ function SettingsPage({ currentUser }: SettingsPageProps) {
       {error ? <div className="form-error">{error}</div> : null}
       {activeSection === "number" ? <NumberSettingsPanel {...callbacks} /> : null}
       {activeSection === "product" ? <ProductBasicPanel {...callbacks} /> : null}
+      {activeSection === "manufacturers" ? <ManufacturersPanel {...callbacks} /> : null}
       {activeSection === "inventory" ? <InventoryRulesPanel {...callbacks} /> : null}
       {activeSection === "payment" ? <PaymentRulesPanel {...callbacks} /> : null}
       {activeSection === "media" ? <MediaSettingsPanel {...callbacks} /> : null}
@@ -990,6 +996,235 @@ function ProductBasicPanel({ markDirty, onSaved, onError, goToSection, registerS
             <Button type="button" disabled={categorySaving || !String(categoryDraft?.name || "").trim()} onClick={() => void saveCategory()}>
               <Save data-icon="inline-start" />
               {categorySaving ? "保存中" : "保存分类"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function ManufacturersPanel({ onSaved, onError }: PanelCallbacks) {
+  const queryClient = useQueryClient();
+  const [manufacturers, setManufacturers] = useState<ProductManufacturer[]>([]);
+  const [manufacturerDraft, setManufacturerDraft] = useState<ManufacturerSavePayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyKey, setBusyKey] = useState("");
+
+  async function load() {
+    setLoading(true);
+    try {
+      const data = await api.manufacturers();
+      setManufacturers(data.list || []);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "厂家列表加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  function openManufacturerDialog(manufacturer?: ProductManufacturer) {
+    setManufacturerDraft({
+      id: manufacturer?.id,
+      name: manufacturer?.name || "",
+      contact_name: manufacturer?.contact_name || "",
+      phone: manufacturer?.phone || "",
+      address: manufacturer?.address || "",
+      note: manufacturer?.note || "",
+      status: manufacturer?.status || "active"
+    });
+  }
+
+  async function saveManufacturer() {
+    if (!manufacturerDraft) return;
+    const name = String(manufacturerDraft.name || "").trim();
+    if (!name) {
+      onError("厂家名称不能为空");
+      return;
+    }
+    setBusyKey("save");
+    try {
+      await api.saveManufacturer({ ...manufacturerDraft, name });
+      await load();
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
+      setManufacturerDraft(null);
+      onSaved("厂家资料已保存");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "厂家保存失败");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function updateManufacturerStatus(manufacturer: ProductManufacturer, status: "active" | "inactive") {
+    const id = Number(manufacturer.id || manufacturer.manufacturer_id || 0);
+    if (!id) return;
+    setBusyKey(`status:${id}`);
+    try {
+      await api.updateManufacturerStatus(id, status);
+      await load();
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
+      onSaved(status === "active" ? "厂家已启用" : "厂家已停用");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "厂家状态更新失败");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  if (loading) return <SettingsLoading rows={4} />;
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>厂家设置</CardTitle>
+            <CardDescription>厂家复用供应商资料；停用后旧商品仍会显示，新商品编辑时默认不再选择。</CardDescription>
+          </div>
+          <CardAction>
+            <Button type="button" size="sm" onClick={() => openManufacturerDialog()}>
+              <Plus data-icon="inline-start" />
+              新增厂家
+            </Button>
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          {manufacturers.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>厂家</TableHead>
+                  <TableHead>联系人</TableHead>
+                  <TableHead>电话</TableHead>
+                  <TableHead>绑定商品</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {manufacturers.map((manufacturer) => {
+                  const id = Number(manufacturer.id || manufacturer.manufacturer_id || 0);
+                  const active = String(manufacturer.status || "active") === "active";
+                  return (
+                    <TableRow key={id || manufacturer.name}>
+                      <TableCell>
+                        <div className="settings-table-title">
+                          <strong>{manufacturer.name}</strong>
+                          <span>{manufacturer.note || manufacturer.address || "未填写备注"}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>{manufacturer.contact_name || "-"}</TableCell>
+                      <TableCell>{manufacturer.phone || "-"}</TableCell>
+                      <TableCell>{manufacturer.product_count || 0}</TableCell>
+                      <TableCell>
+                        <Badge variant={active ? "default" : "outline"}>{active ? "启用" : "停用"}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="settings-savebar-actions">
+                          <Button type="button" variant="outline" size="sm" onClick={() => openManufacturerDialog(manufacturer)}>
+                            编辑
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={busyKey === `status:${id}`}
+                            onClick={() => void updateManufacturerStatus(manufacturer, active ? "inactive" : "active")}
+                          >
+                            {active ? "停用" : "启用"}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          ) : (
+            <SettingsEmpty title="暂无厂家" desc="新增厂家后，就可以在商品基础信息里选择。" />
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={Boolean(manufacturerDraft)} onOpenChange={(open) => {
+        if (!open && busyKey !== "save") setManufacturerDraft(null);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{manufacturerDraft?.id ? "编辑厂家" : "新增厂家"}</DialogTitle>
+            <DialogDescription>厂家资料会写入供应商表，并可绑定到商品 SPU。</DialogDescription>
+          </DialogHeader>
+          {manufacturerDraft ? (
+            <FieldGroup>
+              <Field>
+                <FieldLabel>厂家名称</FieldLabel>
+                <Input
+                  value={manufacturerDraft.name}
+                  placeholder="例如：鑫创艺"
+                  onChange={(event) => setManufacturerDraft({ ...manufacturerDraft, name: event.target.value })}
+                />
+              </Field>
+              <FieldGroup className="settings-form-grid settings-form-grid--two">
+                <Field>
+                  <FieldLabel>联系人</FieldLabel>
+                  <Input
+                    value={manufacturerDraft.contact_name || ""}
+                    onChange={(event) => setManufacturerDraft({ ...manufacturerDraft, contact_name: event.target.value })}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>电话</FieldLabel>
+                  <Input
+                    value={manufacturerDraft.phone || ""}
+                    onChange={(event) => setManufacturerDraft({ ...manufacturerDraft, phone: event.target.value })}
+                  />
+                </Field>
+              </FieldGroup>
+              <Field>
+                <FieldLabel>地址</FieldLabel>
+                <Input
+                  value={manufacturerDraft.address || ""}
+                  onChange={(event) => setManufacturerDraft({ ...manufacturerDraft, address: event.target.value })}
+                />
+              </Field>
+              <Field>
+                <FieldLabel>备注</FieldLabel>
+                <Input
+                  value={manufacturerDraft.note || ""}
+                  onChange={(event) => setManufacturerDraft({ ...manufacturerDraft, note: event.target.value })}
+                />
+              </Field>
+              <Field>
+                <FieldLabel>状态</FieldLabel>
+                <Select
+                  value={manufacturerDraft.status || "active"}
+                  onValueChange={(next) => setManufacturerDraft({ ...manufacturerDraft, status: next })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择状态" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="active">启用</SelectItem>
+                      <SelectItem value="inactive">停用</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </FieldGroup>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={busyKey === "save"} onClick={() => setManufacturerDraft(null)}>
+              取消
+            </Button>
+            <Button type="button" disabled={busyKey === "save" || !String(manufacturerDraft?.name || "").trim()} onClick={() => void saveManufacturer()}>
+              <Save data-icon="inline-start" />
+              {busyKey === "save" ? "保存中" : "保存厂家"}
             </Button>
           </DialogFooter>
         </DialogContent>

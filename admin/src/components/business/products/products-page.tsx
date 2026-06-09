@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState, type PointerEvent, type WheelEvent } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { ArrowDown, ArrowUp, Download, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -67,6 +67,7 @@ import { queryKeys } from "@/lib/admin-query";
 import type {
   ProductCategory,
   ProductItem,
+  ProductManufacturer,
   ProductMediaAsset,
   ProductSavePayload,
   ProductStatusOption,
@@ -1236,6 +1237,10 @@ function ProductEditorDialog({
   const [productType, setProductType] = useState("gift_box");
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [manufacturers, setManufacturers] = useState<ProductManufacturer[]>([]);
+  const [manufacturerId, setManufacturerId] = useState("0");
+  const [manufacturerLabel, setManufacturerLabel] = useState("");
+  const [manufacturerStatus, setManufacturerStatus] = useState("");
   const [units, setUnits] = useState<ProductUnit[]>([]);
   const [statuses, setStatuses] = useState<ProductStatusOption[]>([]);
   const [status, setStatus] = useState<string | number>(0);
@@ -1262,6 +1267,9 @@ function ProductEditorDialog({
     setTitle(productData.title || productData.name || "");
     setProductType(productData.product_type || "gift_box");
     setCategoryIds(productCategoryIds(productData));
+    setManufacturerId(String(productData.default_supplier_id || productData.manufacturer_id || 0));
+    setManufacturerLabel(productData.default_supplier_name || productData.manufacturer_name || "");
+    setManufacturerStatus(productData.default_supplier_status || "");
     setStatus(productData.status_text === "停用" ? 1 : 0);
     setCasePackQty(casePackQtyFromProduct(productData));
     setOneCase((productData.purchase_policy || (Number(productData.is_one_case_purchase || 0) ? "one_case" : "order_qty")) === "one_case");
@@ -1300,6 +1308,7 @@ function ProductEditorDialog({
         const nextCategories = options.product_category?.length ? options.product_category : availableCategories;
         const nextUnits = productUnitOptions(options.unit_list || []);
         setCategories(nextCategories);
+        setManufacturers(options.manufacturer_list || []);
         setUnits(nextUnits);
         setStatuses(productStatusOptions(options.product_status_list || []));
         const merged = { ...product, ...(detail || {}), ...optionProduct };
@@ -1418,6 +1427,7 @@ function ProductEditorDialog({
       title: title.trim(),
       product_type: productType,
       product_category_id: categoryIds,
+      default_supplier_id: Number(manufacturerId || 0) || null,
       status,
       purchase_policy: oneCase ? "one_case" : "order_qty",
       simple_desc: casePackQty ? `规格${casePackQty}套/件` : "",
@@ -1451,6 +1461,26 @@ function ProductEditorDialog({
   }
 
   const currentAssets = currentEditorAssets(title || "当前产品", mainImages, detailImages, specs, mediaAssets);
+  const manufacturerOptions = useMemo(() => {
+    const seen = new Set<number>();
+    const list: ProductManufacturer[] = [];
+    manufacturers.forEach((manufacturer) => {
+      const id = Number(manufacturer.id || manufacturer.manufacturer_id || 0);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      list.push(manufacturer);
+    });
+    const currentId = Number(manufacturerId || 0);
+    const currentName = manufacturerLabel || product?.default_supplier_name || product?.manufacturer_name || "";
+    if (currentId && currentName && !seen.has(currentId)) {
+      list.push({
+        id: currentId,
+        name: currentName,
+        status: manufacturerStatus || product?.default_supplier_status || "inactive"
+      });
+    }
+    return list;
+  }, [manufacturerId, manufacturerLabel, manufacturerStatus, manufacturers, product]);
 
   return (
     <>
@@ -1503,6 +1533,24 @@ function ProductEditorDialog({
                             <SelectGroup>
                               {editorProductTypeOptions(productType).map((item) => (
                                 <SelectItem value={item.value} key={item.value}>{item.label}</SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                      <Field>
+                        <FieldLabel>厂家</FieldLabel>
+                        <Select value={manufacturerId || "0"} onValueChange={setManufacturerId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="选择厂家" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectItem value="0">未设置厂家</SelectItem>
+                              {manufacturerOptions.map((manufacturer) => (
+                                <SelectItem value={String(manufacturer.id || manufacturer.manufacturer_id)} key={String(manufacturer.id || manufacturer.manufacturer_id)}>
+                                  {manufacturer.name}{manufacturer.status === "inactive" ? "（已停用）" : ""}
+                                </SelectItem>
                               ))}
                             </SelectGroup>
                           </SelectContent>

@@ -65,6 +65,15 @@ class ProductService(BusinessService):
     def save_category(self, payload: dict, *, operator_user_id: Any = None) -> dict:
         return self.db.save_product_category(payload, operator_user_id=operator_user_id)
 
+    def manufacturers(self, *, active_only: bool = False, include_ids: Iterable[Any] | None = None) -> list[dict]:
+        return self.db.product_manufacturers(active_only=active_only, include_ids=include_ids)
+
+    def save_manufacturer(self, payload: dict) -> dict:
+        return self.db.save_product_manufacturer(payload)
+
+    def update_manufacturer_status(self, manufacturer_id: Any, status: Any) -> dict:
+        return self.db.update_product_manufacturer_status(manufacturer_id, status)
+
     def info(self, product_id: int, *, listed_only: bool = False) -> dict | None:
         return self.db.product_info(product_id, listed_only=listed_only)
 
