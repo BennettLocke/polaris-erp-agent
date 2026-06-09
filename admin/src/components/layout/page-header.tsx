@@ -1,14 +1,6 @@
-import { LogOut, PanelLeft, Sparkles } from "lucide-react";
+import { LogOut, PanelLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-  DialogTrigger
-} from "@/components/ui/dialog";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
 type PageHeaderProps = {
@@ -28,25 +20,6 @@ function PageHeader({ onLogout, title }: PageHeaderProps) {
         </div>
       </div>
       <div className="top-actions">
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button variant="outline">
-              <Sparkles data-icon="inline-start" />
-              说明
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogTitle>新后台底座</DialogTitle>
-            <DialogDescription>
-              商品、库存、订单、设置和工作台已统一接入自有服务层；运营入口统一使用 React 后台。
-            </DialogDescription>
-            <div className="dialog-actions">
-              <DialogClose asChild>
-                <Button>知道了</Button>
-              </DialogClose>
-            </div>
-          </DialogContent>
-        </Dialog>
         <Button variant="outline" onClick={onLogout}>
           <LogOut data-icon="inline-start" />
           退出
