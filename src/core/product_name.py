@@ -34,12 +34,13 @@ def normalize_half_jin_aliases(text: str) -> str:
         short_tokens.append((token, match.group(0)))
         return token
 
-    value = re.sub(r"五格\s*短\s*半\s*斤|短\s*半\s*斤", hold_short, value)
+    value = re.sub(r"五格\s*短\s*款?\s*半\s*斤|短\s*款?\s*半\s*斤", hold_short, value)
     value = re.sub(r"长\s*款\s*半\s*斤|长\s*半\s*斤", "半斤", value)
     value = re.sub(r"0\.5\s*斤|半\s*斤", "半斤", value)
 
     for token, original in short_tokens:
-        value = value.replace(token, re.sub(r"\s+", "", original))
+        normalized_short = re.sub(r"\s+", "", original).replace("短款半斤", "短半斤")
+        value = value.replace(token, normalized_short)
     return value
 
 
@@ -87,10 +88,14 @@ def normalize_product_name(
 
     value = normalize_small_box_aliases(value)
 
-    spec_list = list(specs or PRODUCT_SPECS)
-    spec_pattern = "|".join(re.escape(spec) for spec in sorted(dict.fromkeys(spec_list), key=len, reverse=True))
-    if spec_pattern:
-        value = re.sub(rf"(?<!^)(?<!\s)({spec_pattern})", r" \1", value)
+    spec_list = sorted(dict.fromkeys(specs or PRODUCT_SPECS), key=len, reverse=True)
+    for spec in spec_list:
+        index = value.find(spec)
+        if index < 0:
+            continue
+        if index > 0 and not value[index - 1].isspace():
+            value = f"{value[:index]} {value[index:]}"
+        break
     return re.sub(r"\s+", " ", value).strip()
 
 

@@ -14,6 +14,13 @@ def test_short_half_jin_is_preserved():
     assert product_terms("见喜短半斤") == ["见喜", "短半斤"]
 
 
+def test_short_style_half_jin_aliases_collapse_to_short_half_jin():
+    assert normalize_product_name("见喜短款半斤") == "见喜 短半斤"
+    assert normalize_product_name("见喜 短款 半斤") == "见喜 短半斤"
+    assert normalize_product_name("见喜 短 款 半 斤") == "见喜 短半斤"
+    assert product_terms("见喜短款半斤") == ["见喜", "短半斤"]
+
+
 def test_liang_aliases_collapse_to_er_san_liang():
     for raw in ["见喜2两", "见喜3两", "见喜二两", "见喜三两", "见喜二三两", "见喜二 三 两"]:
         assert normalize_product_name(raw) == "见喜 二三两"

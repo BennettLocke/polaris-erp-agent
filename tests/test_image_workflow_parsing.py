@@ -1,6 +1,6 @@
 import unittest
 
-from src.core.nodes.image_workflow import parse_ocr_text_list, propagate_batch_customer_context
+from src.core.nodes.image_workflow import _normalize_goods_keyword, parse_ocr_text_list, propagate_batch_customer_context
 from src.channels.http_api.__init__ import _sanitize_pending_state
 from src.skills.workflow_order.workflow import WorkflowOrderWorkflow
 
@@ -48,6 +48,16 @@ class ImageWorkflowParsingTest(unittest.TestCase):
         self.assertEqual(parsed["color"], "黄色")
         self.assertEqual(parsed["quantity"], 1)
         self.assertEqual(parsed["unit"], "件")
+
+    def test_short_style_half_jin_design_order_matches_short_half_jin(self):
+        for line in ["见喜短款半斤红色1件", "见喜 短 款 半 斤 红色 1件"]:
+            with self.subTest(line=line):
+                parsed = parse_ocr_text_list([line])
+
+                self.assertEqual(_normalize_goods_keyword(parsed["goods_name"]).replace(" ", ""), "见喜短半斤")
+                self.assertEqual(parsed["color"], "红色")
+                self.assertEqual(parsed["quantity"], 1)
+                self.assertEqual(parsed["unit"], "件")
 
     def test_batch_customer_context_only_repairs_missing_items(self):
         items = [

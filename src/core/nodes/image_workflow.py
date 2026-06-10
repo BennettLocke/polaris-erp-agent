@@ -426,7 +426,7 @@ def _is_plausible_unlabeled_goods(value: str) -> bool:
 
 
 def _goods_word_pattern() -> str:
-    return r"(长款半斤|长半斤|短半斤|半斤|[一二三四五六七八九十\d]+两|[一二三四五六七八九十\d]+小盒|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
+    return r"(五格\s*短\s*款?\s*半\s*斤|短\s*款?\s*半\s*斤|长\s*款\s*半\s*斤|长\s*半\s*斤|半\s*斤|[一二三四五六七八九十\d]+两|[一二三四五六七八九十\d]+小盒|小盒|中盒|大盒|礼盒|茶派|岩味|滋味|喜悦|生财)"
 
 
 def _looks_like_goods_text(text: str) -> bool:
@@ -551,7 +551,7 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
             match = re.search(r"【[^】]+】[^\s，,。]+", line)
             if match:
                 result["goods_name"] = match.group()
-        elif not result["goods_name"] and re.search(r"(长款半斤|长半斤|半斤|小盒|中盒|大盒|礼盒|茶派|茶派长)", line):
+        elif not result["goods_name"] and re.search(r"(五格\s*短\s*款?\s*半\s*斤|短\s*款?\s*半\s*斤|长\s*款\s*半\s*斤|长\s*半\s*斤|半\s*斤|小盒|中盒|大盒|礼盒|茶派|茶派长)", line):
             remark_goods = _extract_goods_from_remark(line)
             if remark_goods and not re.fullmatch(r"下单|客户", remark_goods):
                 result["goods_name"] = remark_goods
