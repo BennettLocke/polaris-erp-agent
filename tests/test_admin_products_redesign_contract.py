@@ -84,6 +84,23 @@ class AdminProductsRedesignContractTest(unittest.TestCase):
         self.assertIn("missing_case_pack", db_source)
         self.assertIn("missing_image", db_source)
 
+    def test_product_page_defaults_to_listed_products(self):
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+        page_source = product_source.split("export function ProductsPage", 1)[1]
+
+        self.assertIn('const DEFAULT_LISTED_STATE = "listed";', product_source)
+        self.assertIn('const [listedState, setListedState] = useState(DEFAULT_LISTED_STATE);', page_source)
+        self.assertIn('{ value: "listed", label: "已上架" }', product_source)
+        self.assertIn('{ value: "unlisted", label: "未上架" }', product_source)
+        self.assertNotIn('{ value: "", label: "全部状态" }', product_source)
+        self.assertIn('void loadProducts(1, "", "", "", DEFAULT_LISTED_STATE);', page_source)
+        self.assertIn('setListedState(DEFAULT_LISTED_STATE);', page_source)
+        self.assertIn('void loadProducts(1, "", "", "", DEFAULT_LISTED_STATE, "", "");', page_source)
+        self.assertIn('setListedState("unlisted");', page_source)
+        self.assertIn('await loadProducts(1, context.title, "", "", "unlisted", "", "");', page_source)
+
     def test_product_page_size_tracks_visible_grid_capacity(self):
         product_source = (
             ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"

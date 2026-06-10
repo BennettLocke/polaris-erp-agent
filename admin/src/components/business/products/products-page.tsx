@@ -109,8 +109,9 @@ type ProductFilterOption = {
   label: string;
 };
 
+const DEFAULT_LISTED_STATE = "listed";
+
 const LISTED_FILTERS: ProductFilterOption[] = [
-  { value: "", label: "全部状态" },
   { value: "listed", label: "已上架" },
   { value: "unlisted", label: "未上架" }
 ];
@@ -2315,7 +2316,7 @@ export function ProductsPage() {
   const [keyword, setKeyword] = useState("");
   const [productType, setProductType] = useState("");
   const [categoryId, setCategoryId] = useState<string | number>("");
-  const [listedState, setListedState] = useState("");
+  const [listedState, setListedState] = useState(DEFAULT_LISTED_STATE);
   const [stockMode, setStockMode] = useState("");
   const [quality, setQuality] = useState("");
   const [categories, setCategories] = useState<ProductCategory[]>([]);
@@ -2379,10 +2380,10 @@ export function ProductsPage() {
       setKeyword(context.title);
       setCategoryId("");
       setProductType("");
-      setListedState("");
+      setListedState("unlisted");
       setStockMode("");
       setQuality("");
-      await loadProducts(1, context.title, "", "", "", "", "");
+      await loadProducts(1, context.title, "", "", "unlisted", "", "");
       return;
     }
     await loadProducts(page, keyword, categoryId, productType, listedState, stockMode, quality);
@@ -2392,10 +2393,10 @@ export function ProductsPage() {
     setKeyword("");
     setCategoryId("");
     setProductType("");
-    setListedState("");
+    setListedState(DEFAULT_LISTED_STATE);
     setStockMode("");
     setQuality("");
-    void loadProducts(1, "", "", "", "", "", "");
+    void loadProducts(1, "", "", "", DEFAULT_LISTED_STATE, "", "");
   }
 
   async function toggleProductShelves(product: ProductItem, state: number) {
@@ -2484,7 +2485,7 @@ export function ProductsPage() {
     })
       .then((data) => setCategories(data.list || []))
       .catch(() => undefined);
-    void loadProducts(1, "", "", "");
+    void loadProducts(1, "", "", "", DEFAULT_LISTED_STATE);
   }, []);
 
   useEffect(() => {
