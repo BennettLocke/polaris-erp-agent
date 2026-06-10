@@ -272,6 +272,33 @@ function toNumber(value: unknown, fallback = 0) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function parseCasePackQty(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return 0;
+  const matched = text.match(/(\d+(?:\.\d+)?)/);
+  const num = Number(matched?.[1] || 0);
+  return Number.isFinite(num) && num > 1 ? num : 0;
+}
+
+function salesShortagePurchasePlan(line: SalesFormLine, shortage: number) {
+  const shortageQty = Math.max(0, toNumber(shortage));
+  const casePackQty = parseCasePackQty(line.case_pack_qty || line.piece_text);
+  const isOneCase = line.purchase_policy === "one_case" || Number(line.is_one_case_purchase || 0) === 1;
+  if (isOneCase && casePackQty > 1) {
+    const caseCount = Math.max(1, Math.ceil(shortageQty / casePackQty));
+    return {
+      purchaseQuantity: caseCount * casePackQty,
+      casePackQty,
+      caseCount
+    };
+  }
+  return {
+    purchaseQuantity: shortageQty,
+    casePackQty: 0,
+    caseCount: 0
+  };
+}
+
 function inputNoWheel(event: React.WheelEvent<HTMLInputElement>) {
   event.currentTarget.blur();
 }
@@ -285,6 +312,9 @@ type SalesStockShortageLine = {
   available: number;
   requested: number;
   shortage: number;
+  purchaseQuantity: number;
+  casePackQty: number;
+  caseCount: number;
   warehouseName: string;
 };
 
@@ -469,7 +499,11 @@ function SalesNewPage() {
         price,
         warehouse_id: warehouseId,
         inventory: variant.inventory ?? product.inventory ?? "",
-        is_stock_item: Number(variant.is_stock_item ?? product.is_stock_item ?? 1)
+        is_stock_item: Number(variant.is_stock_item ?? product.is_stock_item ?? 1),
+        purchase_policy: variant.purchase_policy || product.purchase_policy || "",
+        is_one_case_purchase: Number(variant.is_one_case_purchase ?? product.is_one_case_purchase ?? 0),
+        case_pack_qty: variant.case_pack_qty || product.case_pack_qty || "",
+        piece_text: variant.piece_text || product.piece_text || ""
       };
       setLines((prev) => {
         const index = prev.findIndex((line) => line.product_id === nextLine.product_id && line.warehouse_id === nextLine.warehouse_id);
@@ -544,11 +578,14 @@ function SalesNewPage() {
       const available = toNumber(row?.quantity ?? row?.inventory ?? row?.stock ?? row?.available_qty ?? 0);
       const requested = toNumber(line.buy_number, 1);
       if (available < requested) {
+        const shortage = requested - available;
+        const purchasePlan = salesShortagePurchasePlan(line, shortage);
         shortages.push({
           line,
           available,
           requested,
-          shortage: requested - available,
+          shortage,
+          ...purchasePlan,
           warehouseName: salesLineWarehouseName({ ...line, warehouse_id: warehouseId })
         });
       }
@@ -606,8 +643,11 @@ function SalesNewPage() {
           product_id: item.line.product_id,
           unit_id: item.line.unit_id || 1,
           warehouse_id: Number(item.line.warehouse_id || current.payload.warehouse_id || defaultWarehouseId || 2),
-          quantity: item.shortage,
-          note: `开单前自动补货：${selectedCustomerName || current.payload.customer_name || ""} ${item.line.title}`.trim()
+          quantity: item.purchaseQuantity,
+          note: [
+            `开单前自动补货：${selectedCustomerName || current.payload.customer_name || ""} ${item.line.title}`.trim(),
+            `缺口${salesQuantityText(item.shortage)}，补货${salesQuantityText(item.purchaseQuantity)}`
+          ].filter(Boolean).join("；")
         });
       }
       await submitSalesOrderAfterStockReady(current.payload);
@@ -850,7 +890,7 @@ function SalesNewPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>库存不足</AlertDialogTitle>
             <AlertDialogDescription>
-              下面商品库存不够，直接开单会造成负库存。确认后会先按缺口数量进货到对应仓库，再继续创建销售单。
+              下面商品库存不够，直接开单会造成负库存。确认后会先按商品进货规则补货到对应仓库，再继续创建销售单。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="sales-stock-shortage-list">
@@ -863,7 +903,11 @@ function SalesNewPage() {
                 <div>
                   <span>库存 {salesQuantityText(item.available)}</span>
                   <span>开单 {salesQuantityText(item.requested)}</span>
-                  <strong>需进货 {salesQuantityText(item.shortage)}</strong>
+                  <span>缺口 {salesQuantityText(item.shortage)}</span>
+                  <strong>
+                    进货 {salesQuantityText(item.purchaseQuantity)} 套
+                    {item.caseCount && item.casePackQty ? `（${item.caseCount}件，${salesQuantityText(item.casePackQty)}套/件）` : ""}
+                  </strong>
                 </div>
               </div>
             ))}

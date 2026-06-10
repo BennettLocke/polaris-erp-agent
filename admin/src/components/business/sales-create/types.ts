@@ -16,6 +16,10 @@ export type SalesFormLine = {
   warehouse_id: number;
   inventory?: string | number;
   is_stock_item?: number;
+  purchase_policy?: string;
+  is_one_case_purchase?: number;
+  case_pack_qty?: string | number;
+  piece_text?: string;
 };
 
 export type SalesLoadingKey = "" | "customer" | "create-customer" | "product" | "submit" | "print-last" | "detail-last" | string;

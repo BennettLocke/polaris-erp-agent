@@ -11,6 +11,7 @@ import re
 import secrets
 import uuid
 import time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import quote, urlparse, urljoin
 from flask import Flask, request, jsonify, Response, send_from_directory, session, redirect
@@ -3416,9 +3417,9 @@ def inventory_purchase_api():
     if not product_id:
         return jsonify({"code": 400, "msg": "product_id is required"}), 400
     try:
-        quantity = int(quantity or 0)
-    except (TypeError, ValueError):
-        quantity = 0
+        quantity = Decimal(str(quantity or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        quantity = Decimal("0")
     if quantity <= 0:
         return jsonify({"code": 400, "msg": "quantity must be greater than 0"}), 400
     try:

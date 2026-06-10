@@ -33,6 +33,19 @@ class SalesStockPreflightContractTest(unittest.TestCase):
         self.assertIn("resolved_sku_id = self.resolve_sku_id", NATIVE_SOURCE)
         self.assertIn("AND s.id=%s", NATIVE_SOURCE)
 
+    def test_manual_sales_one_case_purchase_uses_case_pack_plan(self):
+        self.assertIn("salesShortagePurchasePlan", APP_SOURCE)
+        self.assertIn("purchase_policy", APP_SOURCE)
+        self.assertIn("case_pack_qty", APP_SOURCE)
+        self.assertIn("purchaseQuantity: caseCount * casePackQty", APP_SOURCE)
+        self.assertIn("quantity: item.purchaseQuantity", APP_SOURCE)
+        self.assertNotIn("quantity: item.shortage", APP_SOURCE)
+
+    def test_inventory_purchase_api_keeps_decimal_quantity(self):
+        purchase_source = HTTP_SOURCE.split("def inventory_purchase_api", 1)[1].split("\n@app.route", 1)[0]
+        self.assertIn("Decimal(str(quantity", purchase_source)
+        self.assertNotIn("quantity = int(quantity or 0)", purchase_source)
+
 
 if __name__ == "__main__":
     unittest.main()
