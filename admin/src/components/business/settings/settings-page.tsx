@@ -85,6 +85,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   AuthUser,
+  CustomerItem,
   MediaSummary,
   MiniappAssetImageItem,
   MiniappImageConfig,
@@ -231,6 +232,14 @@ function thumbnailUrl(url = "") {
   if (!clean || !clean.includes("img.513sjbz.com") || clean.includes("x-oss-process=")) return clean;
   const joiner = clean.includes("?") ? "&" : "?";
   return `${clean}${joiner}x-oss-process=image/resize,m_lfit,w_360,h_360/quality,q_85`;
+}
+
+function customerName(customer: CustomerItem) {
+  return customer.name || customer.customer_name || customer.company_name || customer.contacts_name || `客户 ${customer.id}`;
+}
+
+function customerPhone(customer: CustomerItem) {
+  return customer.phone || customer.mobile || customer.contacts_tel || "";
 }
 
 function asStringArray(value: unknown): string[] {
@@ -2173,6 +2182,11 @@ function UserPermissionsPanel({ onSaved, onError, currentUser }: UserPermissions
   const [loading, setLoading] = useState(true);
   const [busyUserId, setBusyUserId] = useState<number | null>(null);
   const [disableTarget, setDisableTarget] = useState<UserListItem | null>(null);
+  const [customerBindTarget, setCustomerBindTarget] = useState<UserListItem | null>(null);
+  const [customerKeyword, setCustomerKeyword] = useState("");
+  const [customerResults, setCustomerResults] = useState<CustomerItem[]>([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerItem | null>(null);
 
   function isSelfUser(user: UserListItem) {
     const nativeUserId = Number(currentUser?.native_user_id || currentUser?.id || 0);
@@ -2195,19 +2209,62 @@ function UserPermissionsPanel({ onSaved, onError, currentUser }: UserPermissions
     void load("");
   }, []);
 
-  async function updateUser(user: UserListItem, patch: Partial<Pick<UserListItem, "role" | "is_active">>) {
+  async function updateUser(user: UserListItem, patch: Partial<Pick<UserListItem, "role" | "is_active" | "linked_party_id">>) {
     setBusyUserId(user.id);
     try {
       await api.updateUser(user.id, patch);
       await load(keyword);
       onSaved("用户权限已更新");
+      return true;
     } catch (err) {
       onError(err instanceof Error ? err.message : "用户更新失败");
+      return false;
     } finally {
       setBusyUserId(null);
       setDisableTarget(null);
     }
   }
+
+  async function searchCustomers() {
+    setCustomerLoading(true);
+    try {
+      const data = await api.customers(customerKeyword, 20);
+      setCustomerResults(data.list || []);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "客户搜索失败");
+    } finally {
+      setCustomerLoading(false);
+    }
+  }
+
+  function openCustomerBind(user: UserListItem) {
+    setCustomerBindTarget(user);
+    setCustomerKeyword(user.party_name || "");
+    setSelectedCustomer(null);
+    setCustomerResults([]);
+  }
+
+  function closeCustomerBind() {
+    setCustomerBindTarget(null);
+    setCustomerKeyword("");
+    setSelectedCustomer(null);
+    setCustomerResults([]);
+  }
+
+  async function confirmCustomerBind() {
+    if (!customerBindTarget || !selectedCustomer) return;
+    const saved = await updateUser(customerBindTarget, { linked_party_id: selectedCustomer.id });
+    if (saved) closeCustomerBind();
+  }
+
+  async function unbindCustomer(user: UserListItem) {
+    await updateUser(user, { linked_party_id: null });
+  }
+
+  useEffect(() => {
+    if (!customerBindTarget) return;
+    void searchCustomers();
+  }, [customerBindTarget]);
 
   return (
     <>
@@ -2281,7 +2338,33 @@ function UserPermissionsPanel({ onSaved, onError, currentUser }: UserPermissions
                         </SelectContent>
                       </Select>
                     </TableCell>
-                    <TableCell>{user.party_name || "-"}</TableCell>
+                    <TableCell>
+                      <div className="settings-user-binding">
+                        <span className="settings-user-binding-name">{user.party_name || "未绑定"}</span>
+                        <div className="settings-user-binding-actions">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={busyUserId === user.id}
+                            onClick={() => openCustomerBind(user)}
+                          >
+                            {user.linked_party_id ? "更换" : "绑定客户"}
+                          </Button>
+                          {user.linked_party_id ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={busyUserId === user.id}
+                              onClick={() => void unbindCustomer(user)}
+                            >
+                              解绑
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Switch
                         checked={Number(user.is_active || 0) === 1}
@@ -2302,6 +2385,19 @@ function UserPermissionsPanel({ onSaved, onError, currentUser }: UserPermissions
           )}
         </CardContent>
       </Card>
+      <CustomerBindDialog
+        customerBindTarget={customerBindTarget}
+        customerKeyword={customerKeyword}
+        setCustomerKeyword={setCustomerKeyword}
+        customerResults={customerResults}
+        customerLoading={customerLoading}
+        selectedCustomer={selectedCustomer}
+        busy={Boolean(busyUserId)}
+        onClose={closeCustomerBind}
+        onSearch={() => void searchCustomers()}
+        onSelect={setSelectedCustomer}
+        onConfirm={() => void confirmCustomerBind()}
+      />
       <AlertDialog open={Boolean(disableTarget)} onOpenChange={(open) => {
         if (!open) setDisableTarget(null);
       }}>
@@ -2326,6 +2422,91 @@ function UserPermissionsPanel({ onSaved, onError, currentUser }: UserPermissions
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+type CustomerBindDialogProps = {
+  customerBindTarget: UserListItem | null;
+  customerKeyword: string;
+  setCustomerKeyword: (value: string) => void;
+  customerResults: CustomerItem[];
+  customerLoading: boolean;
+  selectedCustomer: CustomerItem | null;
+  busy: boolean;
+  onClose: () => void;
+  onSearch: () => void;
+  onSelect: (customer: CustomerItem) => void;
+  onConfirm: () => void;
+};
+
+function CustomerBindDialog({
+  customerBindTarget,
+  customerKeyword,
+  setCustomerKeyword,
+  customerResults,
+  customerLoading,
+  selectedCustomer,
+  busy,
+  onClose,
+  onSearch,
+  onSelect,
+  onConfirm
+}: CustomerBindDialogProps) {
+  return (
+    <Dialog open={Boolean(customerBindTarget)} onOpenChange={(open) => {
+      if (!open) onClose();
+    }}>
+      <DialogContent className="settings-customer-bind-dialog">
+        <DialogHeader>
+          <DialogTitle>{customerBindTarget?.linked_party_id ? "更换绑定客户" : "绑定客户"}</DialogTitle>
+          <DialogDescription>只绑定已有客户。绑定后用户列表会通过客户名展示当前关系。</DialogDescription>
+        </DialogHeader>
+        <form className="settings-customer-bind-search" onSubmit={(event) => {
+          event.preventDefault();
+          onSearch();
+        }}>
+          <Input
+            value={customerKeyword}
+            placeholder="搜索客户、联系人、手机号"
+            onChange={(event) => setCustomerKeyword(event.target.value)}
+          />
+          <Button type="submit" variant="outline" disabled={customerLoading}>
+            <Search data-icon="inline-start" />
+            搜索
+          </Button>
+        </form>
+        <div className="settings-customer-bind-list">
+          {customerLoading ? (
+            <SettingsLoading rows={3} />
+          ) : customerResults.length ? (
+            customerResults.map((customer) => {
+              const active = selectedCustomer?.id === customer.id;
+              return (
+                <button
+                  key={customer.id}
+                  type="button"
+                  className="settings-customer-bind-option"
+                  data-selected={active ? "true" : "false"}
+                  onClick={() => onSelect(customer)}
+                >
+                  <span>
+                    <strong>{customerName(customer)}</strong>
+                    <small>{customerPhone(customer) || `ID ${customer.id}`}</small>
+                  </span>
+                  {active ? <Badge variant="default">已选择</Badge> : <Badge variant="outline">选择</Badge>}
+                </button>
+              );
+            })
+          ) : (
+            <SettingsEmpty title="没有找到客户" desc="换一个关键词搜索，第一版不在这里新建客户。" />
+          )}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消</Button>
+          <Button type="button" disabled={busy || !selectedCustomer} onClick={onConfirm}>确认绑定</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

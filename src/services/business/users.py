@@ -14,6 +14,7 @@ ROLE_ALIASES = {
     "访客": "guest",
 }
 ALLOWED_ROLES = {"admin", "staff", "customer", "guest"}
+_UNSET = object()
 
 
 def _normalize_role(role: str | None) -> str | None:
@@ -122,10 +123,11 @@ class UserService(BusinessService):
         is_active: int | None = None,
         phone: str | None = None,
         display_name: str | None = None,
+        linked_party_id=_UNSET,
         operator_user_id=None,
     ) -> dict:
         result = None
-        if role is not None or is_active is not None or display_name is not None:
+        if role is not None or is_active is not None or display_name is not None or linked_party_id is not _UNSET:
             blocked = self._permission_update_guard(
                 user_id,
                 role=role,
@@ -134,12 +136,14 @@ class UserService(BusinessService):
             )
             if blocked is not None:
                 return blocked
-            result = self.db.update_user(
-                user_id,
-                role=_normalize_role(role) if role is not None else None,
-                is_active=_normalize_active(is_active) if is_active is not None else None,
-                display_name=display_name,
-            )
+            update_kwargs = {
+                "role": _normalize_role(role) if role is not None else None,
+                "is_active": _normalize_active(is_active) if is_active is not None else None,
+                "display_name": display_name,
+            }
+            if linked_party_id is not _UNSET:
+                update_kwargs["linked_party_id"] = linked_party_id
+            result = self.db.update_user(user_id, **update_kwargs)
             if isinstance(result, dict) and result.get("code") not in (None, 0):
                 return result
         if phone is not None:

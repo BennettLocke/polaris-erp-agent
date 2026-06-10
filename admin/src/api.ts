@@ -80,6 +80,10 @@ export type CustomerStatementQuery = {
   dateTo?: string;
 };
 
+export type UserUpdatePayload = Partial<Pick<UserListItem, "role" | "is_active" | "linked_party_id">> & {
+  linked_party_id?: number | null;
+};
+
 export type InventoryListQuery = {
   keyword?: string;
   skuId?: number | string;
@@ -573,7 +577,7 @@ export const api = {
     request<ListResult<UserListItem>>(
       `/api/users?keyword=${encodeURIComponent(keyword)}&page=${page}&page_size=${pageSize}`
     ),
-  updateUser: (id: number, payload: Partial<Pick<UserListItem, "role" | "is_active">>) =>
+  updateUser: (id: number, payload: UserUpdatePayload) =>
     request<{ affected: number; id: number }>(`/api/users/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload)

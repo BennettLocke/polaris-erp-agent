@@ -28,6 +28,7 @@ from src.utils import get_logger
 
 logger = get_logger("sjagent.native_db")
 
+_UNSET = object()
 PUBLIC_IMAGE_HOST = "https://img.513sjbz.com"
 LEGACY_OSS_IMAGE_HOSTS = (
     "https://513sjbz.oss-cn-beijing.aliyuncs.com",
@@ -4202,6 +4203,7 @@ class NativeDBClient:
         role: str | None = None,
         is_active: int | None = None,
         display_name: str | None = None,
+        linked_party_id=_UNSET,
     ) -> dict:
         updates = []
         params: list[Any] = []
@@ -4232,6 +4234,29 @@ class NativeDBClient:
                 return {"code": 400, "msg": "显示名称不能为空"}
             updates.append("display_name=%s")
             params.append(clean_name[:80])
+        if linked_party_id is not _UNSET:
+            if linked_party_id is None:
+                updates.append("linked_party_id=NULL")
+            else:
+                try:
+                    party_id = int(linked_party_id)
+                except (TypeError, ValueError):
+                    return {"code": 400, "msg": "客户不存在"}
+                if party_id <= 0:
+                    return {"code": 400, "msg": "客户不存在"}
+                rows = self.query(
+                    """
+                    SELECT id
+                    FROM party
+                    WHERE id=%s AND kind='customer' AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (party_id,),
+                )
+                if not rows:
+                    return {"code": 400, "msg": "客户不存在"}
+                updates.append("linked_party_id=%s")
+                params.append(party_id)
         if not updates:
             return {"code": 400, "msg": "没有要更新的字段"}
         updates.append("updated_at=%s")

@@ -34,6 +34,9 @@ class FakeCursor:
         return False
 
 
+_FAKE_UNSET = object()
+
+
 class FakeDB:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
@@ -52,6 +55,11 @@ class FakeDB:
                 "linked_party_name": "",
                 "last_login_at": "",
             }
+        }
+        self.parties: dict[int, dict] = {
+            55: {"id": 55, "kind": "customer", "name": "齐唯茶业", "deleted_at": None},
+            56: {"id": 56, "kind": "supplier", "name": "供应商", "deleted_at": None},
+            57: {"id": 57, "kind": "customer", "name": "已删除客户", "deleted_at": "2026-01-01"},
         }
 
     def product_info(self, product_id: int, *, listed_only: bool = False) -> dict:
@@ -457,8 +465,17 @@ class FakeDB:
         self.calls.append(("users", kwargs))
         return ([{"id": 1, "role": "admin"}], 1)
 
-    def update_user(self, user_id: int, role=None, is_active=None, display_name=None):
-        self.calls.append(("update_user", {"user_id": user_id, "role": role, "is_active": is_active, "display_name": display_name}))
+    def update_user(self, user_id: int, role=None, is_active=None, display_name=None, linked_party_id=_FAKE_UNSET):
+        self.calls.append((
+            "update_user",
+            {
+                "user_id": user_id,
+                "role": role,
+                "is_active": is_active,
+                "display_name": display_name,
+                "linked_party_id": linked_party_id,
+            },
+        ))
         user = self.auth_users.get(int(user_id))
         if user and display_name is not None:
             user["display_name"] = display_name
@@ -466,6 +483,16 @@ class FakeDB:
             user["role"] = role
         if user and is_active is not None:
             user["is_active"] = is_active
+        if user and linked_party_id is not _FAKE_UNSET:
+            if linked_party_id is None:
+                user["linked_party_id"] = None
+                user["linked_party_name"] = ""
+            else:
+                party = self.parties.get(int(linked_party_id or 0))
+                if not party or party.get("kind") != "customer" or party.get("deleted_at"):
+                    return {"code": 400, "msg": "客户不存在"}
+                user["linked_party_id"] = int(linked_party_id)
+                user["linked_party_name"] = party.get("name") or ""
         return {"code": 0, "data": {"id": user_id}}
 
     def identity_link_wechat(self, **kwargs):
@@ -1362,6 +1389,33 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(result["code"], 0)
         self.assertEqual(db.auth_users[1]["role"], "staff")
         self.assertEqual(db.auth_users[1]["is_active"], 1)
+
+    def test_user_service_binds_and_unbinds_customer(self):
+        db = FakeDB()
+        service = UserService(db=db)
+
+        bound = service.update(1, linked_party_id=55, operator_user_id=1)
+        unbound = service.update(1, linked_party_id=None, operator_user_id=1)
+
+        self.assertEqual(bound["code"], 0)
+        self.assertEqual(unbound["code"], 0)
+        self.assertIsNone(db.auth_users[1]["linked_party_id"])
+        update_calls = [call for call in db.calls if call[0] == "update_user"]
+        self.assertEqual(update_calls[0][1]["linked_party_id"], 55)
+        self.assertIsNone(update_calls[1][1]["linked_party_id"])
+
+    def test_user_service_rejects_invalid_customer_binding(self):
+        db = FakeDB()
+        service = UserService(db=db)
+
+        missing = service.update(1, linked_party_id=999, operator_user_id=1)
+        supplier = service.update(1, linked_party_id=56, operator_user_id=1)
+        deleted = service.update(1, linked_party_id=57, operator_user_id=1)
+
+        self.assertEqual(missing["code"], 400)
+        self.assertEqual(supplier["code"], 400)
+        self.assertEqual(deleted["code"], 400)
+        self.assertIsNone(db.auth_users[1]["linked_party_id"])
 
     def test_identity_link_service_normalizes_wechat_phone_binding(self):
         db = FakeDB()

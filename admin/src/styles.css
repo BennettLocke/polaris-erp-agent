@@ -7663,6 +7663,82 @@ textarea,
   font-size: 12px;
 }
 
+.settings-user-binding {
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.settings-user-binding-name {
+  color: var(--sj-foreground);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.settings-user-binding-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-customer-bind-dialog {
+  max-width: 640px;
+}
+
+.settings-customer-bind-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.settings-customer-bind-list {
+  max-height: 360px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-customer-bind-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  background: var(--sj-surface);
+  color: var(--sj-foreground);
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.settings-customer-bind-option:hover,
+.settings-customer-bind-option[data-selected="true"] {
+  border-color: var(--sj-ring);
+  background: var(--sj-soft);
+}
+
+.settings-customer-bind-option span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-customer-bind-option strong,
+.settings-customer-bind-option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-customer-bind-option small {
+  color: var(--sj-muted);
+  font-size: 12px;
+}
+
 .settings-file-input {
   position: absolute;
   width: 1px;
@@ -7995,6 +8071,7 @@ textarea,
   .settings-form-grid--two,
   .settings-switch-grid,
   .settings-search-form,
+  .settings-customer-bind-search,
   .sales-new-layout,
   .sales-create-page,
   .sales-create-basic-grid,

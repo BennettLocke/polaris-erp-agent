@@ -5423,14 +5423,16 @@ def native_user_update_api(user_id: int):
         display_name = body.get("display_name") if "display_name" in body else None
         user = _current_web_user() or {}
         operator_user_id = user.get("native_user_id") or user.get("id")
-        result = get_user_service().update(
-            user_id,
-            role=role,
-            is_active=is_active,
-            phone=phone,
-            display_name=display_name,
-            operator_user_id=operator_user_id,
-        )
+        update_kwargs = {
+            "role": role,
+            "is_active": is_active,
+            "phone": phone,
+            "display_name": display_name,
+            "operator_user_id": operator_user_id,
+        }
+        if "linked_party_id" in body:
+            update_kwargs["linked_party_id"] = body.get("linked_party_id")
+        result = get_user_service().update(user_id, **update_kwargs)
         if isinstance(result, dict) and result.get("code") not in (None, 0):
             return jsonify(result), 400
         return jsonify(result)

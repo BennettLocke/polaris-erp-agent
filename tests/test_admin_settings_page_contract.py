@@ -243,6 +243,34 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         self.assertIn("settings-user-guard-note", user_source)
         self.assertIn("最后一个管理员", user_source)
 
+    def test_user_permissions_can_bind_existing_customer(self):
+        settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        user_service_source = (ROOT / "src" / "services" / "business" / "users.py").read_text(encoding="utf-8")
+        native_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+        user_source = settings_source.split("function UserPermissionsPanel", 1)[1].split("function PrintSettingsPanel", 1)[0]
+
+        self.assertIn('"linked_party_id"', api_source)
+        self.assertIn("linked_party_id?: number | null", api_source)
+        self.assertIn('if "linked_party_id" in body', http_source)
+        self.assertIn("linked_party_id=_UNSET", user_service_source)
+        self.assertIn("kind='customer'", native_source)
+        self.assertIn("deleted_at IS NULL", native_source)
+
+        self.assertIn("customerBindTarget", user_source)
+        self.assertIn("CustomerBindDialog", user_source)
+        self.assertIn("api.customers(customerKeyword, 20)", user_source)
+        self.assertIn("linked_party_id: selectedCustomer.id", user_source)
+        self.assertIn("linked_party_id: null", user_source)
+        self.assertIn("确认绑定", user_source)
+        self.assertIn("未绑定", user_source)
+        self.assertIn("更换", user_source)
+        self.assertIn("解绑", user_source)
+        self.assertIn("<Dialog open={Boolean(customerBindTarget)}", user_source)
+        self.assertNotIn("<Sheet", user_source)
+        self.assertNotIn("<Drawer", user_source)
+
 
 if __name__ == "__main__":
     unittest.main()
