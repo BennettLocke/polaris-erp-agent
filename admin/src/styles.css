@@ -7697,11 +7697,13 @@ textarea,
   max-height: 360px;
   overflow: auto;
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  padding: 2px 4px 2px 0;
 }
 
 .settings-customer-bind-option {
   width: 100%;
+  min-height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7710,7 +7712,7 @@ textarea,
   border-radius: 8px;
   background: var(--sj-surface);
   color: var(--sj-foreground);
-  padding: 10px 12px;
+  padding: 12px 14px;
   text-align: left;
 }
 
@@ -7723,20 +7725,28 @@ textarea,
 .settings-customer-bind-option span {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 4px;
 }
 
 .settings-customer-bind-option strong,
 .settings-customer-bind-option small {
   min-width: 0;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.settings-customer-bind-option strong {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
 .settings-customer-bind-option small {
   color: var(--sj-muted);
   font-size: 12px;
+  line-height: 18px;
 }
 
 .settings-file-input {
