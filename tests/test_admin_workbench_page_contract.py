@@ -397,13 +397,27 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("warehouseNameFromId", workbench_source)
         self.assertIn("isWarehousePath", workbench_source)
         self.assertIn("displayConfirmValue", workbench_source)
+        self.assertIn("editableConfirmValue", workbench_source)
         self.assertIn("coerceConfirmValue", workbench_source)
         self.assertIn("valueLabel(row.value, row.path)", workbench_source)
         self.assertIn('["warehouse_name", "warehouse_id"]', confirm_sections)
         self.assertIn('["warehouse_name", "purchase_warehouse_id", "warehouse_id"]', confirm_sections)
         self.assertNotIn('["purchase_warehouse_id", "warehouse_id", "warehouse_name"]', confirm_sections)
-        self.assertIn("displayConfirmValue(field)", dialog_section)
+        self.assertIn("editableConfirmValue(field)", dialog_section)
         self.assertIn("coerceConfirmValue(nextValue, field)", dialog_section)
+
+    def test_workbench_sales_confirm_uses_product_warehouse_select_only(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        confirm_sections = extract_function_section(workbench_source, "buildConfirmSections")
+        editor_section = extract_function_section(workbench_source, "ConfirmSectionEditor")
+
+        self.assertIn('paths: ["warehouse_id", "warehouse_name"], label: "仓库", required: false, options: { control: "warehouse-select" as const }', confirm_sections)
+        self.assertNotIn('optionalConfirmField(state, [`${orderParamsPrefix}warehouse_name`, `${orderParamsPrefix}warehouse_id`, "warehouse_name", "warehouse_id"], "仓库")', confirm_sections)
+        self.assertIn('field.control === "warehouse-select"', editor_section)
+        self.assertIn('<SelectItem value="1">自己店里</SelectItem>', editor_section)
+        self.assertIn('<SelectItem value="2">百鑫仓库</SelectItem>', editor_section)
 
 
 if __name__ == "__main__":

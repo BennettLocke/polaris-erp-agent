@@ -38,6 +38,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import type {
   AgentMessageHistoryItem,
@@ -115,6 +116,7 @@ type PendingConfirmKind =
   | "generic";
 
 type ConfirmField = PendingField & {
+  control?: "input" | "warehouse-select";
   inputMode?: "text" | "numeric" | "decimal";
   readOnly?: boolean;
 };
@@ -125,7 +127,7 @@ type ConfirmSection = {
   fields: ConfirmField[];
 };
 
-type ConfirmFieldOptions = Pick<ConfirmField, "inputMode" | "readOnly">;
+type ConfirmFieldOptions = Pick<ConfirmField, "control" | "inputMode" | "readOnly">;
 
 const SESSION_KEY = "sj_admin_agent_session_id";
 const MESSAGE_KEY_PREFIX = "sj_admin_agent_messages_";
@@ -251,6 +253,14 @@ function warehouseIdFromName(value: string) {
 function displayConfirmValue(field: ConfirmField) {
   if (isWarehousePath(field.path)) return warehouseNameFromId(field.value);
   return field.value === undefined || field.value === null ? "" : String(field.value);
+}
+
+function editableConfirmValue(field: ConfirmField) {
+  if (field.control === "warehouse-select") {
+    const warehouseId = warehouseIdFromName(String(field.value ?? ""));
+    return warehouseId ? String(warehouseId) : "";
+  }
+  return displayConfirmValue(field);
 }
 
 function valueLabel(value: unknown, path = "") {
@@ -442,7 +452,7 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
     { paths: ["qty", "quantity", "order_quantity", "buy_number"], label: "数量", options: { inputMode: "decimal" as const } },
     { paths: ["unit", "unit_name"], label: "单位", required: false },
     { paths: ["price", "unit_price"], label: "单价", options: { inputMode: "decimal" as const }, required: false },
-    { paths: ["warehouse_name", "warehouse_id"], label: "仓库", required: false }
+    { paths: ["warehouse_id", "warehouse_name"], label: "仓库", required: false, options: { control: "warehouse-select" as const } }
   ];
 
   if (kind === "sales") {
@@ -454,9 +464,8 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
       ? ["order_params.products", "products", "items", "detail"]
       : ["products", "items", "detail"];
     const sections = [
-      confirmSection("销售单明细", "核对客户、仓库和付款信息。", [
+      confirmSection("销售单明细", "核对客户和付款信息。", [
         firstConfirmField(state, salesCustomerPaths, "客户"),
-        optionalConfirmField(state, [`${orderParamsPrefix}warehouse_name`, `${orderParamsPrefix}warehouse_id`, "warehouse_name", "warehouse_id"], "仓库"),
         optionalConfirmField(state, [`${orderParamsPrefix}pay_status`, `${orderParamsPrefix}payment_status`, "pay_status", "payment_status"], "付款状态"),
         optionalConfirmField(state, [`${orderParamsPrefix}pay_type`, `${orderParamsPrefix}payment_type`, "pay_type", "payment_type"], "付款方式"),
         optionalConfirmField(state, [`${orderParamsPrefix}remark`, `${orderParamsPrefix}note`, "remark", "note"], "备注")
@@ -1870,7 +1879,7 @@ function AgentConfirmDialog({
   const [values, setValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    const next = Object.fromEntries(fields.map((field) => [field.path, displayConfirmValue(field)]));
+    const next = Object.fromEntries(fields.map((field) => [field.path, editableConfirmValue(field)]));
     setValues(next);
   }, [stateKey, fieldKey]);
 
@@ -1878,7 +1887,7 @@ function AgentConfirmDialog({
     const nextState = cloneState(session?.state);
     fields.forEach((field) => {
       const nextValue = values[field.path] ?? "";
-      const originalDisplay = displayConfirmValue(field);
+      const originalDisplay = editableConfirmValue(field);
       if (nextValue !== String(field.value ?? "") && nextValue !== originalDisplay) {
         setValueByPath(nextState, field.path, coerceConfirmValue(nextValue, field));
       }
@@ -1947,12 +1956,24 @@ function ConfirmSectionEditor({
         {section.fields.map((field) => (
           <Field key={field.path}>
             <FieldLabel>{field.label}</FieldLabel>
-            <Input
-              value={values[field.path] ?? ""}
-              inputMode={field.inputMode}
-              readOnly={field.readOnly}
-              onChange={(event) => onValueChange(field.path, event.target.value)}
-            />
+            {field.control === "warehouse-select" ? (
+              <Select value={values[field.path] ?? ""} onValueChange={(value) => onValueChange(field.path, value)}>
+                <SelectTrigger aria-label={field.label}>
+                  <SelectValue placeholder="选择仓库" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">自己店里</SelectItem>
+                  <SelectItem value="2">百鑫仓库</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                value={values[field.path] ?? ""}
+                inputMode={field.inputMode}
+                readOnly={field.readOnly}
+                onChange={(event) => onValueChange(field.path, event.target.value)}
+              />
+            )}
           </Field>
         ))}
       </FieldGroup>
