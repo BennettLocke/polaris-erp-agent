@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import io
 import json
 import os
@@ -424,12 +423,11 @@ class TaobaoDetailExportService:
         template_paths = self.renderer.render(template_data)
         try:
             template_urls = self._upload_detail_images(template_paths)
+            content = self._zip_package(main_urls, color_items, template_paths, detail_urls)
         finally:
             self._cleanup_render_paths(template_paths)
 
-        detail_html = self._detail_html(template_urls, detail_urls)
         filename = f"{_safe_zip_name(product.get('title') or product.get('name') or '商品', '商品')}-淘宝详情页.zip"
-        content = self._zip_package(main_urls, color_items, detail_html, html_filename)
         return TaobaoDetailExportResult(
             filename=filename,
             content=content,
@@ -572,32 +570,24 @@ class TaobaoDetailExportService:
             if directory.exists() and directory.name.startswith("taobao_detail_render_"):
                 shutil.rmtree(directory, ignore_errors=True)
 
-    def _detail_html(self, template_urls: list[str], detail_urls: list[str]) -> str:
-        lines = [f'<div style="width:{TAOBAO_IMAGE_WIDTH}px;margin:0 auto;padding:0;background:#ffffff;">']
-        for index, url in enumerate(_unique(template_urls), start=1):
-            clean = html.escape(url, quote=True)
-            lines.append(
-                f'  <img src="{clean}" alt="礼盒详情页{index:02d}" '
-                f'style="display:block;width:{TAOBAO_IMAGE_WIDTH}px;height:auto;margin:0;padding:0;border:0;">'
-            )
-        for index, url in enumerate(_unique(detail_urls), start=1):
-            clean = html.escape(url, quote=True)
-            lines.append(
-                f'  <img src="{clean}" alt="商品详情图{index:02d}" '
-                f'style="display:block;width:{TAOBAO_IMAGE_WIDTH}px;height:auto;margin:0;padding:0;border:0;">'
-            )
-        lines.append("</div>")
-        return "\n".join(lines) + "\n"
-
-    def _zip_package(self, main_urls: list[str], color_items: list[dict], detail_html: str, html_filename: str) -> bytes:
+    def _zip_package(
+        self,
+        main_urls: list[str],
+        color_items: list[dict],
+        template_paths: list[Path],
+        detail_urls: list[str],
+    ) -> bytes:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(html_filename, detail_html.encode("utf-8"))
             for index, url in enumerate(main_urls, start=1):
                 self._write_image(archive, url, f"主图/main-{index}")
             for index, item in enumerate(color_items, start=1):
                 color = _safe_zip_name(item.get("color") or f"颜色{index}", f"颜色{index}")
                 self._write_image(archive, item["url"], f"颜色图/{color}-{index}")
+            for index, path in enumerate(template_paths, start=1):
+                self._write_local_image(archive, path, f"详情页/详情页-{index:02d}")
+            for index, url in enumerate(_unique(detail_urls), start=1):
+                self._write_image(archive, url, f"详情页/原产品详情图-{index}")
         return buffer.getvalue()
 
     def _write_image(self, archive: zipfile.ZipFile, url: str, stem: str) -> None:
@@ -609,3 +599,14 @@ class TaobaoDetailExportService:
         ]
         safe_stem = "/".join(safe_parts)
         archive.writestr(f"{safe_stem}{suffix}", data)
+
+    def _write_local_image(self, archive: zipfile.ZipFile, path: Path, stem: str) -> None:
+        safe_parts = [
+            _safe_zip_name(part, f"image-{index}")
+            for index, part in enumerate(stem.split("/"), start=1)
+        ]
+        safe_stem = "/".join(safe_parts)
+        suffix = path.suffix.lower() or ".jpg"
+        if suffix == ".jpeg":
+            suffix = ".jpg"
+        archive.writestr(f"{safe_stem}{suffix}", path.read_bytes())

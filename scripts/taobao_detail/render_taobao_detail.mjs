@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,7 +14,6 @@ const projectRoot = path.resolve(scriptDir, "..", "..");
 const dataPath = path.resolve(process.argv[2] || path.join(root, "taobao-detail-source", "product-data.json"));
 const templatePath = path.resolve(process.argv[3] || path.join(projectRoot, "assets", "taobao_detail", "detail-template.html"));
 const outputDir = path.resolve(process.argv[4] || path.join(root, "taobao-detail-editable-output"));
-const ossBaseUrl = (process.argv[5] || "https://你的OSS域名/taobao-detail").replace(/\/$/, "");
 
 const fontRegularPath = process.env.TAOBAO_DETAIL_FONT_REGULAR || path.join(
   projectRoot,
@@ -88,16 +87,6 @@ function fontFaceOverrideCss() {
       }`;
 }
 
-function imageTags(baseUrl, imageWidth) {
-  return slices
-    .map((slice, index) => {
-      const src = baseUrl ? `${baseUrl}/${slice.name}` : `./${slice.name}`;
-      const number = String(index + 1).padStart(2, "0");
-      return `  <img src="${src}" alt="礼盒详情页${number}" style="display:block;width:${imageWidth}px;height:auto;margin:0;padding:0;border:0;">`;
-    })
-    .join("\n");
-}
-
 const data = JSON.parse(await readFile(dataPath, "utf8"));
 const template = await readFile(templatePath, "utf8");
 const pageWidth = data.page?.width || 800;
@@ -107,7 +96,6 @@ const renderedHtml = injectDataIntoTemplate(template, data)
   .replace("/* __EDITABLE_FONT_FACE__ */", fontFaceOverrideCss());
 
 await mkdir(outputDir, { recursive: true });
-await writeFile(path.join(outputDir, "rendered-source.html"), renderedHtml, "utf8");
 
 const executablePath = detectBrowserExecutable();
 if (!executablePath) {
@@ -142,45 +130,6 @@ for (const slice of slices) {
 }
 
 await browser.close();
-
-const localTags = imageTags("", taobaoWidth);
-const ossTags = imageTags(ossBaseUrl, taobaoWidth);
-
-const previewHtml = `<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>可编辑淘宝详情页图片预览</title>
-    <style>
-      body {
-        margin: 0;
-        padding: 40px 0;
-        background: #666;
-      }
-    </style>
-  </head>
-  <body>
-    <div style="width:${taobaoWidth}px;margin:0 auto;padding:0;background:#ffffff;">
-${localTags}
-    </div>
-  </body>
-</html>
-`;
-
-const localCode = `<div style="width:${taobaoWidth}px;margin:0 auto;padding:0;background:#ffffff;">
-${localTags}
-</div>
-`;
-
-const ossCode = `<div style="width:${taobaoWidth}px;margin:0 auto;padding:0;background:#ffffff;">
-${ossTags}
-</div>
-`;
-
-await writeFile(path.join(outputDir, "preview.html"), previewHtml, "utf8");
-await writeFile(path.join(outputDir, "taobao-code-local.txt"), localCode, "utf8");
-await writeFile(path.join(outputDir, "taobao-code-oss-template.txt"), ossCode, "utf8");
 
 console.log(
   JSON.stringify(

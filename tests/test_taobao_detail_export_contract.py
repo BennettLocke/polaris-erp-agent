@@ -113,7 +113,7 @@ class TaobaoDetailExportServiceTest(TestCase):
         service.export_zip(9)
         return renderer.rendered_payloads[0]["product"]["capacity"]
 
-    def test_export_zip_contains_main_color_images_and_detail_html_only(self):
+    def test_export_zip_contains_only_main_color_and_detail_images(self):
         from src.services.business.taobao_detail import TaobaoDetailExportService
 
         uploader = FakeUploader()
@@ -149,23 +149,30 @@ class TaobaoDetailExportServiceTest(TestCase):
         with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
             names = sorted(archive.namelist())
             self.assertEqual(names, [
-                "SJ1587 喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做.html",
                 "主图/main-1.jpg",
+                "详情页/原产品详情图-1.jpg",
+                "详情页/原产品详情图-2.jpg",
+                "详情页/详情页-01.jpg",
+                "详情页/详情页-02.jpg",
+                "详情页/详情页-03.jpg",
+                "详情页/详情页-04.jpg",
+                "详情页/详情页-05.jpg",
                 "颜色图/红色-1.jpg",
                 "颜色图/蓝色-2.jpg",
             ])
-            self.assertNotIn("detail.html", names)
-            detail_html = archive.read(names[0]).decode("utf-8")
+            self.assertFalse(any(name.lower().endswith((".html", ".htm", ".txt")) for name in names))
         self.assertEqual(result.html_filename, "SJ1587 喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做.html")
-        self.assertIn("https://img.513sjbz.com/taobao/detail-01.jpg", detail_html)
-        self.assertIn("https://img.513sjbz.com/taobao/detail-05.jpg", detail_html)
-        self.assertNotIn("https://img.513sjbz.com/taobao/detail-01.png", detail_html)
-        self.assertIn("https://img.513sjbz.com/detail/detail-1.jpg", detail_html)
-        self.assertIn("https://img.513sjbz.com/detail/detail-2.jpg", detail_html)
-        self.assertIn("width:800px", detail_html)
-        self.assertNotIn("width:750px", detail_html)
-        self.assertNotIn("喜悦半斤茶叶礼品盒", detail_html)
-        self.assertNotIn("<p><img", detail_html)
+        self.assertEqual(result.template_image_urls, [
+            "https://img.513sjbz.com/taobao/detail-01.jpg",
+            "https://img.513sjbz.com/taobao/detail-02.jpg",
+            "https://img.513sjbz.com/taobao/detail-03.jpg",
+            "https://img.513sjbz.com/taobao/detail-04.jpg",
+            "https://img.513sjbz.com/taobao/detail-05.jpg",
+        ])
+        self.assertEqual(result.detail_image_urls, [
+            "https://img.513sjbz.com/detail/detail-1.jpg",
+            "https://img.513sjbz.com/detail/detail-2.jpg",
+        ])
 
     def test_export_html_filename_falls_back_when_llm_title_generation_fails(self):
         from src.services.business.taobao_detail import TaobaoDetailExportService
@@ -186,8 +193,9 @@ class TaobaoDetailExportServiceTest(TestCase):
             "SJ1587 喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做.html",
         )
         with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
-            self.assertIn(result.html_filename, archive.namelist())
-            self.assertNotIn("detail.html", archive.namelist())
+            names = archive.namelist()
+            self.assertNotIn(result.html_filename, names)
+            self.assertFalse(any(name.lower().endswith((".html", ".htm", ".txt")) for name in names))
 
     def test_export_capacity_lines_follow_box_spec(self):
         self.assertEqual(self._rendered_capacity_for_title("【喜悦】半斤"), [
@@ -250,6 +258,9 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("detail-05.jpg", renderer_source)
         self.assertIn('type: "jpeg"', renderer_source)
         self.assertIn("quality: 100", renderer_source)
+        self.assertNotIn("preview.html", renderer_source)
+        self.assertNotIn("taobao-code-local.txt", renderer_source)
+        self.assertNotIn("taobao-code-oss-template.txt", renderer_source)
         self.assertIn('font-family: "AlibabaPuhuiEditable"', template_source)
         self.assertNotIn("color: #1a1a1a", template_source)
         self.assertNotIn("color: #231815", template_source)
