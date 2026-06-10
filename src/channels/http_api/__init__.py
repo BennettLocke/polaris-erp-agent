@@ -2031,6 +2031,65 @@ def _image_has_open_order_marker(result: dict) -> bool:
     return any((item.get("parsed") or {}).get("has_kaipiao") for item in _image_items(result))
 
 
+def _handle_image_auto_workflow_sales_flow(result: dict, session, response_text: str) -> str:
+    """Create workflow orders immediately, then pause only for sales confirmation."""
+    parsed_list = _workflow_params_from_image_result(result)
+    created_ids = []
+    lines = [response_text]
+
+    if parsed_list:
+        from src.skills.workflow_order.workflow import WorkflowOrderWorkflow
+
+        create_result = WorkflowOrderWorkflow()._create_many(parsed_list)
+        created_ids = create_result.get("workflow_order_ids") or []
+        create_reply = create_result.get("reply", "")
+        if create_reply:
+            lines.extend(["", create_reply])
+
+        if len(created_ids) != len(parsed_list):
+            lines.extend(["", "工作流订单没有全部创建成功，未进入销售单确认。请先检查识别结果。"])
+            return "\n".join(lines)
+
+    params = _order_params_from_image_result(result)
+    products = params.get("products") or []
+    customers = params.get("customers") or []
+    if not products:
+        return "\n".join(lines)
+    if len(customers) > 1:
+        lines.extend([
+            "",
+            "开单提示：识别到多个客户，不能合并成一张销售单。工作流订单已保留，请分别开单。",
+        ])
+        return "\n".join(lines)
+
+    if created_ids:
+        params = dict(params)
+        params.setdefault("workflow_order_id", created_ids[0])
+        params.setdefault("workflow_order_ids", created_ids)
+
+    from src.skills.order_flow.workflow import OrderFlowWorkflow
+
+    order_result = OrderFlowWorkflow().execute("图片识别结果确认开单", params=params)
+    if order_result.get("status") == "ask":
+        state = dict(order_result.get("state") or {})
+        if created_ids:
+            state.setdefault("workflow_order_id", created_ids[0])
+            state.setdefault("workflow_order_ids", created_ids)
+        session.save_pending(order_result.get("intent") or "order", state)
+        intro = "工作流已创建，下面确认是否按识别内容开销售单：" if parsed_list else "下面确认是否按识别内容开销售单："
+        lines.extend([
+            "",
+            intro,
+            order_result.get("question", ""),
+        ])
+        return "\n".join(line for line in lines if line is not None)
+
+    reply = order_result.get("reply", "开单流程已处理。")
+    if reply:
+        lines.extend(["", reply])
+    return "\n".join(lines)
+
+
 def _handle_image_workflow_flow(result: dict, session, response_text: str) -> str:
     parsed_list = _workflow_params_from_image_result(result)
     if not parsed_list:
@@ -2601,9 +2660,7 @@ def image_upload():
 
         session = SessionManager(session_id)
         session.clear_pending()
-        response_text = _handle_image_workflow_flow(result, session, response_text)
-        if not session.has_pending():
-            response_text = _handle_image_sales_flow(result, session, response_text)
+        response_text = _handle_image_auto_workflow_sales_flow(result, session, response_text)
         session.set_meta("last_extraction", {
             "user_input": f"上传图片：{file.filename}",
             "intent": "workflow",
