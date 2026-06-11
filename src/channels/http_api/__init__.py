@@ -5320,6 +5320,9 @@ def native_customer_statement_pdf_api(customer_id: int):
         filename = f"{customer_name}-{period_label}-对账单.pdf"
         response = Response(pdf_bytes, mimetype="application/pdf")
         response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
     except DBError as e:
         logger.warning(f"customer statement pdf rejected: customer_id={customer_id}, error={e}")

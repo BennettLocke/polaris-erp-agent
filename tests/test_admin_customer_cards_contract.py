@@ -95,6 +95,7 @@ class AdminCustomerCardsContractTest(unittest.TestCase):
         self.assertIn("updateCustomer:", api_source)
         self.assertIn("customerStatement:", api_source)
         self.assertIn("customerStatementPdfUrl:", api_source)
+        self.assertIn('params.set("_", String(Date.now()))', api_source)
         self.assertIn("def list_page(", service_source)
         self.assertIn("customer_list_page", service_source)
         self.assertIn("def statement(", service_source)
@@ -117,6 +118,8 @@ class AdminCustomerCardsContractTest(unittest.TestCase):
         self.assertIn("get_customer_service().update_profile", http_source)
         self.assertIn("/api/customers/<int:customer_id>/statement", http_source)
         self.assertIn("/api/customers/<int:customer_id>/statement.pdf", http_source)
+        self.assertIn('response.headers["Cache-Control"]', http_source)
+        self.assertIn("no-store", http_source)
 
         for component_token in [
             "<Badge",

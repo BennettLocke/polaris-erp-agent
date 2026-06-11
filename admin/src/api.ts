@@ -363,7 +363,9 @@ export const api = {
     return request<CustomerStatement>(`/api/customers/${id}/statement${query ? `?${query}` : ""}`);
   },
   customerStatementPdfUrl: (id: number, options: CustomerStatementQuery = {}) => {
-    const query = customerStatementParams(options);
+    const params = new URLSearchParams(customerStatementParams(options));
+    params.set("_", String(Date.now()));
+    const query = params.toString();
     return `/api/customers/${id}/statement.pdf${query ? `?${query}` : ""}`;
   },
   applyCustomerBalance: (id: number, payload: CustomerBalanceActionPayload) =>
