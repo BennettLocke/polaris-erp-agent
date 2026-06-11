@@ -301,18 +301,39 @@ def build_customer_statement_pdf(statement: dict) -> bytes:
                 money(item.get("amount")),
                 " / ".join(part for part in [text(order.get("pay_status_text")), text(order.get("pay_type_text"))] if part != "-"),
             ])
+    total_row_index = None
     if len(sales_rows) == 1:
         sales_rows.append(["-", "-", "无销售明细", "-", "-", "-", "-", "-"])
+    else:
+        total_row_index = len(sales_rows)
+        sales_rows.append([
+            Paragraph(f"共计：{text(statement.get('sales_count'))} 单", cell_style),
+            "",
+            "",
+            "",
+            f"{text(statement.get('sales_quantity'))} 套",
+            "",
+            money(statement.get('sales_amount')),
+            "",
+        ])
 
     sales_table = Table(sales_rows, repeatRows=1, colWidths=[18 * mm, 25 * mm, 36 * mm, 22 * mm, 15 * mm, 20 * mm, 22 * mm, 20 * mm])
-    sales_table.setStyle(TableStyle([
+    table_style = [
         ("FONTNAME", (0, 0), (-1, -1), font_name),
         ("FONTSIZE", (0, 0), (-1, -1), 7.6),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E4E4E7")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("PADDING", (0, 0), (-1, -1), 3),
-    ]))
+    ]
+    if total_row_index is not None:
+        table_style.extend([
+            ("SPAN", (0, total_row_index), (3, total_row_index)),
+            ("BACKGROUND", (0, total_row_index), (-1, total_row_index), colors.HexColor("#FAFAFA")),
+            ("LINEABOVE", (0, total_row_index), (-1, total_row_index), 0.5, colors.HexColor("#A1A1AA")),
+            ("ALIGN", (4, total_row_index), (6, total_row_index), "RIGHT"),
+        ])
+    sales_table.setStyle(TableStyle(table_style))
     story.append(sales_table)
     doc.build(story)
     return buffer.getvalue()
