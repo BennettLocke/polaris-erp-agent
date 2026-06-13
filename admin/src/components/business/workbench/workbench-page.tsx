@@ -134,6 +134,8 @@ const MESSAGE_KEY_PREFIX = "sj_admin_agent_messages_";
 const BUSINESS_KEY_PREFIX = "sj_admin_business_history_";
 const MAX_BUSINESS_HISTORY = 5;
 const DASHBOARD_SUMMARY_REFRESH_MS = 8000;
+const WORKBENCH_UPLOAD_ARCHIVE_EXTENSIONS = [".zip"];
+const WORKBENCH_UPLOAD_ACCEPT = ["image/*", ...WORKBENCH_UPLOAD_ARCHIVE_EXTENSIONS, "application/zip", "application/x-zip-compressed"].join(",");
 
 const COMMANDS = ["开单", "查库存", "进货", "调货", "盘点", "工作流", "上传泡袋"];
 
@@ -143,6 +145,20 @@ const WELCOME_MESSAGE: ChatMessage = {
   content: "你好，我是北极星。可以直接说开单、查库存、进货、盘点、调货，也可以上传订单图或设计稿。",
   createdAt: new Date().toISOString()
 };
+
+const ZIP_UPLOAD_TYPES = new Set(["application/zip", "application/x-zip-compressed"]);
+
+function isZipUploadFile(file: File) {
+  return ZIP_UPLOAD_TYPES.has(file.type) || file.name.toLowerCase().endsWith(".zip");
+}
+
+function isWorkbenchUploadFile(file: File) {
+  return file.type.startsWith("image/") || isZipUploadFile(file);
+}
+
+function uploadFileLabel(file: File) {
+  return isZipUploadFile(file) ? "压缩包" : "图片";
+}
 
 function newSessionId() {
   return `web_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -1041,14 +1057,16 @@ export function WorkbenchPage() {
   }
 
   async function uploadImageFile(file: File) {
-    const userMessageId = appendMessage("user", `上传图片：${file.name || "图片"}`);
-    const pendingId = appendMessage("assistant", "正在识别图片...", "sending");
+    const fileLabel = uploadFileLabel(file);
+    const fileName = file.name || fileLabel;
+    const userMessageId = appendMessage("user", `上传${fileLabel}：${fileName}`);
+    const pendingId = appendMessage("assistant", isZipUploadFile(file) ? "正在处理压缩包..." : "正在识别图片...", "sending");
     const data = await api.uploadAgentImage(file, sessionId);
     const previewUrl = data.result?.preview_url;
-    const responseText = data.response || "图片已识别";
+    const responseText = data.response || (isZipUploadFile(file) ? "压缩包已处理" : "图片已识别");
     const displayText = previewUrl ? `${responseText}\n${previewUrl}` : responseText;
     if (previewUrl) {
-      updateMessage(userMessageId, `上传图片：${file.name || "图片"}\n${previewUrl}`);
+      updateMessage(userMessageId, `上传${fileLabel}：${fileName}\n${previewUrl}`);
     }
     updateMessage(pendingId, displayText);
     const nextSession = data.session || null;
@@ -1122,7 +1140,7 @@ export function WorkbenchPage() {
   }
 
   function chooseFiles(event: ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(event.target.files || []).filter((file) => file.type.startsWith("image/"));
+    const selected = Array.from(event.target.files || []).filter(isWorkbenchUploadFile);
     setFiles((current) => [...current, ...selected].slice(0, 6));
     event.target.value = "";
   }
@@ -1151,7 +1169,7 @@ export function WorkbenchPage() {
   }
 
   function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
-    const pasted = Array.from(event.clipboardData.files || []).filter((file) => file.type.startsWith("image/"));
+    const pasted = Array.from(event.clipboardData.files || []).filter(isWorkbenchUploadFile);
     if (pasted.length) setFiles((current) => [...current, ...pasted].slice(0, 6));
   }
 
@@ -1161,7 +1179,7 @@ export function WorkbenchPage() {
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
-        const dropped = Array.from(event.dataTransfer.files || []).filter((file) => file.type.startsWith("image/"));
+        const dropped = Array.from(event.dataTransfer.files || []).filter(isWorkbenchUploadFile);
         if (dropped.length) setFiles((current) => [...current, ...dropped].slice(0, 6));
       }}
     >
@@ -1390,9 +1408,9 @@ function ChatComposer({
         <div className="workbench-attachment-list">
           {files.map((file, index) => (
             <Badge variant="secondary" key={`${file.name}_${index}`}>
-              <ImageIcon data-icon="inline-start" />
-              {file.name || "图片"}
-              <button className="workbench-attachment-remove" type="button" onClick={() => onRemoveFile(index)} aria-label="移除图片">
+              {isZipUploadFile(file) ? <Paperclip data-icon="inline-start" /> : <ImageIcon data-icon="inline-start" />}
+              {file.name || uploadFileLabel(file)}
+              <button className="workbench-attachment-remove" type="button" onClick={() => onRemoveFile(index)} aria-label="移除附件">
                 <X />
               </button>
             </Badge>
@@ -1400,8 +1418,8 @@ function ChatComposer({
         </div>
       ) : null}
       <div className="workbench-composer-main">
-        <input ref={fileInputRef} className="workbench-file-input" type="file" accept="image/*" multiple onChange={onChooseFiles} />
-        <Button variant="outline" size="icon" onClick={() => fileInputRef.current?.click()} aria-label="上传图片">
+        <input ref={fileInputRef} className="workbench-file-input" type="file" accept={WORKBENCH_UPLOAD_ACCEPT} multiple onChange={onChooseFiles} />
+        <Button variant="outline" size="icon" onClick={() => fileInputRef.current?.click()} aria-label="上传图片或ZIP">
           <Paperclip data-icon="icon" />
         </Button>
         <Input
@@ -1410,7 +1428,7 @@ function ChatComposer({
           onChange={(event) => onInput(event.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          placeholder="输入业务指令，或粘贴订单图片"
+          placeholder="输入业务指令，或上传订单图片/ZIP"
         />
         <Button onClick={onSend} disabled={isSending || (!input.trim() && !files.length)}>
           {isSending ? <Loader2 className="workbench-spin" data-icon="inline-start" /> : <Send data-icon="inline-start" />}

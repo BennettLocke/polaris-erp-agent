@@ -2633,8 +2633,9 @@ def image_upload():
             if _agent is None:
                 return jsonify({"code": 500, "msg": "Agent not initialized"}), 500
             preview_url = f"/api/images/file/{save_name}" if _allowed_image(save_name) else ""
+            upload_label = "文件" if suffix.lower() == ".zip" else "图片"
             response_text = _agent.run(
-                user_input=f"图片: {save_path} 预览: {preview_url}",
+                user_input=f"{upload_label}: {save_path} 预览: {preview_url}",
                 user_id=_request_user_id("http_user"),
                 session_id=session_id,
             )
