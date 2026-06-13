@@ -1,6 +1,11 @@
 import unittest
 
-from src.core.nodes.image_workflow import _normalize_goods_keyword, parse_ocr_text_list, propagate_batch_customer_context
+from src.core.nodes.image_workflow import (
+    _normalize_goods_keyword,
+    parse_ocr_text_list,
+    propagate_batch_customer_context,
+    propagate_batch_goods_context,
+)
 from src.channels.http_api.__init__ import _sanitize_pending_state
 from src.skills.workflow_order.workflow import WorkflowOrderWorkflow
 
@@ -12,6 +17,44 @@ class FakeWorkflowCaller:
     def call(self, name, **kwargs):
         self.calls.append((name, kwargs))
         return {"code": 0, "data": {"id": len(self.calls)}}
+
+
+class FakeGoodsContextCaller:
+    def __init__(self):
+        self.products = [
+            {"id": 1086, "title": "【艺】三两", "spec": "橙色", "simple_desc": "1件24套", "price": "25.00"},
+            {"id": 1096, "title": "【艺】三两", "spec": "绿色", "simple_desc": "1件24套", "price": "25.00"},
+        ]
+
+    def call(self, name, **kwargs):
+        if name == "product_search":
+            keyword = str(kwargs.get("keyword") or "").replace(" ", "").replace("【", "").replace("】", "")
+            return [
+                product
+                for product in self.products
+                if keyword and keyword in product["title"].replace("【", "").replace("】", "")
+            ]
+        if name == "inventory_search":
+            keyword = str(kwargs.get("keyword") or "").replace(" ", "").replace("【", "").replace("】", "")
+            color = kwargs.get("color") or ""
+            return [
+                {
+                    "product_id": product["id"],
+                    "产品名称": product["title"],
+                    "【颜色】": product["spec"],
+                    "【仓库】": "百鑫仓库",
+                    "库存数量": 10,
+                    "simple_desc": product["simple_desc"],
+                }
+                for product in self.products
+                if keyword and keyword in product["title"].replace("【", "").replace("】", "") and (not color or color == product["spec"])
+            ]
+        if name == "product_info":
+            for product in self.products:
+                if int(product["id"]) == int(kwargs["product_id"]):
+                    return product
+            return {}
+        raise AssertionError(f"unexpected call: {name}")
 
 
 class ImageWorkflowParsingTest(unittest.TestCase):
@@ -75,6 +118,35 @@ class ImageWorkflowParsingTest(unittest.TestCase):
 
         self.assertEqual(items[1]["parsed"]["customer_name"], "霸枞")
         self.assertEqual(items[1]["workflow_order_payload"]["customer"], "霸枞")
+
+    def test_batch_goods_context_repairs_brandless_same_spec_item(self):
+        items = [
+            {
+                "parsed": {"customer_name": "天佑", "goods_name": "三两", "color": "橙色", "quantity": 6, "unit": "套"},
+                "product_warning": ["三两"],
+                "workflow_order_payload": {"customer": "天佑", "goods_name": "三两", "color": "橙色", "quantity": 6},
+            },
+            {
+                "parsed": {
+                    "customer_name": "天佑",
+                    "goods_name": "【艺】三两",
+                    "color": "绿色",
+                    "quantity": 6,
+                    "unit": "套",
+                    "product_id": 1096,
+                    "product_info": {"id": 1096, "title": "【艺】三两", "spec": "绿色"},
+                },
+                "product_warning": [],
+                "workflow_order_payload": {"customer": "天佑", "goods_name": "【艺】三两", "color": "绿色", "quantity": 6},
+            },
+        ]
+
+        propagate_batch_goods_context(items, FakeGoodsContextCaller())
+
+        self.assertEqual(items[0]["parsed"]["goods_name"], "【艺】三两")
+        self.assertEqual(items[0]["parsed"]["product_id"], 1086)
+        self.assertEqual(items[0]["workflow_order_payload"]["goods_name"], "【艺】三两")
+        self.assertEqual(items[0]["product_warning"], [])
 
     def test_image_workflow_pending_state_drops_empty_rows(self):
         cleaned = _sanitize_pending_state(

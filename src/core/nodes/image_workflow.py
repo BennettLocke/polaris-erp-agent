@@ -175,6 +175,7 @@ def process_single_image(image_path: str, caller) -> dict:
 
             result["items"] = child_results
             propagate_batch_customer_context(child_results)
+            propagate_batch_goods_context(child_results, caller)
             result["workflow_orders"] = [item["workflow_order"] for item in child_results if item.get("workflow_order")]
             result["workflow_order_payloads"] = [
                 item["workflow_order_payload"]
@@ -671,6 +672,85 @@ def propagate_batch_customer_context(items: list[dict]) -> None:
             payload = item.get("workflow_order_payload")
             if isinstance(payload, dict):
                 payload["customer"] = batch_customer
+
+
+BATCH_GOODS_CONTEXT_SPECS = (
+    "五格短半斤",
+    "短款半斤",
+    "短半斤",
+    "二三两",
+    "三两",
+    "3两",
+    "二两",
+    "2两",
+    "两大盒",
+    "两泡装小盒",
+    "二小盒",
+    "三小盒",
+    "3小盒",
+    "六小盒",
+    "6小盒",
+    "十小盒",
+    "10小盒",
+    "半斤",
+    "一两",
+)
+
+
+def _batch_goods_parts(goods_name: str) -> tuple[str, str]:
+    value = _clean_goods_value(goods_name).replace("【", "").replace("】", "").strip()
+    compact = re.sub(r"\s+", "", value)
+    if not compact:
+        return "", ""
+    for spec in sorted(BATCH_GOODS_CONTEXT_SPECS, key=len, reverse=True):
+        spec_compact = re.sub(r"\s+", "", spec)
+        if not compact.endswith(spec_compact):
+            continue
+        brand = compact[: -len(spec_compact)].strip()
+        return brand, spec_compact
+    return compact, ""
+
+
+def _batch_goods_has_confirmed_product(item: dict) -> bool:
+    parsed = item.get("parsed") or {}
+    return bool(parsed.get("product_id") or parsed.get("product_info"))
+
+
+def propagate_batch_goods_context(items: list[dict], caller) -> None:
+    """Within one uploaded image, use a reliable sibling product name for brand-missed frames."""
+    contexts: dict[str, list[str]] = {}
+    for item in items or []:
+        parsed = item.get("parsed") or {}
+        goods_name = str(parsed.get("goods_name") or "").strip()
+        brand, spec = _batch_goods_parts(goods_name)
+        if not brand or not spec or not _batch_goods_has_confirmed_product(item):
+            continue
+        contexts.setdefault(spec, [])
+        if goods_name not in contexts[spec]:
+            contexts[spec].append(goods_name)
+
+    unique_contexts = {spec: rows[0] for spec, rows in contexts.items() if len(rows) == 1}
+    if not unique_contexts:
+        return
+
+    for item in items or []:
+        parsed = item.get("parsed") or {}
+        goods_name = str(parsed.get("goods_name") or "").strip()
+        brand, spec = _batch_goods_parts(goods_name)
+        if brand or spec not in unique_contexts:
+            continue
+        repaired_name = unique_contexts[spec]
+        color = str(parsed.get("color") or "")
+        product_info = find_product_by_goods_name(repaired_name, caller, color)
+        parsed["goods_name"] = repaired_name
+        if product_info:
+            parsed["product_id"] = product_info.get("id")
+            parsed["product_info"] = product_info
+            item["product_warning"] = [warning for warning in (item.get("product_warning") or []) if warning != goods_name]
+        payload = item.get("workflow_order_payload")
+        if isinstance(payload, dict):
+            payload["goods_name"] = repaired_name
+        logger.info(f"OCR同批商品名修复: {goods_name} → {repaired_name}")
 
 
 def _split_customer_goods_by_erp(text: str, caller, color: str = "") -> tuple[str, str] | None:
