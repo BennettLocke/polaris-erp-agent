@@ -2,6 +2,8 @@ import unittest
 from unittest.mock import patch
 
 from src.channels import http_api
+from src.core.product_matcher import ProductMatcher
+from src.skills.order_flow.workflow import OrderFlowWorkflow
 
 
 class FakeSession:
@@ -34,7 +36,62 @@ def _image_item(customer="测试客户", goods="喜悦半斤", color="红色", q
     }
 
 
+class FakeProductIdCaller:
+    def __init__(self):
+        self.calls = []
+
+    def call(self, tool_name, **kwargs):
+        self.calls.append((tool_name, kwargs))
+        if tool_name == "product_info":
+            return {
+                "id": kwargs["product_id"],
+                "product_id": kwargs["product_id"],
+                "title": "【艺】三两",
+                "name": "【艺】三两",
+                "spec": "绿色",
+                "simple_desc": "1件24套",
+                "price": "25.00",
+                "is_stock_item": 1,
+                "product_type": "gift_box",
+                "purchase_policy": "order_qty",
+                "base": [{"unit_id": 1, "unit_name": "套", "price": "25.00"}],
+            }
+        if tool_name == "get_unit_list":
+            return [{"id": 1, "name": "套"}]
+        if tool_name == "product_search":
+            return []
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+
 class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
+    def test_order_params_preserve_confirmed_image_product_id(self):
+        item = _image_item(goods="【艺】三两", color="绿色", qty=6)
+        item["parsed"]["product_id"] = 1096
+
+        params = http_api._order_params_from_image_result({"items": [item]})
+
+        self.assertEqual(params["products"][0]["product_id"], 1096)
+        self.assertEqual(params["products"][0]["name"], "【艺】三两")
+
+    def test_order_flow_uses_confirmed_product_id_without_name_rematch(self):
+        caller = FakeProductIdCaller()
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow.caller = caller
+        workflow.product_matcher = ProductMatcher(caller)
+
+        resolved = workflow._search_product({
+            "product_id": 1096,
+            "name": "三两",
+            "color": "绿色",
+            "qty": 6,
+            "unit": "套",
+        })
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved["product_id"], 1096)
+        self.assertEqual(resolved["name"], "【艺】三两")
+        self.assertNotIn("product_search", [name for name, _ in caller.calls])
+
     def test_auto_creates_workflow_then_saves_sales_confirmation_pending(self):
         session = FakeSession()
         captured_workflow_rows = []

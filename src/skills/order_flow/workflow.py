@@ -495,19 +495,34 @@ class OrderFlowWorkflow(BaseWorkflow):
         price_override = self._parse_price(product.get("price") or product.get("unit_price"))
 
         keyword = self._normalize_product_name(name)
-        match = self.product_matcher.match(
-            keyword,
-            color=color,
-            use_inventory=False,
-            allow_product_fallback=True,
-            product_limit=100,
-            inventory_limit=80,
-            allow_llm=False,
-            broad_keywords=False,
-        )
-        results = match.candidates
-        target = match.product
-        logger.info(f"[OrderFlow] 商品匹配 '{keyword}', color={color} → {match.reason}, 候选={len(results)}")
+        product_id_hint = product.get("product_id") or product.get("id")
+        target = None
+        results = []
+        match = None
+        if product_id_hint:
+            detail = self._product_detail(product_id_hint)
+            if detail:
+                target = {
+                    **detail,
+                    "id": detail.get("id") or detail.get("product_id") or product_id_hint,
+                    "product_id": detail.get("product_id") or detail.get("id") or product_id_hint,
+                }
+                logger.info(f"[OrderFlow] 使用已确认商品ID: {product_id_hint} → {target.get('title') or target.get('name') or name}")
+
+        if target is None:
+            match = self.product_matcher.match(
+                keyword,
+                color=color,
+                use_inventory=False,
+                allow_product_fallback=True,
+                product_limit=100,
+                inventory_limit=80,
+                allow_llm=False,
+                broad_keywords=False,
+            )
+            results = match.candidates
+            target = match.product
+            logger.info(f"[OrderFlow] 商品匹配 '{keyword}', color={color} → {match.reason}, 候选={len(results)}")
 
         if target is not None:
             repaired = self._repair_numeric_suffix_from_target(name, target, qty, product.get("_qty_text"))
@@ -543,7 +558,8 @@ class OrderFlowWorkflow(BaseWorkflow):
                 results = no_color_match.candidates
                 color = ""
         if target is None:
-            logger.warning(f"[OrderFlow] 商品未唯一确认: name={name}, color={color}, reason={match.reason}, results={len(results)}")
+            reason = match.reason if match is not None else "not_found"
+            logger.warning(f"[OrderFlow] 商品未唯一确认: name={name}, color={color}, reason={reason}, results={len(results)}")
             product["_match_candidates"] = results[:12]
             return None
 

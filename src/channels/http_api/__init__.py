@@ -2004,13 +2004,17 @@ def _order_params_from_image_result(result: dict) -> dict:
         customer = parsed.get("customer_name") or ""
         if customer and customer not in customers:
             customers.append(customer)
-        products.append({
+        product = {
             "name": goods_name,
             "qty": int(parsed.get("quantity") or 1),
             "quantity": int(parsed.get("quantity") or 1),
             "unit": parsed.get("unit") or "套",
             "color": parsed.get("color") or "",
-        })
+        }
+        product_id = parsed.get("product_id") or (parsed.get("product_info") or {}).get("id")
+        if product_id:
+            product["product_id"] = product_id
+        products.append(product)
     return {
         "customer": customers[0] if customers else "",
         "customers": customers,
