@@ -39,3 +39,9 @@ def test_small_box_aliases_accept_digits_spaces_and_chinese():
     }
     for raw, expected in cases.items():
         assert normalize_product_name(raw) == expected
+
+
+def test_one_jin_box_aliases_are_searchable_specs():
+    assert normalize_product_name("顶峰见1斤盒红色", colors=["红色"]) == "顶峰见 一斤盒"
+    assert normalize_product_name("顶峰见一斤盒") == "顶峰见 一斤盒"
+    assert product_terms("顶峰见1斤盒") == ["顶峰见", "一斤盒"]

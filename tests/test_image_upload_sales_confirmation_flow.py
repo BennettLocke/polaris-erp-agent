@@ -63,6 +63,49 @@ class FakeProductIdCaller:
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
 
+class FakeOneJinRelatedCandidateCaller:
+    def __init__(self):
+        self.calls = []
+        self.product = {
+            "id": 2201,
+            "product_id": 2201,
+            "title": "【顶峰见】一斤盒",
+            "name": "【顶峰见】一斤盒",
+            "spec": "红色",
+            "simple_desc": "1件20套",
+            "price": "38.00",
+            "is_stock_item": 1,
+            "product_type": "gift_box",
+            "purchase_policy": "order_qty",
+            "base": [{"unit_id": 1, "unit_name": "套", "price": "38.00"}],
+        }
+
+    def call(self, tool_name, **kwargs):
+        self.calls.append((tool_name, kwargs))
+        if tool_name == "product_search":
+            keyword = str(kwargs.get("keyword") or "").replace(" ", "")
+            return [self.product] if keyword == "顶峰" else []
+        if tool_name == "inventory_search":
+            keyword = str(kwargs.get("keyword") or "").replace(" ", "")
+            if keyword == "顶峰" and kwargs.get("color") == "红色":
+                return [
+                    {
+                        "product_id": 2201,
+                        "产品名称": "【顶峰见】一斤盒",
+                        "【颜色】": "红色",
+                        "【仓库】": "百鑫仓库",
+                        "库存数量": 12,
+                        "simple_desc": "1件20套",
+                    }
+                ]
+            return []
+        if tool_name == "product_info":
+            return dict(self.product) if int(kwargs["product_id"]) == 2201 else None
+        if tool_name == "get_unit_list":
+            return [{"id": 1, "name": "套"}]
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+
 class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
     def test_order_params_preserve_confirmed_image_product_id(self):
         item = _image_item(goods="【艺】三两", color="绿色", qty=6)
@@ -91,6 +134,24 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
         self.assertEqual(resolved["product_id"], 1096)
         self.assertEqual(resolved["name"], "【艺】三两")
         self.assertNotIn("product_search", [name for name, _ in caller.calls])
+
+    def test_order_flow_auto_uses_unique_related_one_jin_box_candidate(self):
+        caller = FakeOneJinRelatedCandidateCaller()
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow.caller = caller
+        workflow.product_matcher = ProductMatcher(caller)
+
+        resolved = workflow._search_product({
+            "name": "顶峰见一斤盒",
+            "color": "红色",
+            "qty": 20,
+            "unit": "套",
+        })
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved["product_id"], 2201)
+        self.assertEqual(resolved["name"], "【顶峰见】一斤盒")
+        self.assertEqual(resolved["color"], "红色")
 
     def test_auto_creates_workflow_then_saves_sales_confirmation_pending(self):
         session = FakeSession()

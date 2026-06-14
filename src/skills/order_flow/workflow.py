@@ -524,6 +524,17 @@ class OrderFlowWorkflow(BaseWorkflow):
             target = match.product
             logger.info(f"[OrderFlow] 商品匹配 '{keyword}', color={color} → {match.reason}, 候选={len(results)}")
 
+        if target is None:
+            related_candidates = self._preview_product_candidates({"name": name, "color": color})
+            confirmed_related = self._select_related_product_candidate(related_candidates, keyword, color)
+            if confirmed_related is not None:
+                target = confirmed_related
+                results = related_candidates
+                logger.info(
+                    f"[OrderFlow] 唯一关联候选自动确认: name={name}, color={color} "
+                    f"→ {target.get('title') or target.get('产品名称')}"
+                )
+
         if target is not None:
             repaired = self._repair_numeric_suffix_from_target(name, target, qty, product.get("_qty_text"))
             if repaired:
@@ -906,6 +917,42 @@ class OrderFlowWorkflow(BaseWorkflow):
             if match.candidates:
                 return match.candidates
         return []
+
+    def _select_related_product_candidate(self, results: list[dict], keyword: str, color: str) -> dict | None:
+        """Pick a relaxed-search candidate only when it still matches the original product text."""
+        if not results:
+            return None
+        candidates = results
+        if color:
+            normalized_color = self._normalize_color(color)
+            candidates = [
+                row for row in candidates
+                if (
+                    candidate_color := self._normalize_color(str(row.get("spec") or row.get("【颜色】") or ""))
+                )
+                and (normalized_color in candidate_color or candidate_color in normalized_color)
+            ]
+            if not candidates:
+                return None
+
+        terms = self._product_terms(keyword)
+        term_matches = [row for row in candidates if self._candidate_has_terms(row, terms)]
+        if len(term_matches) == 1:
+            return term_matches[0]
+        if len(term_matches) > 1:
+            return None
+
+        compact_keyword = self._normalize_product_name(keyword).replace(" ", "")
+        if not compact_keyword:
+            return None
+        title_matches = [
+            row for row in candidates
+            if compact_keyword in self._candidate_title_text(row)
+            or self._candidate_title_text(row) in compact_keyword
+        ]
+        if len(title_matches) == 1:
+            return title_matches[0]
+        return None
 
     def _product_detail(self, product_id) -> dict | None:
         try:

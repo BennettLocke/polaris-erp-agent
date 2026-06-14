@@ -9,6 +9,7 @@ from collections.abc import Iterable
 PRODUCT_SPECS = [
     "五格短半斤",
     "短半斤",
+    "一斤盒",
     "二三两",
     "两大盒",
     "两泡装小盒",
@@ -64,6 +65,12 @@ def normalize_small_box_aliases(text: str) -> str:
     return value
 
 
+def normalize_one_jin_box_aliases(text: str) -> str:
+    """Map 1斤/一斤 gift-box OCR variants to 一斤盒."""
+    value = str(text or "")
+    return re.sub(r"(?:1\s*斤|一\s*斤)\s*(?:礼\s*)?盒", "一斤盒", value)
+
+
 def normalize_product_name(
     name: str,
     *,
@@ -83,6 +90,7 @@ def normalize_product_name(
     value = normalize_liang_aliases(value)
     value = re.sub(r"(?:2\s*大盒|两\s*大盒|二\s*大盒)", "两大盒", value)
     value = re.sub(r"(?:2\s*泡(?:盒|装小盒)?|二\s*泡(?:盒|装小盒)?|两\s*泡(?:盒|装小盒)?)", "两泡装小盒", value)
+    value = normalize_one_jin_box_aliases(value)
     value = normalize_half_jin_aliases(value)
     value = re.sub(r"(?:1\s*两|一\s*两)", "一两", value)
 
