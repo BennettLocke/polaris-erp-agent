@@ -2759,6 +2759,69 @@ nav button:hover {
   overflow: hidden;
 }
 
+.taobao-export-dialog {
+  width: min(560px, calc(100vw - 28px));
+}
+
+.taobao-export-body {
+  display: grid;
+  gap: 12px;
+}
+
+.taobao-export-fixed-row,
+.taobao-export-check-row {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--sj-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
+.taobao-export-check-row {
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.taobao-main-upload {
+  display: none;
+}
+
+.taobao-export-upload-box {
+  display: grid;
+  min-height: 150px;
+  width: 100%;
+  place-items: center;
+  gap: 8px;
+  border: 1px dashed var(--sj-border-strong);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--sj-muted);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.taobao-export-upload-box img {
+  max-height: 148px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.taobao-export-upload-box--has-image {
+  border-style: solid;
+}
+
+.taobao-export-error {
+  margin: 0;
+  color: var(--sj-danger-foreground);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .product-editor-header {
   display: flex;
   align-items: flex-start;

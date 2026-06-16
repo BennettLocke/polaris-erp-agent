@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>礼盒主图模板预览</title>
+    <script src="./template.js"></script>
+    <style>
+      :root {
+        color: #09090b;
+        background: #f4f4f5;
+        font-family:
+          "Alibaba PuHuiTi 3.0", "Alibaba PuHuiTi", "Noto Sans CJK SC",
+          "Microsoft YaHei", Arial, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .page {
+        display: grid;
+        grid-template-columns: minmax(360px, 460px) minmax(520px, 1fr);
+        gap: 16px;
+        min-height: 100vh;
+        padding: 16px;
+      }
+
+      .panel,
+      .preview-panel {
+        border: 1px solid #e4e4e7;
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .panel {
+        padding: 18px;
+        overflow: auto;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.2;
+      }
+
+      .tag {
+        border: 1px solid #e4e4e7;
+        border-radius: 999px;
+        padding: 4px 10px;
+        color: #71717a;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+
+      .section {
+        border-top: 1px solid #f1f1f1;
+        padding-top: 16px;
+        margin-top: 16px;
+      }
+
+      .section-title {
+        margin: 0 0 12px;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: #71717a;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      input[type="text"],
+      input[type="file"] {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid #d4d4d8;
+        border-radius: 8px;
+        padding: 9px 11px;
+        color: #09090b;
+        background: #fff;
+        outline: none;
+      }
+
+      input[type="text"]:focus,
+      input[type="file"]:focus {
+        border-color: #18181b;
+        box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.12);
+      }
+
+      .swatch-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .swatch-row {
+        display: grid;
+        grid-template-columns: 44px 1fr 72px;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .swatch-row input[type="color"] {
+        width: 44px;
+        height: 42px;
+        border: 1px solid #d4d4d8;
+        border-radius: 8px;
+        padding: 4px;
+        background: #fff;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .button {
+        min-height: 40px;
+        border: 1px solid #d4d4d8;
+        border-radius: 8px;
+        padding: 8px 13px;
+        color: #18181b;
+        background: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .button.primary {
+        border-color: #18181b;
+        color: #fff;
+        background: #18181b;
+      }
+
+      .button.ghost {
+        color: #71717a;
+      }
+
+      .preview-panel {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .preview-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px solid #e4e4e7;
+        padding: 12px 14px;
+      }
+
+      .preview-title {
+        font-weight: 800;
+      }
+
+      .preview-stage {
+        display: grid;
+        place-items: center;
+        overflow: auto;
+        padding: 24px;
+        background: #f4f4f5;
+      }
+
+      .canvas-shell {
+        width: min(78vh, 100%);
+        aspect-ratio: 1 / 1;
+        border: 1px solid #e4e4e7;
+        background: #fff;
+        box-shadow: 0 18px 60px rgba(15, 23, 42, 0.12);
+      }
+
+      .canvas-shell svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      @media (max-width: 980px) {
+        .page {
+          grid-template-columns: 1fr;
+        }
+
+        .canvas-shell {
+          width: min(92vw, 760px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel">
+        <div class="panel-header">
+          <h1>礼盒主图模板</h1>
+          <span class="tag">1196.61 x 1196.61</span>
+        </div>
+
+        <label>
+          产品图片
+          <input id="product-image-input" type="file" accept="image/*" />
+        </label>
+
+        <div class="section">
+          <h2 class="section-title">文字</h2>
+          <div class="grid">
+            <label>
+              标题
+              <input id="headline-input" type="text" />
+            </label>
+            <label>
+              系列
+              <input id="series-input" type="text" />
+            </label>
+            <label>
+              系列后缀
+              <input id="series-suffix-input" type="text" />
+            </label>
+            <label>
+              规格
+              <input id="spec-input" type="text" />
+            </label>
+          </div>
+          <div class="grid" style="margin-top: 12px">
+            <label>
+              顶部说明
+              <input id="top-note-input" type="text" />
+            </label>
+            <label>
+              英文
+              <input id="english-note-input" type="text" />
+            </label>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">颜色块</h2>
+          <div id="swatch-list" class="swatch-list"></div>
+          <div class="actions">
+            <button id="add-swatch-button" class="button" type="button">添加颜色</button>
+            <button id="reset-swatch-button" class="button ghost" type="button">恢复默认</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="preview-panel">
+        <div class="preview-toolbar">
+          <div class="preview-title">实时预览</div>
+          <div class="actions" style="margin: 0">
+            <button id="download-svg-button" class="button" type="button">下载 SVG</button>
+            <button id="download-png-button" class="button primary" type="button">下载 PNG</button>
+          </div>
+        </div>
+        <div class="preview-stage">
+          <div id="svg-preview" class="canvas-shell"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const {
+        DEFAULT_OPTIONS,
+        DEFAULT_SWATCHES,
+        VIEWBOX,
+        createGiftboxMainSvg,
+      } = window.GiftboxMainTemplate;
+
+      const state = {
+        ...DEFAULT_OPTIONS,
+        swatches: [...DEFAULT_SWATCHES],
+      };
+
+      const fields = {
+        headline: document.getElementById("headline-input"),
+        series: document.getElementById("series-input"),
+        seriesSuffix: document.getElementById("series-suffix-input"),
+        specText: document.getElementById("spec-input"),
+        topNote: document.getElementById("top-note-input"),
+        englishNote: document.getElementById("english-note-input"),
+      };
+
+      const imageInput = document.getElementById("product-image-input");
+      const swatchList = document.getElementById("swatch-list");
+      const preview = document.getElementById("svg-preview");
+      const downloadSvgButton = document.getElementById("download-svg-button");
+      const downloadPngButton = document.getElementById("download-png-button");
+      const addSwatchButton = document.getElementById("add-swatch-button");
+      const resetSwatchButton = document.getElementById("reset-swatch-button");
+
+      let currentSvg = "";
+
+      function syncFields() {
+        fields.headline.value = state.headline;
+        fields.series.value = state.series;
+        fields.seriesSuffix.value = state.seriesSuffix;
+        fields.specText.value = state.specText;
+        fields.topNote.value = state.topNote;
+        fields.englishNote.value = state.englishNote;
+      }
+
+      function renderSwatches() {
+        swatchList.innerHTML = "";
+        state.swatches.forEach((color, index) => {
+          const row = document.createElement("div");
+          row.className = "swatch-row";
+
+          const picker = document.createElement("input");
+          picker.type = "color";
+          picker.value = color;
+          picker.addEventListener("input", () => {
+            state.swatches[index] = picker.value;
+            render();
+          });
+
+          const text = document.createElement("input");
+          text.type = "text";
+          text.value = color;
+          text.addEventListener("input", () => {
+            const next = text.value.trim();
+            if (/^#[0-9a-fA-F]{6}$/.test(next)) {
+              state.swatches[index] = next;
+              picker.value = next;
+              render();
+            }
+          });
+
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "button ghost";
+          remove.textContent = "删除";
+          remove.addEventListener("click", () => {
+            state.swatches.splice(index, 1);
+            renderSwatches();
+            render();
+          });
+
+          row.append(picker, text, remove);
+          swatchList.append(row);
+        });
+      }
+
+      function render() {
+        currentSvg = createGiftboxMainSvg(state);
+        preview.innerHTML = currentSvg;
+      }
+
+      function downloadText(filename, text, type) {
+        const blob = new Blob([text], { type });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+
+      function downloadPng() {
+        const image = new Image();
+        const svgBlob = new Blob([currentSvg], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(svgBlob);
+        image.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(VIEWBOX.width);
+          canvas.height = Math.round(VIEWBOX.height);
+          const context = canvas.getContext("2d");
+          context.fillStyle = "#fff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
+          canvas.toBlob((blob) => {
+            const pngUrl = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = pngUrl;
+            link.download = "giftbox-main-template.png";
+            link.click();
+            URL.revokeObjectURL(pngUrl);
+          }, "image/png");
+        };
+        image.src = url;
+      }
+
+      function loadImage(source) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = reject;
+          image.src = source;
+        });
+      }
+
+      async function trimImageWhitespace(source, margin = 16) {
+        const image = await loadImage(source);
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        context.drawImage(image, 0, 0);
+
+        const { width, height } = canvas;
+        const pixels = context.getImageData(0, 0, width, height);
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
+
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const offset = (y * width + x) * 4;
+            const red = pixels.data[offset];
+            const green = pixels.data[offset + 1];
+            const blue = pixels.data[offset + 2];
+            const alpha = pixels.data[offset + 3];
+            if (alpha > 12 && !(red >= 245 && green >= 245 && blue >= 245)) {
+              minX = Math.min(minX, x);
+              minY = Math.min(minY, y);
+              maxX = Math.max(maxX, x);
+              maxY = Math.max(maxY, y);
+            }
+          }
+        }
+
+        if (maxX < minX || maxY < minY) {
+          return source;
+        }
+
+        const left = Math.max(0, minX - margin);
+        const top = Math.max(0, minY - margin);
+        const right = Math.min(width, maxX + margin + 1);
+        const bottom = Math.min(height, maxY + margin + 1);
+        const output = document.createElement("canvas");
+        output.width = right - left;
+        output.height = bottom - top;
+        const outputContext = output.getContext("2d", { willReadFrequently: true });
+        outputContext.drawImage(canvas, left, top, output.width, output.height, 0, 0, output.width, output.height);
+        const outputPixels = outputContext.getImageData(0, 0, output.width, output.height);
+        for (let offset = 0; offset < outputPixels.data.length; offset += 4) {
+          const red = outputPixels.data[offset];
+          const green = outputPixels.data[offset + 1];
+          const blue = outputPixels.data[offset + 2];
+          if (red >= 248 && green >= 248 && blue >= 248) {
+            outputPixels.data[offset + 3] = 0;
+          }
+        }
+        outputContext.putImageData(outputPixels, 0, 0);
+        return output.toDataURL("image/png");
+      }
+
+      Object.entries(fields).forEach(([key, input]) => {
+        input.addEventListener("input", () => {
+          state[key] = input.value;
+          render();
+        });
+      });
+
+      imageInput.addEventListener("change", () => {
+        const file = imageInput.files && imageInput.files[0];
+        if (!file) {
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = async () => {
+          state.imageHref = await trimImageWhitespace(reader.result);
+          render();
+        };
+        reader.readAsDataURL(file);
+      });
+
+      addSwatchButton.addEventListener("click", () => {
+        state.swatches.push("#18181b");
+        renderSwatches();
+        render();
+      });
+
+      resetSwatchButton.addEventListener("click", () => {
+        state.swatches = [...DEFAULT_SWATCHES];
+        renderSwatches();
+        render();
+      });
+
+      downloadSvgButton.addEventListener("click", () => {
+        downloadText("giftbox-main-template.svg", currentSvg, "image/svg+xml;charset=utf-8");
+      });
+
+      downloadPngButton.addEventListener("click", downloadPng);
+
+      syncFields();
+      renderSwatches();
+      render();
+    </script>
+  </body>
+</html>

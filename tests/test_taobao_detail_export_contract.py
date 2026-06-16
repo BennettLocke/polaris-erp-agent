@@ -73,6 +73,22 @@ class FakeRenderer:
         return paths
 
 
+class FakeMainImageRenderer:
+    def __init__(self):
+        self.calls = []
+
+    def render(self, context, image_bytes, source_filename):
+        self.calls.append({
+            "context": context,
+            "image_bytes": image_bytes,
+            "source_filename": source_filename,
+        })
+        base = Path(tempfile.mkdtemp(prefix="taobao-test-main_"))
+        path = base / "generated-main.png"
+        path.write_bytes(b"fake-taobao-main-png")
+        return path
+
+
 class FakeTaobaoTitleGenerator:
     def __init__(self):
         self.calls = []
@@ -113,7 +129,7 @@ class TaobaoDetailExportServiceTest(TestCase):
         service.export_zip(9)
         return renderer.rendered_payloads[0]["product"]["capacity"]
 
-    def test_export_zip_contains_only_main_color_and_detail_images(self):
+    def test_export_zip_contains_only_color_and_detail_images(self):
         from src.services.business.taobao_detail import TaobaoDetailExportService
 
         uploader = FakeUploader()
@@ -149,7 +165,6 @@ class TaobaoDetailExportServiceTest(TestCase):
         with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
             names = sorted(archive.namelist())
             self.assertEqual(names, [
-                "主图/main-1.jpg",
                 "详情页/原产品详情图-1.jpg",
                 "详情页/原产品详情图-2.jpg",
                 "详情页/详情页-01.jpg",
@@ -160,6 +175,7 @@ class TaobaoDetailExportServiceTest(TestCase):
                 "颜色图/红色-1.jpg",
                 "颜色图/蓝色-2.jpg",
             ])
+            self.assertFalse(any(name.startswith("主图/") for name in names))
             self.assertFalse(any(name.lower().endswith((".html", ".htm", ".txt")) for name in names))
         self.assertEqual(result.html_filename, "SJ1587 喜悦半斤茶叶礼品盒大红袍岩茶包装空盒定制logo高端公司红茶订做.html")
         self.assertEqual(result.template_image_urls, [
@@ -173,6 +189,36 @@ class TaobaoDetailExportServiceTest(TestCase):
             "https://img.513sjbz.com/detail/detail-1.jpg",
             "https://img.513sjbz.com/detail/detail-2.jpg",
         ])
+
+    def test_export_zip_can_include_generated_taobao_main_image(self):
+        from src.services.business.taobao_detail import TaobaoDetailExportService
+
+        main_renderer = FakeMainImageRenderer()
+        service = TaobaoDetailExportService(
+            product_service=FakeProductService(),
+            uploader=FakeUploader(),
+            renderer=FakeRenderer(),
+            main_image_renderer=main_renderer,
+            title_generator=FakeTaobaoTitleGenerator(),
+            image_fetcher=fake_fetch,
+            dimension_recognizer=lambda urls: {"text": "35×22.3×7.2CM"},
+        )
+
+        result = service.export_zip(
+            9,
+            main_image={"filename": "box.png", "content": b"uploaded-png"},
+        )
+
+        self.assertEqual(len(main_renderer.calls), 1)
+        self.assertEqual(main_renderer.calls[0]["image_bytes"], b"uploaded-png")
+        self.assertEqual(main_renderer.calls[0]["source_filename"], "box.png")
+        self.assertEqual(main_renderer.calls[0]["context"]["series"], "喜悦")
+        self.assertEqual(main_renderer.calls[0]["context"]["spec_text"], "30套/件")
+        with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
+            names = archive.namelist()
+            self.assertTrue(any(name.startswith("淘宝主图/") and name.endswith(".png") for name in names))
+            main_name = next(name for name in names if name.startswith("淘宝主图/"))
+            self.assertEqual(archive.read(main_name), b"fake-taobao-main-png")
 
     def test_export_html_filename_falls_back_when_llm_title_generation_fails(self):
         from src.services.business.taobao_detail import TaobaoDetailExportService
@@ -245,6 +291,27 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("onExportTaobaoDetail", product_source)
         self.assertIn("已开始后台生成淘宝详情页资料包", product_source)
         self.assertIn("waitForTaobaoDetailExportJob", product_source)
+
+    def test_optional_main_image_export_is_wired_through_job_and_dialog(self):
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        jobs_source = (ROOT / "src" / "services" / "business" / "taobao_detail_jobs.py").read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('request.files.get("main_image")', http_source)
+        self.assertIn("include_main_image", http_source)
+        self.assertIn("main_image=", http_source)
+        self.assertIn("main_image: dict | None = None", jobs_source)
+        self.assertIn("export_zip(self._job_product_id(job_id), main_image=job.main_image)", jobs_source)
+        self.assertIn("TaobaoDetailExportStartOptions", api_source)
+        self.assertIn("mainImageFile", api_source)
+        self.assertIn('form.append("main_image"', api_source)
+        self.assertIn("TaobaoExportDialog", product_source)
+        self.assertIn("导出淘宝资料", product_source)
+        self.assertIn("同时制作淘宝主图", product_source)
+        self.assertIn('accept="image/png"', product_source)
 
     def test_export_uses_original_playwright_renderer_contract(self):
         service_source = (ROOT / "src" / "services" / "business" / "taobao_detail.py").read_text(encoding="utf-8")

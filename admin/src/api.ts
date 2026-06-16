@@ -136,6 +136,11 @@ export type ApiRequestOptions = {
   signal?: AbortSignal;
 };
 
+export type TaobaoDetailExportStartOptions = {
+  includeMainImage?: boolean;
+  mainImageFile?: File | null;
+};
+
 export class ApiError extends Error {
   status: number;
   code: number;
@@ -432,8 +437,16 @@ export const api = {
     request<ProductItem>(`/api/product/${id}`, withRequestOptions(undefined, options)),
   exportProductTaobaoDetail: (id: number) =>
     requestBlob(`/api/product/${id}/taobao-detail-export`, `taobao-detail-${id}.zip`),
-  startProductTaobaoDetailExport: (id: number) =>
-    request<TaobaoDetailExportJob>(`/api/product/${id}/taobao-detail-export/jobs`, { method: "POST" }),
+  startProductTaobaoDetailExport: (id: number, options: TaobaoDetailExportStartOptions = {}) => {
+    if (options.includeMainImage) {
+      if (!options.mainImageFile) throw new Error("请上传淘宝主图 PNG");
+      const form = new FormData();
+      form.append("include_main_image", "1");
+      form.append("main_image", options.mainImageFile);
+      return requestForm<TaobaoDetailExportJob>(`/api/product/${id}/taobao-detail-export/jobs`, form);
+    }
+    return request<TaobaoDetailExportJob>(`/api/product/${id}/taobao-detail-export/jobs`, { method: "POST" });
+  },
   productTaobaoDetailExportJob: (jobId: string) =>
     request<TaobaoDetailExportJob>(`/api/product/taobao-detail-export/jobs/${encodeURIComponent(jobId)}`),
   downloadProductTaobaoDetailExportJob: (jobId: string, fallbackFilename = "taobao-detail.zip") =>

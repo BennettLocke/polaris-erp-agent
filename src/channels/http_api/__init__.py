@@ -4978,7 +4978,17 @@ def product_taobao_detail_export_job_start_api(product_id: int):
     try:
         from src.services.business.taobao_detail_jobs import get_taobao_detail_export_job_manager
 
-        job = get_taobao_detail_export_job_manager().start(product_id)
+        include_main_image = str(request.form.get("include_main_image") or "").strip().lower() in {"1", "true", "yes", "on"}
+        main_file = request.files.get("main_image")
+        main_image = None
+        if include_main_image:
+            if not main_file or not main_file.filename:
+                return jsonify({"code": 400, "msg": "请上传淘宝主图 PNG"}), 400
+            filename = secure_filename(main_file.filename) or "main.png"
+            if not filename.lower().endswith(".png"):
+                return jsonify({"code": 400, "msg": "淘宝主图只支持 PNG 图片"}), 400
+            main_image = {"filename": filename, "content": main_file.read()}
+        job = get_taobao_detail_export_job_manager().start(product_id, main_image=main_image)
         return jsonify({"code": 0, "data": job.snapshot()})
     except Exception as e:
         logger.error(f"淘宝详情页后台导出任务创建异常: product_id={product_id}, error={e}")

@@ -27,6 +27,7 @@ class TaobaoDetailExportJob:
     html_filename: str = ""
     taobao_title: str = ""
     error: str = ""
+    main_image: dict | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     completed_at: float = 0
@@ -65,13 +66,14 @@ class TaobaoDetailExportJobManager:
         self._lock = Lock()
         self._jobs: dict[str, TaobaoDetailExportJob] = {}
 
-    def start(self, product_id: int) -> TaobaoDetailExportJob:
+    def start(self, product_id: int, main_image: dict | None = None) -> TaobaoDetailExportJob:
         self._cleanup()
         job = TaobaoDetailExportJob(
             job_id=f"tdx-{int(time.time())}-{uuid.uuid4().hex[:10]}",
             product_id=int(product_id),
             status="pending",
             message="已加入后台生成队列",
+            main_image=main_image,
         )
         with self._lock:
             self._jobs[job.job_id] = job
@@ -100,7 +102,8 @@ class TaobaoDetailExportJobManager:
     def _run_job(self, job_id: str) -> None:
         self._update(job_id, status="running", message="正在生成淘宝详情页资料包")
         try:
-            result = TaobaoDetailExportService().export_zip(self._job_product_id(job_id))
+            job = self._job(job_id)
+            result = TaobaoDetailExportService().export_zip(self._job_product_id(job_id), main_image=job.main_image)
             self._update(
                 job_id,
                 status="completed",
@@ -109,6 +112,7 @@ class TaobaoDetailExportJobManager:
                 html_filename=result.html_filename,
                 taobao_title=result.taobao_title,
                 content=result.content,
+                main_image=None,
                 completed_at=time.time(),
             )
         except Exception as exc:
@@ -118,6 +122,7 @@ class TaobaoDetailExportJobManager:
                 status="failed",
                 message="淘宝详情页资料包生成失败",
                 error=str(exc),
+                main_image=None,
                 completed_at=time.time(),
             )
 
@@ -125,6 +130,10 @@ class TaobaoDetailExportJobManager:
         with self._lock:
             job = self._jobs[job_id]
             return int(job.product_id)
+
+    def _job(self, job_id: str) -> TaobaoDetailExportJob:
+        with self._lock:
+            return self._jobs[job_id]
 
     def _update(self, job_id: str, **updates: Any) -> None:
         with self._lock:

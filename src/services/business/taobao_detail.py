@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATA_PATH = ROOT / "assets" / "taobao_detail" / "default-product-data.json"
 TEMPLATE_PATH = ROOT / "assets" / "taobao_detail" / "detail-template.html"
 RENDER_SCRIPT_PATH = ROOT / "scripts" / "taobao_detail" / "render_taobao_detail.mjs"
+GIFTBOX_MAIN_SCRIPT_PATH = ROOT / "scripts" / "giftbox_main_template" / "generate.js"
 
 TAOBAO_IMAGE_WIDTH = 800
 DETAIL_SLICE_NAMES = [
@@ -377,6 +378,70 @@ class OriginalTaobaoDetailRenderer:
             raise
 
 
+class GiftboxMainImageRenderer:
+    """Render a Taobao main image from the gift-box PNG template."""
+
+    def __init__(
+        self,
+        *,
+        node_command: str = "node",
+        script_path: Path = GIFTBOX_MAIN_SCRIPT_PATH,
+    ):
+        self.node_command = node_command
+        self.script_path = Path(script_path)
+
+    def render(self, context: dict, image_bytes: bytes, source_filename: str = "main.png") -> Path:
+        if not self.script_path.exists():
+            raise RuntimeError(f"淘宝主图生成脚本不存在: {self.script_path}")
+        if not image_bytes:
+            raise ValueError("淘宝主图 PNG 不能为空")
+
+        output_dir = Path(tempfile.mkdtemp(prefix="taobao_main_image_"))
+        source_suffix = Path(source_filename or "").suffix.lower()
+        if source_suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+            source_suffix = ".png"
+        source_path = output_dir / f"source{source_suffix}"
+        output_path = output_dir / "taobao-main.png"
+        source_path.write_bytes(image_bytes)
+
+        command = [
+            self.node_command,
+            str(self.script_path),
+            "--image",
+            str(source_path),
+            "--output",
+            str(output_path),
+            "--series",
+            str(context.get("series") or "茶派"),
+            "--spec",
+            str(context.get("spec_text") or "30套/件"),
+        ]
+        colors = context.get("swatches") or []
+        if colors:
+            command.extend(["--colors", ",".join(str(color) for color in colors if color)])
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(ROOT),
+                env=os.environ.copy(),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=120,
+                check=False,
+            )
+            if completed.returncode != 0 or not output_path.exists():
+                raise RuntimeError(
+                    "淘宝主图生成失败 "
+                    f"stdout={completed.stdout.strip()} stderr={completed.stderr.strip()}"
+                )
+            return output_path
+        except Exception:
+            shutil.rmtree(output_dir, ignore_errors=True)
+            raise
+
+
 class TaobaoDetailExportService:
     def __init__(
         self,
@@ -384,6 +449,7 @@ class TaobaoDetailExportService:
         product_service=None,
         uploader=None,
         renderer: OriginalTaobaoDetailRenderer | None = None,
+        main_image_renderer: GiftboxMainImageRenderer | None = None,
         image_fetcher: ImageFetcher = _download_image,
         dimension_recognizer: DimensionRecognizer | None = None,
         title_generator: TaobaoTitleGenerator | None = None,
@@ -391,13 +457,14 @@ class TaobaoDetailExportService:
         self.product_service = product_service or get_product_service()
         self.uploader = uploader
         self.renderer = renderer or OriginalTaobaoDetailRenderer()
+        self.main_image_renderer = main_image_renderer or GiftboxMainImageRenderer()
         self.image_fetcher = image_fetcher
         self.dimension_recognizer = dimension_recognizer or (
             lambda urls: recognize_dimensions_from_images(urls, image_fetcher=self.image_fetcher)
         )
         self.title_generator = title_generator or generate_taobao_listing_title
 
-    def export_zip(self, product_id: int) -> TaobaoDetailExportResult:
+    def export_zip(self, product_id: int, main_image: dict | None = None) -> TaobaoDetailExportResult:
         product = self.product_service.info(product_id)
         if not product:
             raise ValueError("商品不存在")
@@ -421,11 +488,20 @@ class TaobaoDetailExportService:
         taobao_title = self._taobao_title(product)
         html_filename = self._html_filename(product, taobao_title)
         template_paths = self.renderer.render(template_data)
+        main_image_path: Path | None = None
         try:
+            if main_image:
+                main_image_path = self.main_image_renderer.render(
+                    self._main_image_context(product, color_items, dimensions),
+                    bytes(main_image.get("content") or b""),
+                    str(main_image.get("filename") or "main.png"),
+                )
             template_urls = self._upload_detail_images(template_paths)
-            content = self._zip_package(main_urls, color_items, template_paths, detail_urls)
+            content = self._zip_package(color_items, template_paths, detail_urls, main_image_path=main_image_path, product=product)
         finally:
             self._cleanup_render_paths(template_paths)
+            if main_image_path:
+                shutil.rmtree(main_image_path.parent, ignore_errors=True)
 
         filename = f"{_safe_zip_name(product.get('title') or product.get('name') or '商品', '商品')}-淘宝详情页.zip"
         return TaobaoDetailExportResult(
@@ -437,6 +513,60 @@ class TaobaoDetailExportService:
             html_filename=html_filename,
             taobao_title=taobao_title,
         )
+
+    def _main_image_context(self, product: dict, color_items: list[dict], dimensions: dict) -> dict:
+        return {
+            "product": dict(product),
+            "series": self._series_name(product),
+            "spec_text": self._main_image_spec_text(product),
+            "colors": _unique([item.get("color") for item in color_items] + _json_list(product.get("available_colors"))),
+            "swatches": self._swatches(product, color_items),
+            "dimensions": dict(dimensions),
+        }
+
+    def _series_name(self, product: dict) -> str:
+        raw = str(product.get("title") or product.get("name") or "").strip()
+        match = re.match(r"^[【\[]\s*(?P<series>[^】\]]+?)\s*[】\]]", raw)
+        if match:
+            return match.group("series").strip()
+        text = re.sub(r"[【】\[\]\s]+", "", raw)
+        text = re.sub(r"(半斤|一两|1两|二三两|三小盒|六小盒|两大盒|礼盒|茶叶|包装|空盒).*", "", text)
+        return text.strip() or "茶派"
+
+    def _main_image_spec_text(self, product: dict) -> str:
+        for key in ("piece_text", "simple_desc", "spec"):
+            text = str(product.get(key) or "").strip()
+            match = re.search(r"1\s*件\s*(\d+(?:\.\d+)?)\s*(套|个|只|张)?", text)
+            if match:
+                return f"{match.group(1)}{match.group(2) or '套'}/件"
+            if text:
+                return text
+        case_pack = str(product.get("case_pack_qty") or "").strip()
+        return f"{case_pack}套/件" if case_pack else "30套/件"
+
+    def _swatches(self, product: dict, color_items: list[dict]) -> list[str]:
+        color_map = {
+            "红": "#c1272d",
+            "橙": "#f7931e",
+            "黄": "#f6a400",
+            "蓝": "#2f5f9f",
+            "绿": "#217346",
+            "黑": "#111111",
+            "白": "#eeeeee",
+            "灰": "#8a8f98",
+            "咖": "#6b4a2b",
+            "棕": "#42210b",
+            "金": "#c89b3c",
+            "卡其": "#b49a6a",
+        }
+        names = _unique([item.get("color") for item in color_items] + _json_list(product.get("available_colors")))
+        swatches: list[str] = []
+        for name in names:
+            text = str(name or "")
+            matched = next((hex_value for key, hex_value in color_map.items() if key in text), "")
+            if matched and matched not in swatches:
+                swatches.append(matched)
+        return swatches[:6]
 
     def _media_assets(self, product: dict, media_type: str) -> list[dict]:
         return self.product_service.media_assets(
@@ -572,15 +702,18 @@ class TaobaoDetailExportService:
 
     def _zip_package(
         self,
-        main_urls: list[str],
         color_items: list[dict],
         template_paths: list[Path],
         detail_urls: list[str],
+        *,
+        main_image_path: Path | None = None,
+        product: dict | None = None,
     ) -> bytes:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for index, url in enumerate(main_urls, start=1):
-                self._write_image(archive, url, f"主图/main-{index}")
+            if main_image_path:
+                product_name = (product or {}).get("title") or (product or {}).get("name") or "商品"
+                self._write_local_image(archive, main_image_path, f"淘宝主图/{product_name}-淘宝主图")
             for index, item in enumerate(color_items, start=1):
                 color = _safe_zip_name(item.get("color") or f"颜色{index}", f"颜色{index}")
                 self._write_image(archive, item["url"], f"颜色图/{color}-{index}")

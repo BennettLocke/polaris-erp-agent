@@ -1,10 +1,11 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type WheelEvent } from "react";
 import { ArrowDown, ArrowUp, Download, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, api } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -2019,6 +2020,11 @@ type ProductConfirmAction =
   | { action: "shelf"; product: ProductItem; state: number }
   | { action: "delete"; product: ProductItem };
 
+type TaobaoExportOptions = {
+  includeMainImage: boolean;
+  mainImageFile: File | null;
+};
+
 function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onExportTaobaoDetail, onDelete }: ProductCardProps) {
   const image = productImageUrl(product);
   const colors = productColorNames(product);
@@ -2105,6 +2111,119 @@ function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onExportTao
         </DropdownMenu>
       </CardFooter>
     </Card>
+  );
+}
+
+function TaobaoExportDialog({
+  product,
+  busy,
+  onClose,
+  onConfirm
+}: {
+  product: ProductItem | null;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: (options: TaobaoExportOptions) => void;
+}) {
+  const [includeMainImage, setIncludeMainImage] = useState(true);
+  const [mainImageFile, setMainImageFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [localError, setLocalError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setIncludeMainImage(true);
+    setMainImageFile(null);
+    setLocalError("");
+  }, [product]);
+
+  useEffect(() => {
+    if (!mainImageFile) {
+      setPreviewUrl("");
+      return undefined;
+    }
+    const url = URL.createObjectURL(mainImageFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [mainImageFile]);
+
+  function handleMainImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null;
+    event.target.value = "";
+    setLocalError("");
+    if (!file) return;
+    const isPng = file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
+    if (!isPng) {
+      setMainImageFile(null);
+      setLocalError("主图只支持 PNG 图片");
+      return;
+    }
+    setMainImageFile(file);
+  }
+
+  function submit() {
+    setLocalError("");
+    if (includeMainImage && !mainImageFile) {
+      setLocalError("请先上传主图 PNG");
+      return;
+    }
+    onConfirm({ includeMainImage, mainImageFile });
+  }
+
+  const productName = product?.title || product?.name || "商品";
+  return (
+    <Dialog open={!!product} onOpenChange={(open) => {
+      if (!open && !busy) onClose();
+    }}>
+      <DialogContent className="taobao-export-dialog">
+        <DialogHeader>
+          <DialogTitle>导出淘宝资料</DialogTitle>
+          <DialogDescription>{productName}</DialogDescription>
+        </DialogHeader>
+        <div className="taobao-export-body">
+          <div className="taobao-export-fixed-row">
+            <span>淘宝详情页</span>
+            <Badge variant="outline">已包含</Badge>
+          </div>
+          <label className="taobao-export-check-row">
+            <Checkbox
+              checked={includeMainImage}
+              onCheckedChange={(checked) => setIncludeMainImage(checked === true)}
+              disabled={busy}
+            />
+            <span>同时制作淘宝主图</span>
+          </label>
+          {includeMainImage ? (
+            <div className="taobao-export-upload">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png"
+                className="taobao-main-upload"
+                onChange={handleMainImageChange}
+              />
+              <button
+                type="button"
+                className={cn("taobao-export-upload-box", previewUrl && "taobao-export-upload-box--has-image")}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
+              >
+                {previewUrl ? <img src={previewUrl} alt="淘宝主图预览" /> : <Upload data-icon="only" />}
+                <span>{mainImageFile?.name || "选择 PNG 主图"}</span>
+              </button>
+            </div>
+          ) : null}
+          {localError ? <p className="taobao-export-error">{localError}</p> : null}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+          <Button type="button" onClick={submit} disabled={busy}>
+            <Download data-icon="inline-start" />
+            开始导出
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2328,6 +2447,7 @@ export function ProductsPage() {
   const [notice, setNotice] = useState("");
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
   const [confirmAction, setConfirmAction] = useState<ProductConfirmAction | null>(null);
+  const [taobaoExportProduct, setTaobaoExportProduct] = useState<ProductItem | null>(null);
   const [actionProductId, setActionProductId] = useState(0);
   const [pageSize, setPageSize] = useState(initialProductPageSize);
   const [gridElement, setGridElement] = useState<HTMLDivElement | null>(null);
@@ -2455,15 +2575,19 @@ export function ProductsPage() {
     throw new Error("淘宝详情页资料包生成时间过长，请稍后重试或刷新后再查");
   }
 
-  async function exportProductTaobaoDetail(product: ProductItem) {
+  async function exportProductTaobaoDetail(product: ProductItem, options: TaobaoExportOptions = { includeMainImage: false, mainImageFile: null }) {
     const id = productActionId(product);
     if (!id) return;
     const productName = product.title || product.name || "商品";
     setActionProductId(id);
     setError("");
     setNotice("");
+    setTaobaoExportProduct(null);
     try {
-      const job = await api.startProductTaobaoDetailExport(id);
+      const job = await api.startProductTaobaoDetailExport(id, {
+        includeMainImage: options.includeMainImage,
+        mainImageFile: options.mainImageFile
+      });
       setActionProductId(0);
       setNotice(`${productName} 已开始后台生成淘宝详情页资料包，完成后会自动下载`);
       const completedJob = await waitForTaobaoDetailExportJob(job, productName);
@@ -2590,7 +2714,10 @@ export function ProductsPage() {
         onToggleShelves={(product, state) => {
           setConfirmAction({ action: "shelf", product, state });
         }}
-        onExportTaobaoDetail={(product) => void exportProductTaobaoDetail(product)}
+        onExportTaobaoDetail={(product) => {
+          setNotice("");
+          setTaobaoExportProduct(product);
+        }}
         onDelete={(product) => {
           setConfirmAction({ action: "delete", product });
         }}
@@ -2609,6 +2736,14 @@ export function ProductsPage() {
         availableCategories={categories}
         onClose={() => setEditingProduct(null)}
         onSaved={afterProductSaved}
+      />
+      <TaobaoExportDialog
+        product={taobaoExportProduct}
+        busy={!!taobaoExportProduct && actionProductId === productActionId(taobaoExportProduct)}
+        onClose={() => setTaobaoExportProduct(null)}
+        onConfirm={(options) => {
+          if (taobaoExportProduct) void exportProductTaobaoDetail(taobaoExportProduct, options);
+        }}
       />
       <ProductActionConfirmDialog
         confirmAction={confirmAction}
