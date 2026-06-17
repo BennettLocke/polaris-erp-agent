@@ -30,6 +30,10 @@ class GiftboxMainTemplateContractTest(unittest.TestCase):
         self.assertIn("module.exports", source)
         self.assertIn('preserveAspectRatio="xMidYMax meet"', source)
         self.assertNotIn('preserveAspectRatio="xMidYMid slice"', source)
+        self.assertIn("const TEMPLATE_FONT_FAMILY", source)
+        self.assertIn('"Noto Sans CJK SC"', source)
+        self.assertIn(".spec { font-family: ${TEMPLATE_FONT_FAMILY};", source)
+        self.assertIn("fill: #050505", source)
 
     def test_preview_uses_shared_template_and_file_upload(self):
         source = (TEMPLATE_DIR / "preview.html").read_text(encoding="utf-8")
@@ -54,6 +58,16 @@ class GiftboxMainTemplateContractTest(unittest.TestCase):
         self.assertIn("pythonCommandCandidates", source)
         self.assertIn('candidates.push("python", "python3")', source)
         self.assertIn("result.error.message", source)
+        self.assertIn('process.env.BAG_TEMPLATE_FONT_FAMILY || "Noto Sans CJK SC"', source)
+        self.assertNotIn('|| "Alibaba PuHuiTi 3.0"', source)
+
+    def test_renderer_loads_noto_cjk_font_files_explicitly(self):
+        source = (ROOT / "scripts" / "bag_template" / "render_svg_resvg.js").read_text(encoding="utf-8")
+
+        self.assertIn("resolveFontFiles", source)
+        self.assertIn("NotoSansCJK-Regular.ttc", source)
+        self.assertIn("NotoSansCJK-Bold.ttc", source)
+        self.assertIn("fontFiles", source)
 
     def test_generate_cli_trims_white_space_before_embedding_svg(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -182,7 +182,7 @@ function renderPng(svg, outputPath) {
       env: {
         ...process.env,
         BAG_TEMPLATE_FONT_FAMILY:
-          process.env.BAG_TEMPLATE_FONT_FAMILY || "Alibaba PuHuiTi 3.0",
+          process.env.BAG_TEMPLATE_FONT_FAMILY || "Noto Sans CJK SC",
       },
       encoding: "utf-8",
     });

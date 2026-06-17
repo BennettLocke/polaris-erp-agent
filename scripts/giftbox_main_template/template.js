@@ -17,6 +17,8 @@
     "#42210b",
     "#c1272d",
   ];
+  const TEMPLATE_FONT_FAMILY =
+    '"Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", Arial, sans-serif';
 
   const DEFAULT_OPTIONS = {
     imageHref: "",
@@ -152,12 +154,12 @@
     </filter>
     <style>
       .template-bg { fill: ${escapeXml(config.background)}; }
-      .headline { font-family: AlibabaPuHuiTi-Bold-GBpc-EUC-H, "Alibaba PuHuiTi", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: 132px; font-weight: 800; letter-spacing: .045em; fill: #050505; }
-      .english { font-family: "Alibaba PuHuiTi 3.0", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: 23.52px; letter-spacing: .02em; fill: #050505; }
-      .note { font-family: "Alibaba PuHuiTi 3.0", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: 37.88px; letter-spacing: .02em; fill: #4d4d4d; }
-      .series { font-family: "Alibaba PuHuiTi 3.0", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: 36.26px; letter-spacing: .02em; fill: #111; }
-      .spec { font-family: "Alibaba PuHuiTi 3.0", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-size: 28.02px; letter-spacing: .02em; fill: #111; }
-      .spec-badge { fill: none; stroke: #111; stroke-width: 2; }
+      .headline { font-family: ${TEMPLATE_FONT_FAMILY}; font-size: 132px; font-weight: 800; font-style: normal; letter-spacing: .045em; fill: #050505; }
+      .english { font-family: ${TEMPLATE_FONT_FAMILY}; font-size: 23.52px; font-weight: 400; font-style: normal; letter-spacing: .02em; fill: #050505; }
+      .note { font-family: ${TEMPLATE_FONT_FAMILY}; font-size: 37.88px; font-weight: 500; font-style: normal; letter-spacing: .02em; fill: #4d4d4d; }
+      .series { font-family: ${TEMPLATE_FONT_FAMILY}; font-size: 36.26px; font-weight: 500; font-style: normal; letter-spacing: 0; fill: #050505; }
+      .spec { font-family: ${TEMPLATE_FONT_FAMILY}; font-size: 28.02px; font-weight: 500; font-style: normal; letter-spacing: 0; fill: #050505; }
+      .spec-badge { fill: none; stroke: #050505; stroke-width: 2; }
     </style>
   </defs>
   <rect class="template-bg" width="${VIEWBOX.width}" height="${VIEWBOX.height}"/>
@@ -176,6 +178,7 @@
     DEFAULT_OPTIONS,
     DEFAULT_SWATCHES,
     PLACEHOLDER_IMAGE,
+    TEMPLATE_FONT_FAMILY,
     VIEWBOX,
     createGiftboxMainSvg,
     normalizeSwatches,
