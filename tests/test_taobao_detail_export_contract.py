@@ -1,8 +1,12 @@
 import io
+import shutil
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import TestCase
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -219,6 +223,30 @@ class TaobaoDetailExportServiceTest(TestCase):
             self.assertTrue(any(name.startswith("淘宝主图/") and name.endswith(".png") for name in names))
             main_name = next(name for name in names if name.startswith("淘宝主图/"))
             self.assertEqual(archive.read(main_name), b"fake-taobao-main-png")
+
+    def test_main_image_renderer_passes_current_python_to_node_script(self):
+        from src.services.business.taobao_detail import GiftboxMainImageRenderer
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            script_path = Path(temp_dir) / "generate.js"
+            script_path.write_text("// fake generate script", encoding="utf-8")
+            renderer = GiftboxMainImageRenderer(script_path=script_path)
+            captured = {}
+
+            def fake_run(command, **kwargs):
+                output_path = Path(command[command.index("--output") + 1])
+                output_path.write_bytes(b"fake-main-image")
+                captured["env"] = kwargs.get("env") or {}
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("src.services.business.taobao_detail.subprocess.run", side_effect=fake_run):
+                output = renderer.render({"series": "喜悦", "spec_text": "30套/件"}, b"png-data", "box.png")
+
+            try:
+                self.assertEqual(captured["env"].get("PYTHON"), sys.executable)
+                self.assertTrue(output.exists())
+            finally:
+                shutil.rmtree(output.parent, ignore_errors=True)
 
     def test_export_html_filename_falls_back_when_llm_title_generation_fails(self):
         from src.services.business.taobao_detail import TaobaoDetailExportService

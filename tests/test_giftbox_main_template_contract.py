@@ -51,6 +51,9 @@ class GiftboxMainTemplateContractTest(unittest.TestCase):
         self.assertIn("trimImageWhitespace", source)
         self.assertIn("trim_whitespace.py", source)
         self.assertIn("imageToDataUri", source)
+        self.assertIn("pythonCommandCandidates", source)
+        self.assertIn('candidates.push("python", "python3")', source)
+        self.assertIn("result.error.message", source)
 
     def test_generate_cli_trims_white_space_before_embedding_svg(self):
         with tempfile.TemporaryDirectory() as temp_dir:

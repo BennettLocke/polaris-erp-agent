@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -421,10 +422,12 @@ class GiftboxMainImageRenderer:
         if colors:
             command.extend(["--colors", ",".join(str(color) for color in colors if color)])
         try:
+            env = os.environ.copy()
+            env["PYTHON"] = sys.executable
             completed = subprocess.run(
                 command,
                 cwd=str(ROOT),
-                env=os.environ.copy(),
+                env=env,
                 text=True,
                 encoding="utf-8",
                 errors="replace",

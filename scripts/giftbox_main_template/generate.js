@@ -24,6 +24,42 @@ const MIME_TYPES = new Map([
   [".webp", "image/webp"],
 ]);
 
+function pythonCommandCandidates() {
+  const candidates = [];
+  if (process.env.PYTHON) {
+    candidates.push(process.env.PYTHON);
+  }
+  candidates.push("python", "python3");
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function runTrimScript(filePath, outputPath, margin) {
+  const errors = [];
+  for (const command of pythonCommandCandidates()) {
+    const result = spawnSync(command, [TRIM_SCRIPT, filePath, outputPath, String(margin)], {
+      cwd: path.resolve(__dirname, "../.."),
+      encoding: "utf-8",
+    });
+
+    if (result.status === 0 && fs.existsSync(outputPath)) {
+      return;
+    }
+
+    errors.push(
+      [
+        `command=${command}`,
+        result.error && `error=${result.error.message}`,
+        typeof result.status === "number" && `status=${result.status}`,
+        result.stdout && `stdout:\n${result.stdout}`,
+        result.stderr && `stderr:\n${result.stderr}`,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+  }
+  throw new Error(["Image trim failed.", ...errors].filter(Boolean).join("\n\n"));
+}
+
 function usage() {
   return [
     "Usage:",
@@ -90,22 +126,7 @@ function trimImageWhitespace(filePath, tempDir, args = {}) {
   const margin = Number(args["trim-margin"] || DEFAULT_TRIM_MARGIN);
   const safeMargin = Number.isFinite(margin) && margin >= 0 ? Math.round(margin) : DEFAULT_TRIM_MARGIN;
   const outputPath = path.join(tempDir, `trimmed-${Date.now()}-${Math.random().toString(16).slice(2)}.png`);
-  const result = spawnSync(process.env.PYTHON || "python", [TRIM_SCRIPT, filePath, outputPath, String(safeMargin)], {
-    cwd: path.resolve(__dirname, "../.."),
-    encoding: "utf-8",
-  });
-
-  if (result.status !== 0 || !fs.existsSync(outputPath)) {
-    throw new Error(
-      [
-        "Image trim failed.",
-        result.stdout && `stdout:\n${result.stdout}`,
-        result.stderr && `stderr:\n${result.stderr}`,
-      ]
-        .filter(Boolean)
-        .join("\n")
-    );
-  }
+  runTrimScript(filePath, outputPath, safeMargin);
   return outputPath;
 }
 
@@ -227,5 +248,6 @@ if (require.main === module) {
 module.exports = {
   buildOptions,
   imageToDataUri,
+  pythonCommandCandidates,
   trimImageWhitespace,
 };
