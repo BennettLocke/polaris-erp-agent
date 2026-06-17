@@ -289,8 +289,8 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("downloadProductTaobaoDetailExportJob", api_source)
         self.assertIn("导出淘宝详情页", product_source)
         self.assertIn("onExportTaobaoDetail", product_source)
-        self.assertIn("已开始后台生成淘宝详情页资料包", product_source)
-        self.assertIn("waitForTaobaoDetailExportJob", product_source)
+        self.assertIn("已加入导出任务", product_source)
+        self.assertIn("TaobaoExportTaskPanel", product_source)
 
     def test_optional_main_image_export_is_wired_through_job_and_dialog(self):
         http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
@@ -304,7 +304,8 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("include_main_image", http_source)
         self.assertIn("main_image=", http_source)
         self.assertIn("main_image: dict | None = None", jobs_source)
-        self.assertIn("export_zip(self._job_product_id(job_id), main_image=job.main_image)", jobs_source)
+        self.assertIn("main_image=job.main_image", jobs_source)
+        self.assertIn("progress_callback=update_progress", jobs_source)
         self.assertIn("TaobaoDetailExportStartOptions", api_source)
         self.assertIn("mainImageFile", api_source)
         self.assertIn('form.append("main_image"', api_source)
@@ -312,6 +313,62 @@ class TaobaoDetailExportContractTest(TestCase):
         self.assertIn("导出淘宝资料", product_source)
         self.assertIn("同时制作淘宝主图", product_source)
         self.assertIn('accept="image/png"', product_source)
+
+    def test_export_job_progress_and_batch_status_are_wired(self):
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        jobs_source = (ROOT / "src" / "services" / "business" / "taobao_detail_jobs.py").read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        types_source = (ROOT / "admin" / "src" / "types.ts").read_text(encoding="utf-8")
+
+        self.assertIn('^/api/product/taobao-detail-export/jobs$', http_source)
+        self.assertIn('request.args.get("ids"', http_source)
+        self.assertIn("list_snapshots", jobs_source)
+        self.assertIn("progress:", types_source)
+        self.assertIn("steps:", types_source)
+        self.assertIn("include_main_image", types_source)
+        self.assertIn("productTaobaoDetailExportJobs", api_source)
+        self.assertIn("ids.join", api_source)
+
+    def test_frontend_uses_task_panel_instead_of_auto_download_polling(self):
+        product_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
+        ).read_text(encoding="utf-8")
+        styles_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("TaobaoExportTaskPanel", product_source)
+        self.assertIn("TAOBAO_EXPORT_TASK_STORAGE_KEY", product_source)
+        self.assertIn("localStorage", product_source)
+        self.assertIn("productTaobaoDetailExportJobs", product_source)
+        self.assertIn("downloadTaobaoExportTask", product_source)
+        self.assertIn("taobao-export-task-panel", styles_source)
+        self.assertIn("taobao-export-check-inline", styles_source)
+        self.assertNotIn("waitForTaobaoDetailExportJob", product_source)
+
+
+class TaobaoDetailExportJobSnapshotTest(TestCase):
+    def test_snapshot_contains_progress_steps_and_main_image_flag(self):
+        from src.services.business.taobao_detail_jobs import TaobaoDetailExportJob
+
+        job = TaobaoDetailExportJob(
+            job_id="job-1",
+            product_id=9,
+            status="running",
+            message="running",
+            include_main_image=True,
+        )
+        data = job.snapshot()
+
+        self.assertEqual(data["progress"], 10)
+        self.assertTrue(data["include_main_image"])
+        self.assertEqual([step["key"] for step in data["steps"]], [
+            "queued",
+            "prepare",
+            "detail_images",
+            "main_image",
+            "archive",
+            "completed",
+        ])
+        self.assertTrue(all(step["status"] in {"pending", "running", "completed", "failed"} for step in data["steps"]))
 
     def test_export_uses_original_playwright_renderer_contract(self):
         service_source = (ROOT / "src" / "services" / "business" / "taobao_detail.py").read_text(encoding="utf-8")

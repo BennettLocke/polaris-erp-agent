@@ -389,6 +389,7 @@ API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/product/\d+/shelves$"), "设置"),
     ({"GET"}, re.compile(r"^/api/product/\d+/taobao-detail-export$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/\d+/taobao-detail-export/jobs$"), "设置"),
+    ({"GET"}, re.compile(r"^/api/product/taobao-detail-export/jobs$"), "设置"),
     ({"GET"}, re.compile(r"^/api/product/taobao-detail-export/jobs/[^/]+$"), "设置"),
     ({"GET"}, re.compile(r"^/api/product/taobao-detail-export/jobs/[^/]+/download$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customer/create$"), "开单"),
@@ -4993,6 +4994,17 @@ def product_taobao_detail_export_job_start_api(product_id: int):
     except Exception as e:
         logger.error(f"淘宝详情页后台导出任务创建异常: product_id={product_id}, error={e}")
         return _api_exception_response(e)
+
+
+@app.route("/api/product/taobao-detail-export/jobs", methods=["GET"])
+def product_taobao_detail_export_jobs_api():
+    """Get several background Taobao export job statuses in one request."""
+    from src.services.business.taobao_detail_jobs import get_taobao_detail_export_job_manager
+
+    raw_ids = request.args.get("ids", "")
+    job_ids = [item.strip() for item in str(raw_ids or "").split(",") if item.strip()]
+    jobs = get_taobao_detail_export_job_manager().list_snapshots(job_ids)
+    return jsonify({"code": 0, "data": {"list": jobs}})
 
 
 @app.route("/api/product/taobao-detail-export/jobs/<job_id>", methods=["GET"])

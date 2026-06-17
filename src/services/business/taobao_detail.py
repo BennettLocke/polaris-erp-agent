@@ -28,6 +28,7 @@ logger = get_logger("sjagent.taobao_detail")
 ImageFetcher = Callable[[str], bytes]
 DimensionRecognizer = Callable[[list[str]], dict]
 TaobaoTitleGenerator = Callable[[dict], str]
+ProgressCallback = Callable[[str, int, str], None]
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATA_PATH = ROOT / "assets" / "taobao_detail" / "default-product-data.json"
@@ -464,7 +465,14 @@ class TaobaoDetailExportService:
         )
         self.title_generator = title_generator or generate_taobao_listing_title
 
-    def export_zip(self, product_id: int, main_image: dict | None = None) -> TaobaoDetailExportResult:
+    def export_zip(
+        self,
+        product_id: int,
+        main_image: dict | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> TaobaoDetailExportResult:
+        if progress_callback:
+            progress_callback("prepare", 10, "正在准备商品资料")
         product = self.product_service.info(product_id)
         if not product:
             raise ValueError("商品不存在")
@@ -487,15 +495,21 @@ class TaobaoDetailExportService:
         template_data = self._template_data(product, color_items, dimensions)
         taobao_title = self._taobao_title(product)
         html_filename = self._html_filename(product, taobao_title)
+        if progress_callback:
+            progress_callback("detail_images", 35, "正在生成淘宝详情页图片")
         template_paths = self.renderer.render(template_data)
         main_image_path: Path | None = None
         try:
             if main_image:
+                if progress_callback:
+                    progress_callback("main_image", 65, "正在制作淘宝主图")
                 main_image_path = self.main_image_renderer.render(
                     self._main_image_context(product, color_items, dimensions),
                     bytes(main_image.get("content") or b""),
                     str(main_image.get("filename") or "main.png"),
                 )
+            if progress_callback:
+                progress_callback("archive", 85, "正在打包压缩包")
             template_urls = self._upload_detail_images(template_paths)
             content = self._zip_package(color_items, template_paths, detail_urls, main_image_path=main_image_path, product=product)
         finally:

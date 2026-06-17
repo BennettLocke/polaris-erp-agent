@@ -449,6 +449,10 @@ export const api = {
   },
   productTaobaoDetailExportJob: (jobId: string) =>
     request<TaobaoDetailExportJob>(`/api/product/taobao-detail-export/jobs/${encodeURIComponent(jobId)}`),
+  productTaobaoDetailExportJobs: (ids: string[]) =>
+    request<{ list: TaobaoDetailExportJob[] }>(
+      `/api/product/taobao-detail-export/jobs?ids=${ids.join(",").split(",").map(encodeURIComponent).join(",")}`
+    ),
   downloadProductTaobaoDetailExportJob: (jobId: string, fallbackFilename = "taobao-detail.zip") =>
     requestBlob(`/api/product/taobao-detail-export/jobs/${encodeURIComponent(jobId)}/download`, fallbackFilename),
   productOptions: (id?: number, options?: ApiRequestOptions) =>

@@ -2768,8 +2768,7 @@ nav button:hover {
   gap: 12px;
 }
 
-.taobao-export-fixed-row,
-.taobao-export-check-row {
+.taobao-export-fixed-row {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -2781,8 +2780,14 @@ nav button:hover {
   font-weight: 700;
 }
 
-.taobao-export-check-row {
-  justify-content: flex-start;
+.taobao-export-check-inline {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 10px;
+  color: var(--sj-heading);
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -2819,6 +2824,126 @@ nav button:hover {
   margin: 0;
   color: var(--sj-danger-foreground);
   font-size: 13px;
+  font-weight: 700;
+}
+
+.taobao-export-task-chip,
+.taobao-export-task-panel {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 70;
+}
+
+.taobao-export-task-chip {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--sj-border);
+  border-radius: 10px;
+  background: var(--sj-button-primary);
+  color: var(--sj-button-primary-foreground);
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 700;
+  box-shadow: var(--sj-popover-shadow);
+  cursor: pointer;
+}
+
+.taobao-export-task-chip em {
+  color: color-mix(in srgb, var(--sj-button-primary-foreground) 78%, transparent);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.taobao-export-task-panel {
+  width: min(420px, calc(100vw - 28px));
+  max-height: min(560px, calc(100vh - 36px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--sj-border);
+  border-radius: 12px;
+  background: var(--sj-surface);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.16);
+}
+
+.taobao-export-task-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--sj-border);
+  padding: 12px;
+}
+
+.taobao-export-task-panel__header div,
+.taobao-export-task-main div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.taobao-export-task-panel__header strong,
+.taobao-export-task-main strong {
+  color: var(--sj-heading);
+  font-weight: 800;
+}
+
+.taobao-export-task-panel__header span,
+.taobao-export-task-main span {
+  color: var(--sj-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.taobao-export-task-list {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.taobao-export-task-item {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+  background: var(--sj-surface-subtle);
+  padding: 10px;
+}
+
+.taobao-export-task-main,
+.taobao-export-task-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.taobao-export-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--sj-border);
+}
+
+.taobao-export-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--sj-button-primary);
+  transition: width 0.2s ease;
+}
+
+.taobao-export-task-error {
+  margin: 0;
+  color: var(--sj-danger-foreground);
+  font-size: 12px;
+  line-height: 18px;
   font-weight: 700;
 }
 

@@ -89,11 +89,20 @@ export type AnalyticsSalesOverview = {
   source: string;
 };
 
+export type TaobaoDetailExportStep = {
+  key: string;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+};
+
 export type TaobaoDetailExportJob = {
   job_id: string;
   product_id: number;
   status: "pending" | "running" | "completed" | "failed" | string;
   message?: string;
+  progress: number;
+  steps: TaobaoDetailExportStep[];
+  include_main_image: boolean;
   filename?: string;
   html_filename?: string;
   taobao_title?: string;

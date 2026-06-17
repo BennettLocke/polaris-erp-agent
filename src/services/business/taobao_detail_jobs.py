@@ -16,6 +16,21 @@ from .taobao_detail import TaobaoDetailExportResult, TaobaoDetailExportService
 
 logger = get_logger("sjagent.taobao_detail_jobs")
 
+TAOBAO_EXPORT_STEPS = [
+    ("queued", "等待生成"),
+    ("prepare", "准备商品资料"),
+    ("detail_images", "生成淘宝详情页图片"),
+    ("main_image", "制作淘宝主图"),
+    ("archive", "打包压缩包"),
+    ("completed", "已完成"),
+]
+
+
+def _job_steps(include_main_image: bool) -> list[tuple[str, str]]:
+    if include_main_image:
+        return list(TAOBAO_EXPORT_STEPS)
+    return [step for step in TAOBAO_EXPORT_STEPS if step[0] != "main_image"]
+
 
 @dataclass
 class TaobaoDetailExportJob:
@@ -28,6 +43,9 @@ class TaobaoDetailExportJob:
     taobao_title: str = ""
     error: str = ""
     main_image: dict | None = None
+    include_main_image: bool = False
+    current_step: str = "prepare"
+    progress: int = 10
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     completed_at: float = 0
@@ -43,6 +61,9 @@ class TaobaoDetailExportJob:
             "html_filename": self.html_filename,
             "taobao_title": self.taobao_title,
             "error": self.error,
+            "include_main_image": bool(self.include_main_image),
+            "progress": int(self.progress or 0),
+            "steps": self._step_snapshots(),
             "created_at": int(self.created_at),
             "updated_at": int(self.updated_at),
             "completed_at": int(self.completed_at or 0),
@@ -50,6 +71,24 @@ class TaobaoDetailExportJob:
         if include_download_url and self.status == "completed":
             data["download_url"] = f"/api/product/taobao-detail-export/jobs/{self.job_id}/download"
         return data
+
+    def _step_snapshots(self) -> list[dict[str, str]]:
+        steps = _job_steps(bool(self.include_main_image))
+        keys = [key for key, _ in steps]
+        current_index = keys.index(self.current_step) if self.current_step in keys else 0
+        snapshots: list[dict[str, str]] = []
+        for index, (key, label) in enumerate(steps):
+            state = "pending"
+            if self.status == "completed":
+                state = "completed"
+            elif self.status == "failed":
+                state = "completed" if index < current_index else "failed" if index == current_index else "pending"
+            elif self.status == "pending":
+                state = "running" if key == "queued" else "pending"
+            elif self.status == "running":
+                state = "completed" if index < current_index else "running" if index == current_index else "pending"
+            snapshots.append({"key": key, "label": label, "status": state})
+        return snapshots
 
 
 class TaobaoDetailExportJobManager:
@@ -68,12 +107,16 @@ class TaobaoDetailExportJobManager:
 
     def start(self, product_id: int, main_image: dict | None = None) -> TaobaoDetailExportJob:
         self._cleanup()
+        include_main_image = bool(main_image)
         job = TaobaoDetailExportJob(
             job_id=f"tdx-{int(time.time())}-{uuid.uuid4().hex[:10]}",
             product_id=int(product_id),
             status="pending",
             message="已加入后台生成队列",
             main_image=main_image,
+            include_main_image=include_main_image,
+            current_step="queued",
+            progress=0,
         )
         with self._lock:
             self._jobs[job.job_id] = job
@@ -84,6 +127,16 @@ class TaobaoDetailExportJobManager:
         self._cleanup()
         with self._lock:
             return self._jobs.get(str(job_id or "").strip())
+
+    def list_snapshots(self, job_ids: list[str]) -> list[dict[str, Any]]:
+        self._cleanup()
+        clean_ids = [str(job_id or "").strip() for job_id in job_ids if str(job_id or "").strip()]
+        with self._lock:
+            return [
+                self._jobs[job_id].snapshot()
+                for job_id in clean_ids
+                if job_id in self._jobs
+            ]
 
     def download(self, job_id: str) -> TaobaoDetailExportResult | None:
         job = self.get(job_id)
@@ -100,13 +153,23 @@ class TaobaoDetailExportJobManager:
         )
 
     def _run_job(self, job_id: str) -> None:
-        self._update(job_id, status="running", message="正在生成淘宝详情页资料包")
+        self._update(job_id, status="running", current_step="prepare", progress=10, message="正在准备商品资料")
         try:
             job = self._job(job_id)
-            result = TaobaoDetailExportService().export_zip(self._job_product_id(job_id), main_image=job.main_image)
+
+            def update_progress(step: str, progress: int, message: str) -> None:
+                self._update(job_id, status="running", current_step=step, progress=progress, message=message)
+
+            result = TaobaoDetailExportService().export_zip(
+                self._job_product_id(job_id),
+                main_image=job.main_image,
+                progress_callback=update_progress,
+            )
             self._update(
                 job_id,
                 status="completed",
+                current_step="completed",
+                progress=100,
                 message="淘宝详情页资料包已生成",
                 filename=result.filename,
                 html_filename=result.html_filename,

@@ -72,6 +72,7 @@ import type {
   ProductMediaAsset,
   ProductSavePayload,
   ProductStatusOption,
+  TaobaoDetailExportStep,
   TaobaoDetailExportJob,
   ProductUnit
 } from "@/types";
@@ -138,8 +139,9 @@ const PRODUCT_PAGE_SIZE_BUFFER_ROWS = 1;
 const PRODUCT_CARD_ESTIMATED_HEIGHT = 400;
 const PRODUCT_GRID_TOP_FALLBACK = 520;
 const PRODUCT_PAGE_SIZE_RESIZE_DELAY = 160;
-const TAOBAO_DETAIL_EXPORT_POLL_INTERVAL_MS = 2500;
-const TAOBAO_DETAIL_EXPORT_MAX_POLLS = 120;
+const TAOBAO_EXPORT_TASK_POLL_INTERVAL_MS = 2500;
+const TAOBAO_EXPORT_TASK_STORAGE_KEY = "sjagent:taobao-export-tasks";
+const TAOBAO_EXPORT_TASK_STORAGE_LIMIT = 20;
 
 type ProductPageSizeMetrics = {
   gridWidth: number;
@@ -2025,6 +2027,115 @@ type TaobaoExportOptions = {
   mainImageFile: File | null;
 };
 
+type TaobaoExportTask = {
+  job: TaobaoDetailExportJob;
+  productName: string;
+  productId: number;
+  includeMainImage: boolean;
+  createdAt: number;
+  downloaded?: boolean;
+  expired?: boolean;
+  error?: string;
+};
+
+function normalizeTaobaoJob(job: Partial<TaobaoDetailExportJob> & { job_id?: string; product_id?: number }): TaobaoDetailExportJob {
+  return {
+    job_id: String(job.job_id || ""),
+    product_id: Number(job.product_id || 0),
+    status: String(job.status || "pending"),
+    message: job.message || "",
+    progress: Number(job.progress || 0),
+    steps: Array.isArray(job.steps) ? job.steps : [],
+    include_main_image: Boolean(job.include_main_image),
+    filename: job.filename,
+    html_filename: job.html_filename,
+    taobao_title: job.taobao_title,
+    error: job.error,
+    download_url: job.download_url,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    completed_at: job.completed_at
+  };
+}
+
+function loadTaobaoExportTasks(): TaobaoExportTask[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(TAOBAO_EXPORT_TASK_STORAGE_KEY) || "[]") as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => {
+        const task = item as Partial<TaobaoExportTask> & { job?: Partial<TaobaoDetailExportJob> & { job_id?: string } };
+        if (!task?.job?.job_id) return null;
+        const job = normalizeTaobaoJob(task.job);
+        return {
+          job,
+          productName: String(task.productName || "商品"),
+          productId: Number(task.productId || job.product_id || 0),
+          includeMainImage: Boolean(task.includeMainImage || job.include_main_image),
+          createdAt: Number(task.createdAt || job.created_at || Date.now()),
+          downloaded: Boolean(task.downloaded),
+          expired: Boolean(task.expired),
+          error: task.error || job.error || ""
+        };
+      })
+      .filter(Boolean)
+      .slice(0, TAOBAO_EXPORT_TASK_STORAGE_LIMIT) as TaobaoExportTask[];
+  } catch {
+    return [];
+  }
+}
+
+function saveTaobaoExportTasks(tasks: TaobaoExportTask[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      TAOBAO_EXPORT_TASK_STORAGE_KEY,
+      JSON.stringify(tasks.slice(0, TAOBAO_EXPORT_TASK_STORAGE_LIMIT))
+    );
+  } catch {
+    // localStorage may be disabled; the visible in-memory task list still works.
+  }
+}
+
+function taobaoTaskIsActive(task: TaobaoExportTask) {
+  return ["pending", "running"].includes(String(task.job.status || ""));
+}
+
+function taobaoTaskStatusLabel(job: TaobaoDetailExportJob) {
+  if (job.status === "completed") return "已完成";
+  if (job.status === "failed") return "失败";
+  if (job.status === "pending") return "等待中";
+  return "生成中";
+}
+
+function taobaoTaskCurrentStep(job: TaobaoDetailExportJob): TaobaoDetailExportStep | null {
+  const steps = Array.isArray(job.steps) ? job.steps : [];
+  return (
+    steps.find((step) => step.status === "failed")
+    || steps.find((step) => step.status === "running")
+    || [...steps].reverse().find((step) => step.status === "completed")
+    || null
+  );
+}
+
+function expiredTaobaoTask(task: TaobaoExportTask): TaobaoExportTask {
+  return {
+    ...task,
+    expired: true,
+    error: "任务已过期，请重新导出",
+    job: {
+      ...task.job,
+      status: "failed",
+      message: "任务已过期，请重新导出",
+      error: "任务已过期，请重新导出",
+      progress: 0,
+      steps: task.job.steps || [],
+      include_main_image: task.includeMainImage
+    }
+  };
+}
+
 function ProductCard({ product, actionBusy, onEdit, onToggleShelves, onExportTaobaoDetail, onDelete }: ProductCardProps) {
   const image = productImageUrl(product);
   const colors = productColorNames(product);
@@ -2185,7 +2296,7 @@ function TaobaoExportDialog({
             <span>淘宝详情页</span>
             <Badge variant="outline">已包含</Badge>
           </div>
-          <label className="taobao-export-check-row">
+          <label className="taobao-export-check-inline">
             <Checkbox
               checked={includeMainImage}
               onCheckedChange={(checked) => setIncludeMainImage(checked === true)}
@@ -2224,6 +2335,94 @@ function TaobaoExportDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function TaobaoExportTaskPanel({
+  tasks,
+  open,
+  downloadingJobId,
+  onOpenChange,
+  onDownload,
+  onRemove
+}: {
+  tasks: TaobaoExportTask[];
+  open: boolean;
+  downloadingJobId: string;
+  onOpenChange: (open: boolean) => void;
+  onDownload: (task: TaobaoExportTask) => void;
+  onRemove: (jobId: string) => void;
+}) {
+  if (!tasks.length) return null;
+  const activeCount = tasks.filter(taobaoTaskIsActive).length;
+  const completedCount = tasks.filter((task) => task.job.status === "completed").length;
+  const failedCount = tasks.filter((task) => task.job.status === "failed").length;
+
+  if (!open) {
+    return (
+      <button type="button" className="taobao-export-task-chip" onClick={() => onOpenChange(true)}>
+        <Download data-icon="inline-start" />
+        <span>导出任务</span>
+        <em>导出中 {activeCount} / 已完成 {completedCount}</em>
+      </button>
+    );
+  }
+
+  return (
+    <section className="taobao-export-task-panel" aria-live="polite">
+      <header className="taobao-export-task-panel__header">
+        <div>
+          <strong>导出任务</strong>
+          <span>导出中 {activeCount} / 已完成 {completedCount}{failedCount ? ` / 失败 ${failedCount}` : ""}</span>
+        </div>
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)} aria-label="收起导出任务">
+          <X data-icon="only" />
+        </Button>
+      </header>
+      <div className="taobao-export-task-list">
+        {tasks.map((task) => {
+          const job = task.job;
+          const currentStep = taobaoTaskCurrentStep(job);
+          const progress = clampValue(Number(job.progress || 0), 0, 100);
+          const canDownload = job.status === "completed";
+          const busy = downloadingJobId === job.job_id;
+          return (
+            <article className="taobao-export-task-item" key={job.job_id}>
+              <div className="taobao-export-task-main">
+                <div>
+                  <strong>{task.productName}</strong>
+                  <span>
+                    {task.includeMainImage || job.include_main_image ? "含淘宝主图" : "仅详情页"}
+                    {currentStep?.label ? ` · ${currentStep.label}` : ""}
+                  </span>
+                </div>
+                <Badge variant={job.status === "failed" ? "destructive" : job.status === "completed" ? "secondary" : "outline"}>
+                  {taobaoTaskStatusLabel(job)}
+                </Badge>
+              </div>
+              <div className="taobao-export-progress" aria-label={`导出进度 ${progress}%`}>
+                <span style={{ width: `${progress}%` }} />
+              </div>
+              {job.status === "failed" ? (
+                <p className="taobao-export-task-error">{task.error || job.error || job.message || "导出失败"}</p>
+              ) : null}
+              <div className="taobao-export-task-actions">
+                {task.downloaded ? <Badge variant="outline">已下载</Badge> : null}
+                {canDownload ? (
+                  <Button type="button" size="xs" onClick={() => onDownload(task)} disabled={busy}>
+                    <Download data-icon="inline-start" />
+                    {busy ? "下载中" : "下载压缩包"}
+                  </Button>
+                ) : null}
+                <Button type="button" variant="ghost" size="icon-xs" onClick={() => onRemove(job.job_id)} aria-label="移除导出任务">
+                  <X data-icon="only" />
+                </Button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -2448,6 +2647,9 @@ export function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
   const [confirmAction, setConfirmAction] = useState<ProductConfirmAction | null>(null);
   const [taobaoExportProduct, setTaobaoExportProduct] = useState<ProductItem | null>(null);
+  const [taobaoExportTasks, setTaobaoExportTasks] = useState<TaobaoExportTask[]>(() => loadTaobaoExportTasks());
+  const [taobaoTaskPanelOpen, setTaobaoTaskPanelOpen] = useState(false);
+  const [downloadingTaobaoJobId, setDownloadingTaobaoJobId] = useState("");
   const [actionProductId, setActionProductId] = useState(0);
   const [pageSize, setPageSize] = useState(initialProductPageSize);
   const [gridElement, setGridElement] = useState<HTMLDivElement | null>(null);
@@ -2559,22 +2761,6 @@ export function ProductsPage() {
     }
   }
 
-  async function waitForTaobaoDetailExportJob(job: TaobaoDetailExportJob, productName: string) {
-    let current = job;
-    for (let attempt = 0; attempt < TAOBAO_DETAIL_EXPORT_MAX_POLLS; attempt += 1) {
-      if (current.status === "completed") return current;
-      if (current.status === "failed") {
-        throw new Error(current.error || current.message || "淘宝详情页资料包生成失败");
-      }
-      if (attempt === 1) {
-        setNotice(`${productName} 淘宝详情页资料包正在后台生成，完成后会自动下载`);
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, TAOBAO_DETAIL_EXPORT_POLL_INTERVAL_MS));
-      current = await api.productTaobaoDetailExportJob(current.job_id);
-    }
-    throw new Error("淘宝详情页资料包生成时间过长，请稍后重试或刷新后再查");
-  }
-
   async function exportProductTaobaoDetail(product: ProductItem, options: TaobaoExportOptions = { includeMainImage: false, mainImageFile: null }) {
     const id = productActionId(product);
     if (!id) return;
@@ -2588,18 +2774,99 @@ export function ProductsPage() {
         includeMainImage: options.includeMainImage,
         mainImageFile: options.mainImageFile
       });
-      setActionProductId(0);
-      setNotice(`${productName} 已开始后台生成淘宝详情页资料包，完成后会自动下载`);
-      const completedJob = await waitForTaobaoDetailExportJob(job, productName);
-      const file = await api.downloadProductTaobaoDetailExportJob(completedJob.job_id, completedJob.filename || `taobao-detail-${id}.zip`);
-      downloadBlob(file.blob, file.filename);
-      setNotice(`${productName} 淘宝详情页资料包已生成并开始下载`);
+      const nextTask: TaobaoExportTask = {
+        job: normalizeTaobaoJob({ ...job, include_main_image: options.includeMainImage || job.include_main_image }),
+        productName,
+        productId: id,
+        includeMainImage: Boolean(options.includeMainImage),
+        createdAt: Date.now()
+      };
+      setTaobaoExportTasks((current) => [
+        nextTask,
+        ...current.filter((task) => task.job.job_id !== job.job_id)
+      ].slice(0, TAOBAO_EXPORT_TASK_STORAGE_LIMIT));
+      setTaobaoTaskPanelOpen(true);
+      setNotice(`${productName} 已加入导出任务，可在右下角查看进度`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "淘宝详情页导出失败");
     } finally {
       setActionProductId(0);
     }
   }
+
+  async function downloadTaobaoExportTask(task: TaobaoExportTask) {
+    if (task.job.status !== "completed") return;
+    setDownloadingTaobaoJobId(task.job.job_id);
+    setError("");
+    try {
+      const file = await api.downloadProductTaobaoDetailExportJob(
+        task.job.job_id,
+        task.job.filename || `taobao-detail-${task.productId || task.job.product_id}.zip`
+      );
+      downloadBlob(file.blob, file.filename);
+      setTaobaoExportTasks((current) => current.map((item) => (
+        item.job.job_id === task.job.job_id ? { ...item, downloaded: true } : item
+      )));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "淘宝详情页资料包下载失败";
+      setError(message);
+      setTaobaoExportTasks((current) => current.map((item) => (
+        item.job.job_id === task.job.job_id ? { ...item, error: message } : item
+      )));
+    } finally {
+      setDownloadingTaobaoJobId("");
+    }
+  }
+
+  function removeTaobaoExportTask(jobId: string) {
+    setTaobaoExportTasks((current) => current.filter((task) => task.job.job_id !== jobId));
+  }
+
+  useEffect(() => {
+    saveTaobaoExportTasks(taobaoExportTasks);
+  }, [taobaoExportTasks]);
+
+  useEffect(() => {
+    const activeIds = taobaoExportTasks
+      .filter(taobaoTaskIsActive)
+      .map((task) => task.job.job_id)
+      .filter(Boolean);
+    if (!activeIds.length) return undefined;
+
+    let disposed = false;
+    async function refreshTaobaoExportTasks() {
+      try {
+        const data = await api.productTaobaoDetailExportJobs(activeIds);
+        if (disposed) return;
+        const byId = new Map((data.list || []).map((job) => [job.job_id, normalizeTaobaoJob(job)]));
+        setTaobaoExportTasks((current) => current.map((task) => {
+          if (!activeIds.includes(task.job.job_id)) return task;
+          const nextJob = byId.get(task.job.job_id);
+          if (nextJob) {
+            return {
+              ...task,
+              job: {
+                ...nextJob,
+                include_main_image: nextJob.include_main_image || task.includeMainImage
+              },
+              includeMainImage: task.includeMainImage || nextJob.include_main_image,
+              error: nextJob.error || task.error || ""
+            };
+          }
+          return expiredTaobaoTask(task);
+        }));
+      } catch {
+        // Keep the current snapshots; the next interval can recover.
+      }
+    }
+
+    void refreshTaobaoExportTasks();
+    const timer = window.setInterval(refreshTaobaoExportTasks, TAOBAO_EXPORT_TASK_POLL_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [taobaoExportTasks]);
 
   useEffect(() => {
     queryClient.fetchQuery({
@@ -2750,6 +3017,14 @@ export function ProductsPage() {
         onClose={() => setConfirmAction(null)}
         onConfirmShelves={(product, state) => void toggleProductShelves(product, state)}
         onConfirmDelete={(product) => void deleteProduct(product)}
+      />
+      <TaobaoExportTaskPanel
+        tasks={taobaoExportTasks}
+        open={taobaoTaskPanelOpen}
+        downloadingJobId={downloadingTaobaoJobId}
+        onOpenChange={setTaobaoTaskPanelOpen}
+        onDownload={(task) => void downloadTaobaoExportTask(task)}
+        onRemove={removeTaobaoExportTask}
       />
     </section>
   );
