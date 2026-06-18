@@ -33,6 +33,9 @@ REMARK_OCR_TOP_RATIO = 0.22
 CHINESE_NUMBER_PATTERN = r"[零〇一二两三四五六七八九十百千万]+"
 QUANTITY_NUMBER_PATTERN = rf"(?:\d+|{CHINESE_NUMBER_PATTERN})"
 QUANTITY_UNIT_PATTERN = r"(套|件|个|张|只|盒|捆)"
+OCR_DATE_PATTERN = r"(?:20\d{2}[./-]\d{1,2}[./-]\d{1,2}|20\d{6})"
+OCR_UV_PATTERN = r"(?i:U\s*(?:I|1|l)?\s*V)"
+CRAFT_TOKEN_PATTERN = rf"提袋|丝印|印刷|烫金|烫银|击凸|击凹|{OCR_UV_PATTERN}"
 
 
 def _parse_quantity_number(value: str) -> int | None:
@@ -451,11 +454,11 @@ def _is_invalid_customer(value: str | None) -> bool:
 
 def _extract_goods_from_remark(line: str) -> str:
     text = _normalize_ocr_line(line)
-    without_date = re.sub(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", "", text)
+    without_date = re.sub(OCR_DATE_PATTERN, "", text)
     without_prefix = re.sub(r"^(客户|下单)\s*:?\s*", "", without_date).strip()
-    without_qty = re.sub(rf"(?:UV|uv)?{QUANTITY_NUMBER_PATTERN}\s*{QUANTITY_UNIT_PATTERN}", "", without_prefix)
+    without_qty = re.sub(rf"(?:{OCR_UV_PATTERN})?{QUANTITY_NUMBER_PATTERN}\s*{QUANTITY_UNIT_PATTERN}", "", without_prefix)
     without_craft = re.sub(r"\([^)]*(丝印|印刷|提袋)[^)]*\)", "", without_qty)
-    without_craft = re.sub(r"(提袋\s*)?(丝印|印刷|UV|uv|烫金|烫银|击凸|击凹)", "", without_craft)
+    without_craft = re.sub(rf"(提袋\s*)?({CRAFT_TOKEN_PATTERN})", "", without_craft)
     without_craft = re.sub(r"提袋", "", without_craft)
     goods = without_craft
     color_words = list(dict.fromkeys([*STANDARD_COLORS, *COLOR_ALIASES.keys()]))
@@ -468,7 +471,7 @@ def _looks_like_goods_line(line: str) -> bool:
     text = _normalize_ocr_line(line)
     if re.fullmatch(r"(客户|客人|客户名称|下单)\s*:?", text):
         return False
-    if re.fullmatch(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text):
+    if re.fullmatch(OCR_DATE_PATTERN, text):
         return False
     return bool(_parse_quantity(text) and _looks_like_goods_text(text))
 
@@ -479,8 +482,8 @@ def _clean_goods_value(value: str) -> str:
 
 def _extract_craft_terms(line: str) -> list[str]:
     terms = []
-    for term in re.findall(r"提袋|丝印|印刷|UV|uv|烫金|烫银|击凸|击凹", line):
-        normalized = "UV" if term.lower() == "uv" else term
+    for term in re.findall(CRAFT_TOKEN_PATTERN, line):
+        normalized = "UV" if re.fullmatch(OCR_UV_PATTERN, term) else term
         if normalized not in terms:
             terms.append(normalized)
     return terms
@@ -646,7 +649,7 @@ def repair_ocr_parsed_fields(parsed: dict, caller) -> dict:
         parsed["customer_missing"] = not bool(inferred)
 
     parsed["customer_name"] = customer_name
-    parsed["goods_name"] = goods_name
+    parsed["goods_name"] = _clean_goods_value(goods_name)
     return parsed
 
 
@@ -795,7 +798,7 @@ def _find_exact_customer_name(keyword: str, caller) -> str:
 
 def _infer_customer_from_ocr_lines(lines: list[str], goods_name: str, caller) -> str:
     for line in lines:
-        text = re.sub(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", "", line)
+        text = re.sub(OCR_DATE_PATTERN, "", line)
         text = _clean_field_value(re.sub(r"^(客户|客人|客户名称)\s*:?", "", text))
         if not text or _is_invalid_customer(text):
             continue
@@ -803,7 +806,7 @@ def _infer_customer_from_ocr_lines(lines: list[str], goods_name: str, caller) ->
             continue
         if _looks_like_goods_text(text) or _parse_quantity(text) or _extract_craft_terms(text):
             continue
-        if re.fullmatch(r"20\d{2}[./-]\d{1,2}[./-]\d{1,2}", text):
+        if re.fullmatch(OCR_DATE_PATTERN, text):
             continue
         customer_name = _find_exact_customer_name(text, caller)
         if customer_name:

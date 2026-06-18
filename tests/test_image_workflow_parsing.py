@@ -76,6 +76,22 @@ class ImageWorkflowParsingTest(unittest.TestCase):
         self.assertIn("提袋", parsed["craft"])
         self.assertIn("丝印", parsed["craft"])
 
+    def test_compact_date_and_ocr_uv_do_not_pollute_goods_name(self):
+        parsed = parse_ocr_text_list([
+            "客户：和言",
+            "20260618云岭三小盒UIV 香槟金 20套",
+            "提袋 丝印",
+        ])
+
+        self.assertEqual(parsed["customer_name"], "和言")
+        self.assertEqual(parsed["goods_name"], "云岭三小盒")
+        self.assertEqual(parsed["color"], "香槟金")
+        self.assertEqual(parsed["quantity"], 20)
+        self.assertEqual(parsed["unit"], "套")
+        self.assertIn("UV", parsed["craft"])
+        self.assertIn("提袋", parsed["craft"])
+        self.assertIn("丝印", parsed["craft"])
+
     def test_gu_tong_jin_is_treated_as_color(self):
         parsed = parse_ocr_text_list(["岩味3小盒古铜金1件 提袋丝印"])
 
