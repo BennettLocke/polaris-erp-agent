@@ -1,4 +1,5 @@
 import unittest
+import uuid
 from unittest.mock import patch
 
 
@@ -36,6 +37,14 @@ class FakeCustomerService:
     def sales(self, customer_id: int, **kwargs):
         self.sales_calls.append({"customer_id": customer_id, **kwargs})
         return self.sales_rows, len(self.sales_rows), {"total": len(self.sales_rows)}
+
+
+def clear_test_session(session_id: str) -> None:
+    from src.core.session import HISTORY_DIR
+
+    path = HISTORY_DIR / f"{session_id}.json"
+    if path.exists():
+        path.unlink()
 
 
 class DeviceVoiceCommandServiceTests(unittest.TestCase):
@@ -95,6 +104,224 @@ class DeviceVoiceCommandServiceTests(unittest.TestCase):
                 "limit": 100,
             },
         )
+
+    def test_inventory_followup_reuses_last_product_for_color_query(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        session_id = f"voice-followup-{uuid.uuid4().hex}"
+        service = FakeInventoryService(
+            [
+                {
+                    "product_id": 11,
+                    "产品名称": "【喜悦】半斤",
+                    "【颜色】": "红色",
+                    "【仓库】": "百鑫仓库",
+                    "warehouse_id": 2,
+                    "库存数量": 6,
+                }
+            ]
+        )
+
+        try:
+            with patch("src.services.device_voice.get_inventory_service", return_value=service):
+                build_device_voice_command_response(
+                    text="喜悦半斤库存",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id=session_id,
+                    trace_id="trace-followup-base",
+                )
+                result = build_device_voice_command_response(
+                    text="红色多少",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id=session_id,
+                    trace_id="trace-followup-color",
+                )
+
+            self.assertEqual(result["intent"], "inventory_query")
+            self.assertEqual(service.calls[-1]["keyword"], "喜悦 半斤")
+            self.assertEqual(service.calls[-1]["color"], "红色")
+            self.assertIsNone(service.calls[-1]["warehouse_id"])
+            self.assertTrue(result["display"]["query"]["context_used"])
+            self.assertEqual(result["display"]["query"]["context_source_text"], "喜悦半斤库存")
+        finally:
+            clear_test_session(session_id)
+
+    def test_inventory_followup_reuses_last_product_for_warehouse_query(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        session_id = f"voice-followup-{uuid.uuid4().hex}"
+        service = FakeInventoryService(
+            [
+                {
+                    "product_id": 12,
+                    "产品名称": "【喜悦】半斤",
+                    "【颜色】": "黄色",
+                    "【仓库】": "百鑫仓库",
+                    "warehouse_id": 2,
+                    "库存数量": 8,
+                }
+            ]
+        )
+
+        try:
+            with patch("src.services.device_voice.get_inventory_service", return_value=service):
+                build_device_voice_command_response(
+                    text="喜悦半斤库存",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id=session_id,
+                    trace_id="trace-followup-base",
+                )
+                result = build_device_voice_command_response(
+                    text="百鑫呢",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id=session_id,
+                    trace_id="trace-followup-warehouse",
+                )
+
+            self.assertEqual(result["intent"], "inventory_query")
+            self.assertEqual(service.calls[-1]["keyword"], "喜悦 半斤")
+            self.assertEqual(service.calls[-1]["color"], "")
+            self.assertEqual(service.calls[-1]["warehouse_id"], 2)
+            self.assertTrue(result["display"]["query"]["context_used"])
+        finally:
+            clear_test_session(session_id)
+
+    def test_device_followup_switches_to_price_and_case_pack_with_last_product(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        session_id = f"voice-followup-{uuid.uuid4().hex}"
+        inventory_service = FakeInventoryService(
+            [
+                {
+                    "product_id": 21,
+                    "产品名称": "【喜悦】半斤",
+                    "【颜色】": "红色",
+                    "【仓库】": "百鑫仓库",
+                    "warehouse_id": 2,
+                    "库存数量": 6,
+                }
+            ]
+        )
+        product_service = FakeProductService(
+            [
+                {
+                    "product_id": 21,
+                    "title": "【喜悦】半斤",
+                    "color": "红色",
+                    "price": "18.00",
+                    "simple_desc": "规格：20套/件",
+                }
+            ]
+        )
+
+        try:
+            with patch("src.services.device_voice.get_inventory_service", return_value=inventory_service):
+                with patch("src.services.device_voice.get_product_service", return_value=product_service):
+                    build_device_voice_command_response(
+                        text="喜悦半斤库存",
+                        device_id="orangepi-xiaoxing-01",
+                        session_id=session_id,
+                        trace_id="trace-followup-base",
+                    )
+                    price_result = build_device_voice_command_response(
+                        text="多少钱",
+                        device_id="orangepi-xiaoxing-01",
+                        session_id=session_id,
+                        trace_id="trace-followup-price",
+                    )
+                    case_pack_result = build_device_voice_command_response(
+                        text="一件多少个",
+                        device_id="orangepi-xiaoxing-01",
+                        session_id=session_id,
+                        trace_id="trace-followup-case-pack",
+                    )
+
+            self.assertEqual(price_result["intent"], "price_query")
+            self.assertEqual(case_pack_result["intent"], "case_pack_query")
+            self.assertEqual(product_service.calls[0]["keyword"], "喜悦 半斤")
+            self.assertEqual(product_service.calls[1]["keyword"], "喜悦 半斤")
+            self.assertTrue(price_result["display"]["query"]["context_used"])
+            self.assertTrue(case_pack_result["display"]["query"]["context_used"])
+        finally:
+            clear_test_session(session_id)
+
+    def test_device_followup_context_expires_after_ten_minutes(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        session_id = f"voice-followup-{uuid.uuid4().hex}"
+        service = FakeInventoryService(
+            [
+                {
+                    "product_id": 31,
+                    "产品名称": "【喜悦】半斤",
+                    "【颜色】": "红色",
+                    "【仓库】": "百鑫仓库",
+                    "warehouse_id": 2,
+                    "库存数量": 6,
+                }
+            ]
+        )
+
+        try:
+            with patch("src.services.device_voice.get_inventory_service", return_value=service):
+                with patch("src.services.device_voice.time.time", side_effect=[1000.0, 1701.0]):
+                    build_device_voice_command_response(
+                        text="喜悦半斤库存",
+                        device_id="orangepi-xiaoxing-01",
+                        session_id=session_id,
+                        trace_id="trace-followup-base",
+                    )
+                    result = build_device_voice_command_response(
+                        text="红色多少",
+                        device_id="orangepi-xiaoxing-01",
+                        session_id=session_id,
+                        trace_id="trace-followup-expired",
+                    )
+
+            self.assertEqual(result["intent"], "chat")
+            self.assertEqual(len(service.calls), 1)
+        finally:
+            clear_test_session(session_id)
+
+    def test_device_followup_does_not_reuse_context_when_new_product_is_spoken(self):
+        from src.services.device_voice import build_device_voice_command_response
+
+        session_id = f"voice-followup-{uuid.uuid4().hex}"
+        service = FakeInventoryService(
+            [
+                {
+                    "product_id": 41,
+                    "产品名称": "【见喜】半斤",
+                    "【颜色】": "红色",
+                    "【仓库】": "百鑫仓库",
+                    "warehouse_id": 2,
+                    "库存数量": 7,
+                }
+            ]
+        )
+
+        try:
+            with patch("src.services.device_voice.get_inventory_service", return_value=service):
+                build_device_voice_command_response(
+                    text="喜悦半斤库存",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id=session_id,
+                    trace_id="trace-followup-base",
+                )
+                result = build_device_voice_command_response(
+                    text="见喜红色多少",
+                    device_id="orangepi-xiaoxing-01",
+                    session_id=session_id,
+                    trace_id="trace-followup-new-product",
+                )
+
+            self.assertEqual(result["intent"], "inventory_query")
+            self.assertNotEqual(service.calls[-1]["keyword"], "喜悦 半斤")
+            self.assertIn("见喜", service.calls[-1]["keyword"])
+            self.assertEqual(service.calls[-1]["color"], "红色")
+            self.assertFalse(result["display"]["query"].get("context_used", False))
+        finally:
+            clear_test_session(session_id)
 
     def test_customer_last_order_command_uses_customer_sales_not_inventory(self):
         from src.services.device_voice import build_device_voice_command_response

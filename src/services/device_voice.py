@@ -9,10 +9,15 @@ from collections import OrderedDict
 from typing import Any
 
 from scripts.common.unit_converter import parse_unit_from_simple_desc
+from src.core.session import SessionManager
 from src.core.skill_engine import SkillEngine
 from src.services.business import get_customer_service, get_inventory_service, get_product_service
 
 
+DEVICE_QUERY_CONTEXT_KEY = "last_device_query"
+DEVICE_QUERY_CONTEXT_TTL_SECONDS = 10 * 60
+DEVICE_QUERY_CONTEXT_INTENTS = {"inventory_query", "price_query", "case_pack_query"}
+FOLLOWUP_PRODUCT_PLACEHOLDERS = {"店", "钱", "件规", "多少", "库存", "有货", "这个", "那个"}
 UNCLEAR_REPLY = "没听清商品名，再说一遍。"
 NO_SERVER_REPLY = "服务器没连上，稍后再试。"
 TEXT_REPLACEMENTS = (
@@ -162,6 +167,147 @@ DEVICE_CHAT_SYSTEM_PROMPT = """你是桌面机器人小星，正在通过语音�
 4. 如果问题需要实时联网或你不确定，就直接说明现在不能实时确认。"""
 
 
+def _device_session(session_id: str, device_id: str) -> SessionManager | None:
+    value = str(session_id or device_id or "orangepi_voice").strip() or "orangepi_voice"
+    try:
+        return SessionManager(value)
+    except ValueError:
+        return None
+
+
+def _load_device_query_context(session: SessionManager | None) -> dict:
+    if session is None:
+        return {}
+    context = session.get_meta(DEVICE_QUERY_CONTEXT_KEY) or {}
+    if not isinstance(context, dict):
+        return {}
+    product_name = str(context.get("product_name") or "").strip()
+    intent = str(context.get("intent") or "").strip()
+    if not product_name or intent not in DEVICE_QUERY_CONTEXT_INTENTS:
+        return {}
+    try:
+        timestamp = float(context.get("timestamp") or 0)
+    except (TypeError, ValueError):
+        timestamp = 0
+    if not timestamp or time.time() - timestamp > DEVICE_QUERY_CONTEXT_TTL_SECONDS:
+        return {}
+    return context
+
+
+def _save_device_query_context(
+    session: SessionManager | None,
+    *,
+    intent: str,
+    product_name: str,
+    color: str,
+    warehouse_id,
+    display_title: str,
+    source_text: str,
+) -> None:
+    if session is None:
+        return
+    product_name = str(product_name or "").strip()
+    if not product_name or intent not in DEVICE_QUERY_CONTEXT_INTENTS:
+        return
+    session.set_meta(
+        DEVICE_QUERY_CONTEXT_KEY,
+        {
+            "intent": intent,
+            "product_name": product_name,
+            "color": str(color or "").strip(),
+            "warehouse_id": warehouse_id,
+            "display_title": str(display_title or "").strip(),
+            "timestamp": time.time(),
+            "source_text": str(source_text or "").strip(),
+        },
+    )
+
+
+def _clear_device_query_context(session: SessionManager | None) -> None:
+    if session is not None:
+        session.set_meta(DEVICE_QUERY_CONTEXT_KEY, {})
+
+
+def _valid_followup_product_name(value: str) -> str:
+    product_name = str(value or "").strip()
+    compact = product_name.replace(" ", "")
+    if not compact or compact in FOLLOWUP_PRODUCT_PLACEHOLDERS:
+        return ""
+    if compact.startswith(("一件", "1件", "每件", "一箱", "每箱")):
+        return ""
+    if len(compact) <= 1:
+        return ""
+    return product_name
+
+
+def _warehouse_followup_word(warehouse_id) -> str:
+    try:
+        clean_id = int(warehouse_id or 0)
+    except (TypeError, ValueError):
+        clean_id = 0
+    if clean_id == 2:
+        return "百鑫"
+    if clean_id == 1:
+        return "店里"
+    return ""
+
+
+def _is_case_pack_followup(text: str) -> bool:
+    compact = str(text or "").replace(" ", "")
+    return "件规" in compact or _is_case_pack_query(compact)
+
+
+def _is_price_followup(text: str) -> bool:
+    compact = str(text or "").replace(" ", "")
+    return _is_price_query(compact)
+
+
+def _is_inventory_followup(text: str, params: dict) -> bool:
+    compact = str(text or "").replace(" ", "")
+    if not compact or _is_price_followup(compact) or _is_case_pack_followup(compact):
+        return False
+    if params.get("color") or params.get("warehouse_id") is not None:
+        return True
+    return any(word in compact for word in ("库存", "有货", "还有", "剩多少", "多少", "几套", "几件"))
+
+
+def _resolve_contextual_query(text: str, context: dict) -> tuple[str, dict | None]:
+    if not context:
+        return text, None
+    product_name = str(context.get("product_name") or "").strip()
+    if not product_name:
+        return text, None
+    params = _extract_inventory_params(text)
+    explicit_product = _valid_followup_product_name(str(params.get("product_name") or ""))
+    if explicit_product:
+        return text, None
+
+    color = str(params.get("color") or "").strip()
+    warehouse_word = _warehouse_followup_word(params.get("warehouse_id"))
+    if _is_case_pack_followup(text):
+        return f"{product_name}一件多少个", context
+    if _is_price_followup(text):
+        return f"{product_name}{color}多少钱", context
+    if _is_inventory_followup(text, params):
+        return f"{product_name}{warehouse_word}{color}库存", context
+    return text, None
+
+
+def _normalize_explicit_short_inventory_query(text: str) -> str:
+    if _is_inventory_query(text) or _is_price_followup(text) or _is_case_pack_followup(text):
+        return text
+    params = _extract_inventory_params(text)
+    product_name = _valid_followup_product_name(str(params.get("product_name") or ""))
+    if not product_name:
+        return text
+    compact = str(text or "").replace(" ", "")
+    if params.get("color") or params.get("warehouse_id") is not None or any(
+        word in compact for word in ("有货", "还有", "多少", "几套", "几件")
+    ):
+        return f"{text}库存"
+    return text
+
+
 def build_device_voice_command_response(
     *,
     text: str,
@@ -174,8 +320,11 @@ def build_device_voice_command_response(
     trace_id = str(trace_id or f"voice-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}")
     raw_text = str(text or "").strip()
     normalized_text = _normalize_command_text(raw_text)
+    session = _device_session(session_id, device_id)
+    context_info: dict | None = None
 
     if _is_cancel_command(raw_text):
+        _clear_device_query_context(session)
         return _base_response(
             trace_id=trace_id,
             intent="cancel",
@@ -184,6 +333,13 @@ def build_device_voice_command_response(
             device_action={"next_state": "idle", "listen_again": False, "command_window_seconds": 2, "screen_mode": "idle"},
             started_at=started_at,
         )
+
+    normalized_text, context_info = _resolve_contextual_query(
+        normalized_text,
+        _load_device_query_context(session),
+    )
+    if context_info is None:
+        normalized_text = _normalize_explicit_short_inventory_query(normalized_text)
 
     if _is_unclear_command(normalized_text, asr_confidence):
         return _clarification_response(trace_id, started_at)
@@ -200,6 +356,8 @@ def build_device_voice_command_response(
         return _build_price_response(
             raw_text=raw_text,
             normalized_text=normalized_text,
+            session=session,
+            context_info=context_info,
             trace_id=trace_id,
             started_at=started_at,
         )
@@ -208,6 +366,8 @@ def build_device_voice_command_response(
         return _build_case_pack_response(
             raw_text=raw_text,
             normalized_text=normalized_text,
+            session=session,
+            context_info=context_info,
             trace_id=trace_id,
             started_at=started_at,
         )
@@ -251,6 +411,7 @@ def build_device_voice_command_response(
                     product_name=product_name,
                     color=color,
                     warehouse_id=warehouse_id,
+                    context_info=context_info,
                 ),
                 "items": [],
             },
@@ -267,7 +428,17 @@ def build_device_voice_command_response(
             product_name=product_name,
             color=color,
             warehouse_id=warehouse_id,
+            context_info=context_info,
         ),
+    )
+    _save_device_query_context(
+        session,
+        intent="inventory_query",
+        product_name=product_name,
+        color=color,
+        warehouse_id=warehouse_id,
+        display_title=display.get("title") or "",
+        source_text=raw_text,
     )
     return _base_response(
         trace_id=trace_id,
@@ -412,7 +583,15 @@ def _build_customer_last_order_response(*, raw_text: str, normalized_text: str, 
     )
 
 
-def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
+def _build_price_response(
+    *,
+    raw_text: str,
+    normalized_text: str,
+    session: SessionManager | None,
+    context_info: dict | None,
+    trace_id: str,
+    started_at: float,
+) -> dict:
     query_text = _strip_price_query_words(normalized_text)
     params = _extract_inventory_params(query_text)
     product_name = str(params.get("product_name") or "").strip()
@@ -428,6 +607,7 @@ def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str,
         product_name=product_name,
         color=color,
         warehouse_id=None,
+        context_info=context_info,
     )
     if not items:
         return _base_response(
@@ -446,6 +626,15 @@ def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str,
         )
 
     display = _price_display(product_name, items, query=query)
+    _save_device_query_context(
+        session,
+        intent="price_query",
+        product_name=product_name,
+        color=color,
+        warehouse_id=None,
+        display_title=display.get("title") or "",
+        source_text=raw_text,
+    )
     return _base_response(
         trace_id=trace_id,
         intent="price_query",
@@ -456,7 +645,15 @@ def _build_price_response(*, raw_text: str, normalized_text: str, trace_id: str,
     )
 
 
-def _build_case_pack_response(*, raw_text: str, normalized_text: str, trace_id: str, started_at: float) -> dict:
+def _build_case_pack_response(
+    *,
+    raw_text: str,
+    normalized_text: str,
+    session: SessionManager | None,
+    context_info: dict | None,
+    trace_id: str,
+    started_at: float,
+) -> dict:
     query_text = _strip_case_pack_query_words(normalized_text)
     params = _extract_case_pack_params(query_text)
     product_name = str(params.get("product_name") or "").strip()
@@ -472,6 +669,7 @@ def _build_case_pack_response(*, raw_text: str, normalized_text: str, trace_id: 
         product_name=product_name,
         color=color,
         warehouse_id=None,
+        context_info=context_info,
     )
     if not items:
         return _base_response(
@@ -490,6 +688,15 @@ def _build_case_pack_response(*, raw_text: str, normalized_text: str, trace_id: 
         )
 
     display = _case_pack_display(product_name, items, query=query)
+    _save_device_query_context(
+        session,
+        intent="case_pack_query",
+        product_name=product_name,
+        color=color,
+        warehouse_id=None,
+        display_title=display.get("title") or "",
+        source_text=raw_text,
+    )
     return _base_response(
         trace_id=trace_id,
         intent="case_pack_query",
@@ -781,14 +988,20 @@ def _query_payload(
     product_name: str,
     color: str,
     warehouse_id,
+    context_info: dict | None = None,
 ) -> dict:
-    return {
+    payload = {
         "original_text": original_text,
         "normalized_text": normalized_text,
         "product_name": product_name,
         "color": color,
         "warehouse_id": warehouse_id,
     }
+    if context_info:
+        payload["context_used"] = True
+        payload["context_source_text"] = str(context_info.get("source_text") or "")
+        payload["context_intent"] = str(context_info.get("intent") or "")
+    return payload
 
 
 def _inventory_display(product_name: str, rows: list[dict], *, query: dict) -> dict:
