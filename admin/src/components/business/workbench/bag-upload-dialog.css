@@ -1,0 +1,184 @@
+.sj-dialog-content.bag-upload-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(90dvh, 900px);
+  border-radius: 8px;
+  letter-spacing: 0;
+}
+
+.bag-upload-dialog .bag-upload-form,
+.bag-upload-dialog .bag-upload-results {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.bag-upload-dialog .bag-upload-type-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--sj-border);
+  border-radius: 6px;
+}
+
+.bag-upload-dialog .bag-upload-type-tabs [data-slot="tabs-trigger"] {
+  height: 38px;
+  min-height: 38px;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid var(--sj-border);
+  border-radius: 0;
+  background: var(--sj-surface);
+  color: var(--sj-foreground);
+  padding: 0 12px;
+}
+
+.bag-upload-dialog .bag-upload-type-tabs [data-slot="tabs-trigger"]:last-child {
+  border-right: 0;
+}
+
+.bag-upload-dialog .bag-upload-type-tabs [data-slot="tabs-trigger"][data-state="active"] {
+  background: var(--sj-button-primary);
+  color: var(--sj-button-primary-foreground);
+}
+
+.bag-upload-dialog .bag-upload-type-tabs [data-slot="tabs-trigger"]:focus-visible {
+  outline: 2px solid var(--sj-ring);
+  outline-offset: -3px;
+}
+
+.bag-upload-dialog [data-slot="checkbox"] {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  max-width: 18px;
+  max-height: 18px;
+  flex: 0 0 18px;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.bag-upload-dialog .bag-upload-listed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bag-upload-dialog .bag-upload-listed label {
+  flex: none;
+  margin: 0;
+}
+
+.bag-upload-dialog [hidden] {
+  display: none;
+}
+
+.bag-upload-dialog .bag-upload-file-row,
+.bag-upload-dialog .bag-upload-file-info,
+.bag-upload-dialog .bag-upload-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bag-upload-dialog .bag-upload-file-row {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.bag-upload-dialog .bag-upload-file-info {
+  flex: 1 1 250px;
+}
+
+.bag-upload-dialog .bag-upload-file-info span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.bag-upload-dialog .bag-upload-file-info small {
+  flex: none;
+  color: var(--sj-muted);
+}
+
+.bag-upload-dialog .bag-upload-file-info > svg,
+.bag-upload-dialog .bag-upload-status > svg,
+.bag-upload-dialog .bag-upload-alert > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+.bag-upload-dialog .bag-upload-status {
+  min-height: 40px;
+  color: var(--sj-muted);
+}
+
+.bag-upload-dialog .bag-upload-alert {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px 10px;
+  padding: 12px;
+  border: 1px solid var(--sj-border);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.bag-upload-dialog .bag-upload-alert[data-variant="destructive"] {
+  color: var(--sj-danger-foreground);
+  border-color: var(--sj-danger-border);
+}
+
+.bag-upload-dialog [data-slot="alert-title"] {
+  font-weight: 600;
+}
+
+.bag-upload-dialog [data-slot="alert-description"] {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.bag-upload-dialog .bag-upload-results h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.bag-upload-dialog .bag-upload-success-table {
+  min-width: 600px;
+  table-layout: fixed;
+}
+
+.bag-upload-dialog .bag-upload-success-table th:first-child {
+  width: 30%;
+}
+
+.bag-upload-dialog .bag-upload-failure-table {
+  table-layout: fixed;
+}
+
+.bag-upload-dialog .bag-upload-failure-table th:first-child {
+  width: 35%;
+}
+
+.bag-upload-dialog .sj-table-cell {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.bag-upload-dialog .sj-dialog-close {
+  min-width: 30px;
+  min-height: 30px;
+}

@@ -8,7 +8,9 @@ from .base import BusinessService
 
 
 class ProductService(BusinessService):
-    def search(self, keyword: str, *, limit: int = 80, listed_only: bool = False) -> list[dict]:
+    def search(self, keyword: str, *, limit: int = 80, listed_only: bool = False, active_only: bool = True) -> list[dict]:
+        if not active_only:
+            return self.db.product_search(keyword, limit=limit, listed_only=listed_only, active_only=False)
         return self.db.product_search(keyword, limit=limit, listed_only=listed_only)
 
     def list(

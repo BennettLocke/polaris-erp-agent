@@ -1,8 +1,10 @@
 from pathlib import Path
 import json
+import inspect
 import unittest
 
 from src.engine.native_db import NativeDBClient, _normalize_public_image_url
+from src.services.business.products import ProductService
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,10 +39,12 @@ class MiniappProductListingContractTest(unittest.TestCase):
         self.assertIn("search(keyword, limit=100, listed_only=listed_only)", search_source)
         self.assertIn('listed_only = _request_truthy_arg("listed_only", "only_listed", "is_listed")', list_source)
         self.assertIn("listed_only=listed_only", list_source)
-        self.assertIn("def search(self, keyword: str, *, limit: int = 80, listed_only: bool = False)", service_source)
+        self.assertIs(inspect.signature(ProductService.search).parameters["listed_only"].default, False)
+        self.assertIs(inspect.signature(ProductService.search).parameters["active_only"].default, True)
         self.assertIn("product_search(keyword, limit=limit, listed_only=listed_only)", service_source)
-        self.assertIn("def product_search(self, keyword: str, limit: int = 80, *, listed_only: bool = False)", native_source)
-        self.assertIn("_sku_where(keyword, active_only=True, listed_only=listed_only)", native_source)
+        self.assertIs(inspect.signature(NativeDBClient.product_search).parameters["listed_only"].default, False)
+        self.assertIs(inspect.signature(NativeDBClient.product_search).parameters["active_only"].default, True)
+        self.assertIn("_sku_where(keyword, active_only=active_only or listed_only, listed_only=listed_only)", native_source)
 
     def test_grouped_admin_products_use_spu_level_listing_state(self):
         native_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")

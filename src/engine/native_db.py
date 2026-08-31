@@ -1233,8 +1233,8 @@ class NativeDBClient:
             }],
         }
 
-    def product_search(self, keyword: str, limit: int = 80, *, listed_only: bool = False) -> list[dict]:
-        where_sql, params = self._sku_where(keyword, active_only=True, listed_only=listed_only)
+    def product_search(self, keyword: str, limit: int = 80, *, listed_only: bool = False, active_only: bool = True) -> list[dict]:
+        where_sql, params = self._sku_where(keyword, active_only=active_only or listed_only, listed_only=listed_only)
         rows = self.query(
             f"""
             {self._product_select_sql()}
@@ -2556,6 +2556,10 @@ class NativeDBClient:
         return {"code": 0, "data": {"ids": ids, "affected": affected}}
 
     def save_product(self, payload: dict) -> dict:
+        listing_requested = "is_listed" in payload
+        listing_state = payload.get("is_listed")
+        if listing_requested and (type(listing_state) not in (bool, int) or listing_state not in (0, 1)):
+            return {"code": 400, "msg": "上架状态必须为布尔值或 0/1"}
         title = str(payload.get("title") or payload.get("name") or "").strip()
         if not title:
             return {"code": 400, "msg": "商品名称不能为空"}
@@ -2749,6 +2753,11 @@ class NativeDBClient:
                     )
                     sku_id = cursor.lastrowid
                 saved_ids.append(int(sku_id))
+                if listing_requested:
+                    cursor.execute(
+                        "UPDATE product_sku SET is_listed=%s, status=CASE WHEN %s=1 THEN 'active' ELSE status END WHERE id=%s",
+                        (int(listing_state), int(listing_state), int(sku_id)),
+                    )
                 self._replace_product_media(
                     cursor,
                     sku_id=int(sku_id),

@@ -104,7 +104,7 @@ class WorkbenchUploadRequest(Request):
     @property
     def max_content_length(self):
         # Flask 3.0 has no per-request limit setter. Leave other routes unchanged.
-        if self.path == "/api/images/upload":
+        if self.path in {"/api/images/upload", "/api/product/bag-upload"}:
             return max(MAX_IMAGE_UPLOAD_BYTES, MAX_BAG_ARCHIVE_UPLOAD_BYTES) + 1024 * 1024
         return super().max_content_length
 
@@ -122,7 +122,7 @@ def _request_size_guard():
 @app.errorhandler(413)
 def _upload_too_large(error):
     image_mb = MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024)
-    if request.path == "/api/images/upload":
+    if request.path in {"/api/images/upload", "/api/product/bag-upload"}:
         archive_mb = MAX_BAG_ARCHIVE_UPLOAD_BYTES / (1024 * 1024)
         message = f"上传文件过大：ZIP 压缩包最多 {archive_mb:g}MB，单张图片最多 {image_mb:g}MB。请拆分压缩包后重试。"
     else:
@@ -419,6 +419,7 @@ API_PERMISSION_RULES = [
     ({"POST", "DELETE"}, re.compile(r"^/api/product/media/\d+$"), "图片绑定"),
     ({"POST", "PATCH"}, re.compile(r"^/api/product/categories$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/(save|delete)$"), "设置"),
+    ({"POST"}, re.compile(r"^/api/product/bag-upload$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/\d+/shelves$"), "设置"),
     ({"GET"}, re.compile(r"^/api/product/\d+/taobao-detail-export$"), "设置"),
     ({"POST"}, re.compile(r"^/api/product/\d+/taobao-detail-export/jobs$"), "设置"),
@@ -2636,6 +2637,69 @@ def image_upload_limits():
         "image_bytes": MAX_IMAGE_UPLOAD_BYTES,
         "archive_bytes": MAX_BAG_ARCHIVE_UPLOAD_BYTES,
     }})
+
+
+@app.route("/api/product/bag-upload", methods=["POST"])
+def product_bag_upload_api():
+    """Import one configured bag archive without changing chat pending state."""
+    import zipfile
+    from src.services.bag_archive import validate_bag_archive
+    from src.skills.bag_upload.workflow import BagUploadWorkflow, parse_bag_upload_options
+
+    for permission in ("设置", "图片上传"):
+        if not _has_permission(permission):
+            return _permission_denied(permission)
+    if not feature_enabled("bag_upload"):
+        return jsonify({"code": 403, "msg": "当前设备未启用泡袋上传"}), 403
+    try:
+        options = parse_bag_upload_options(request.form.get("bag_type"), request.form.get("price"), request.form.get("is_listed"))
+    except ValueError as error:
+        return jsonify({"code": 400, "msg": str(error)}), 400
+    file = request.files.get("archive")
+    if not file or not file.filename or Path(file.filename).suffix.lower() != ".zip":
+        return jsonify({"code": 400, "msg": "请选择 ZIP 压缩包"}), 400
+    file.stream.seek(0, io.SEEK_END)
+    file_bytes = file.stream.tell()
+    file.stream.seek(0)
+    if file_bytes > MAX_BAG_ARCHIVE_UPLOAD_BYTES:
+        return jsonify({"code": 413, "msg": f"ZIP 压缩包最多允许 {MAX_BAG_ARCHIVE_UPLOAD_BYTES / (1024 * 1024):g}MB"}), 413
+    try:
+        with zipfile.ZipFile(file.stream) as archive:
+            validate_bag_archive(archive)
+            if not any(not item.is_dir() and Path(item.filename).suffix.lower() == ".png" for item in archive.infolist()):
+                raise ValueError("压缩包里没有找到 PNG 图片")
+    except (zipfile.BadZipFile, ValueError) as error:
+        message = str(error) if isinstance(error, ValueError) else "压缩包无法读取，请选择有效的 ZIP 文件"
+        return jsonify({"code": 400, "msg": message}), 400
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    save_path = UPLOAD_DIR / f"bag-{uuid.uuid4().hex}.zip"
+    try:
+        file.stream.seek(0)
+        file.save(save_path)
+        workflow = BagUploadWorkflow()
+        result = workflow._process_batch_upload(str(save_path), options)
+        success = []
+        for item in result.get("success") or []:
+            row = {key: item.get(key) for key in ("index", "title", "code", "action", "category_name", "price", "is_listed")}
+            saved = (item.get("core_result") or {}).get("data") or {}
+            if isinstance(saved, dict):
+                row.update(product_id=saved.get("id"), spu_id=saved.get("spu_id"))
+            success.append(row)
+        return jsonify({"code": 0, "data": {
+            **options,
+            "total": result.get("total", 0),
+            "success": success,
+            "failures": result.get("failures") or [],
+            "summary": workflow._batch_done_text(result),
+        }})
+    except (zipfile.BadZipFile, ValueError) as error:
+        return jsonify({"code": 400, "msg": str(error)}), 400
+    except Exception:
+        logger.exception("泡袋上传任务异常")
+        return jsonify({"code": 500, "msg": "处理结果未能完整返回，请先核对商品库，勿直接重复上传整包"}), 500
+    finally:
+        _delete_local_upload(save_path, "泡袋上传压缩包")
 
 
 @app.route("/api/images/upload", methods=["POST"])

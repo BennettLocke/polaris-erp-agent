@@ -6,6 +6,8 @@ import type {
   AgentSessionSnapshot,
   AnalyticsHotProductsResult,
   AnalyticsSalesOverview,
+  BagUploadOptions,
+  BagUploadResult,
   CustomerBalanceActionPayload,
   CustomerBalanceLedgerResult,
   AuthUser,
@@ -288,6 +290,14 @@ export const api = {
       body: JSON.stringify({ session_id: sessionId, state })
     }),
   agentUploadLimits: () => request<{ image_bytes: number; archive_bytes: number }>("/api/images/upload-limits"),
+  uploadBags: (archive: File, options: BagUploadOptions) => {
+    const form = new FormData();
+    form.append("archive", archive, archive.name);
+    form.append("bag_type", options.bag_type);
+    form.append("price", options.price);
+    form.append("is_listed", options.is_listed ? "1" : "0");
+    return requestForm<BagUploadResult>("/api/product/bag-upload", form);
+  },
   uploadAgentImage: async (file: File, sessionId: string) => {
     const limits = await api.agentUploadLimits();
     const isArchive = file.name.toLowerCase().endsWith(".zip");

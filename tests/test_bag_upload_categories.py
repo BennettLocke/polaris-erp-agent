@@ -54,7 +54,7 @@ class BagUploadCategoryTest(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(self.workflow._display_title_from_filename(raw), expected)
 
-    def _run_batch(self, directory, names, existing=None, details=None, bag_type="岩茶", workers=1, single_image=False):
+    def _run_batch(self, directory, names, existing=None, details=None, bag_type="岩茶", workers=1, single_image=False, settings=None, save_results=None):
         if single_image:
             archive = directory / names[0]
             archive.write_bytes(b"test PNG; rendering is stubbed")
@@ -67,6 +67,8 @@ class BagUploadCategoryTest(unittest.TestCase):
         service.next_sku_no.side_effect = ["SJ9001", "SJ9002", "SJ9003", "SJ9004"]
         service.options.return_value = {"data": {"unit_list": [{"id": 2, "name": "捆"}]}}
         service.save.return_value = {"code": 0, "data": {"id": 101}}
+        if save_results is not None:
+            service.save.side_effect = save_results
         assets = {"main_path": str(directory / "main.png"), "detail_path": str(directory / "detail.png")}
         with (
             patch("src.skills.bag_upload.workflow.BAG_GENERATED_DIR", directory / "generated"),
@@ -79,7 +81,7 @@ class BagUploadCategoryTest(unittest.TestCase):
             patch.object(self.workflow, "_load_product_for_edit", return_value=details or existing or {}),
             patch.object(self.workflow, "_product_base_payload", return_value={"existing": {"id": 901}}),
         ):
-            result = self.workflow._process_batch_upload(str(archive), {"bag_type": bag_type})
+            result = self.workflow._process_batch_upload(str(archive), {"bag_type": bag_type, **(settings or {})})
         return result, service, render, lookup
 
     def test_zip_mixed_categories_use_raw_names_before_cleaning(self):
@@ -192,6 +194,87 @@ class BagUploadCategoryTest(unittest.TestCase):
                 self.assertEqual(payload["product_category_id"], [category])
                 self.assertEqual(payload["base"]["new_0"]["unit"]["new_0"]["price"], price)
                 self.assertEqual(render.call_args.kwargs["title"], "水仙")
+
+    def test_dialog_price_and_listing_apply_to_new_and_existing_products(self):
+        for existing in [None, {"id": 88, "title": "【SJ1737】奇兰-长泡袋", "status": 1}]:
+            for listed in [True, False]:
+                with self.subTest(existing=bool(existing), listed=listed), tempfile.TemporaryDirectory() as temporary:
+                    name = "SJ1737-奇兰品种.png" if existing else "奇兰品种.png"
+                    result, service, _, _ = self._run_batch(Path(temporary), [name], existing, settings={"price": 12.34, "is_listed": listed})
+                    self.assertEqual(result["failures"], [])
+                    payload = service.save.call_args.args[0]
+                    self.assertEqual(payload.get("is_listed"), listed)
+                    if not existing:
+                        self.assertEqual(payload["base"]["new_0"]["unit"]["new_0"]["price"], 12.34)
+                    self.assertEqual(result["success"][0].get("price"), 12.34)
+                    self.assertEqual(result["success"][0].get("is_listed"), listed)
+
+    def test_failed_product_save_is_not_reported_as_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, service, _, _ = self._run_batch(Path(temporary), ["01-奇兰.png", "02-水仙.png"],
+                settings={"price": 12.34, "is_listed": True},
+                save_results=[{"code": 400, "msg": "商品保存失败"}, {"code": 0, "data": {"id": 101}}])
+        self.assertEqual(len(result["success"]), 1)
+        self.assertEqual(len(result["failures"]), 1)
+        self.assertIn("商品保存失败", result["failures"][0]["error"])
+        self.assertEqual(result["failures"][0]["filename"], "01-奇兰.png")
+        self.assertEqual(service.save.call_count, 2)
+
+    def test_existing_product_real_payload_updates_price_and_preserves_sku_units(self):
+        detail = {"id": 88, "title": "【SJ1737】奇兰-长泡袋", "status": 1,
+                  "product_group_data": [{"id": 88, "coding": "SJ1737", "base": [{"id": 80, "unit_id": 2, "unit_number": 1, "price": 18, "cost_price": 7}]}]}
+        with patch("src.skills.bag_upload.workflow.get_product_service") as service:
+            service.return_value.save.return_value = {"code": 0}
+            self.workflow._update_existing_product_images(detail, "SJ1737", 19,
+                "https://example.com/main.png", "https://example.com/detail.png", price=12.34,
+                product_detail=detail, is_listed=True)
+            payload = service.return_value.save.call_args.args[0]
+        self.assertTrue(payload["is_listed"])
+        self.assertEqual(payload["base"]["88"]["unit"]["80"]["price"], 12.34)
+        self.assertEqual(payload["base"]["88"]["unit"]["80"]["cost_price"], 7)
+        self.assertEqual(payload["base"]["88"]["unit"]["80"]["unit_id"], 2)
+
+    def test_legacy_upload_omits_listing_option(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, service, _, _ = self._run_batch(Path(temporary), ["奇兰.png"])
+        self.assertEqual(result["failures"], [])
+        self.assertNotIn("is_listed", service.save.call_args.args[0])
+
+    def test_existing_lookup_includes_inactive_products(self):
+        inactive = {"id": 88, "sku_no": "SJ1737", "status": 1}
+        with patch("src.skills.bag_upload.workflow.get_product_service") as service:
+            service.return_value.search.side_effect = lambda code, **kwargs: [inactive] if kwargs.get("active_only") is False else []
+            self.assertEqual(self.workflow._find_existing_product_by_code("SJ1737"), inactive)
+
+    def test_failed_render_and_partial_web_copy_clean_temporary_assets(self):
+        for failure in ["prepare", "render", "copy"]:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / "source.png"
+                source.write_bytes(b"source")
+                generated, web = root / "generated", root / "web"
+                def command(args, **kwargs):
+                    if "--debug-dir" in args:
+                        prepared = Path(args[3])
+                        prepared.parent.mkdir(parents=True, exist_ok=True)
+                        prepared.write_bytes(b"prepared")
+                        if failure == "prepare":
+                            raise RuntimeError("prepare failed")
+                    else:
+                        output = Path(args[args.index("--output") + 1])
+                        (output / "主图.png").write_bytes(b"main")
+                        (output / "详情页.png").write_bytes(b"detail")
+                        if failure == "render":
+                            raise RuntimeError("render failed")
+                def copy(src, dest):
+                    Path(dest).write_bytes(b"partial")
+                    raise RuntimeError("copy failed")
+                with patch("src.skills.bag_upload.workflow.BAG_GENERATED_DIR", generated), patch("src.skills.bag_upload.workflow.WEB_IMAGE_DIR", web), patch.object(self.workflow, "_run_command", side_effect=command), patch("src.skills.bag_upload.workflow.shutil.copy2", side_effect=copy):
+                    with self.assertRaisesRegex(RuntimeError, "failed"):
+                        self.workflow._generate_preview_assets(str(source), "SJ1737", "奇兰")
+                self.assertEqual(list(generated.iterdir()), [])
+                self.assertEqual(list(web.iterdir()), [])
+                self.assertTrue(source.exists())
 
 
 if __name__ == "__main__":

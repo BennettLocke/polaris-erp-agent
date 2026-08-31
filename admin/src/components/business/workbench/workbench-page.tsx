@@ -44,12 +44,14 @@ import type {
   AgentMessageHistoryItem,
   AgentSessionSnapshot,
   AnalyticsHotProduct,
+  BagUploadResult,
   DashboardSummary,
   InventoryCardsResult,
   InventoryLookupResult,
   WorkbenchInventoryCard,
   WorkbenchInventoryLookupRow
 } from "@/types";
+import { BagUploadDialog } from "./bag-upload-dialog";
 
 type ChatRole = "user" | "assistant";
 
@@ -59,6 +61,7 @@ type ChatMessage = {
   content: string;
   createdAt: string;
   status?: "sending" | "error";
+  source?: "bag-upload";
 };
 
 type BusinessHistoryItem = {
@@ -885,6 +888,8 @@ export function WorkbenchPage() {
   const [error, setError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [bagUploadOpen, setBagUploadOpen] = useState(false);
+  const bagUploadTriggerRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const summaryRequestRef = useRef(0);
@@ -935,7 +940,10 @@ export function WorkbenchPage() {
       .then((data) => {
         if (!active) return;
         if (Array.isArray(data.history) && data.history.length) {
-          setMessages(historyToMessages(data.history));
+          setMessages((current) => [
+            ...historyToMessages(data.history),
+            ...current.filter((message) => message.source === "bag-upload")
+          ]);
         }
         if (data.session) {
           setSessionSnapshot(data.session);
@@ -992,7 +1000,7 @@ export function WorkbenchPage() {
 
   const pendingRows = useMemo(() => flattenState(sessionSnapshot?.state || {}).slice(0, 8), [sessionSnapshot]);
 
-  function appendMessage(role: ChatRole, content: string, status?: ChatMessage["status"]) {
+  function appendMessage(role: ChatRole, content: string, status?: ChatMessage["status"], source?: ChatMessage["source"]) {
     const id = newMessageId(role);
     setMessages((current) => [
       ...current,
@@ -1001,6 +1009,7 @@ export function WorkbenchPage() {
         role,
         content,
         status,
+        source,
         createdAt: new Date().toISOString()
       }
     ]);
@@ -1162,9 +1171,17 @@ export function WorkbenchPage() {
     setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
+  function completeBagUpload(result: BagUploadResult, filename: string) {
+    const summary = result.summary || `共 ${result.total} 个，成功 ${result.success.length} 个，失败 ${result.failures.length} 个`;
+    const message = `泡袋上传：${filename}\n${summary}`;
+    appendMessage("assistant", message, undefined, "bag-upload");
+    pushBusinessHistory(message);
+  }
+
   function insertCommand(command: string) {
-    if (command === "上传泡袋") {
-      void sendMessage("上传泡袋");
+    if (command === "上传泡袋" || command === "泡袋上传") {
+      bagUploadTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setBagUploadOpen(true);
       return;
     }
     setInput((current) => {
@@ -1227,15 +1244,22 @@ export function WorkbenchPage() {
           onNewSession={createNewSession}
         />
       </div>
-      <WorkbenchResultDialog result={resultDialog} onOpenChange={(open) => !open && setResultDialog(null)} />
+      <WorkbenchResultDialog result={bagUploadOpen ? null : resultDialog} onOpenChange={(open) => !open && setResultDialog(null)} />
       <AgentConfirmDialog
-        open={confirmOpen}
+        open={confirmOpen && !bagUploadOpen}
         session={sessionSnapshot}
         confirming={confirming || isSending}
         onOpenChange={setConfirmOpen}
         onConfirm={(state) => void confirmPending(state)}
         onCancel={() => void cancelPending()}
       />
+      {bagUploadOpen ? (
+        <BagUploadDialog
+          onClose={() => setBagUploadOpen(false)}
+          onComplete={completeBagUpload}
+          returnFocus={bagUploadTriggerRef.current}
+        />
+      ) : null}
     </section>
   );
 }

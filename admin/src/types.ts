@@ -1,3 +1,40 @@
+export type BagType = "岩茶" | "红茶" | "宽版";
+
+export type BagUploadOptions = {
+  bag_type: BagType;
+  price: string;
+  is_listed: boolean;
+};
+
+export type BagUploadSuccess = {
+  index: number;
+  title: string;
+  code: string;
+  action: string;
+  category_name: string;
+  price: number;
+  is_listed: boolean;
+  product_id?: number;
+  spu_id?: number;
+};
+
+export type BagUploadFailure = {
+  index: number;
+  title: string;
+  filename?: string;
+  error: string;
+};
+
+export type BagUploadResult = {
+  bag_type: string;
+  price: number;
+  is_listed: boolean;
+  total: number;
+  success: BagUploadSuccess[];
+  failures: BagUploadFailure[];
+  summary: string;
+};
+
 export type ApiResult<T> = {
   code: number;
   msg?: string;

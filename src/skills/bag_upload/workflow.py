@@ -16,6 +16,7 @@ import time
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from decimal import Decimal
 from pathlib import Path
 
 from src.services.business import get_product_service
@@ -73,6 +74,17 @@ BAG_CATEGORIES = [
     ("小种", 12, "红茶泡袋"),
     ("红茶", 12, "红茶泡袋"),
 ]
+
+
+def parse_bag_upload_options(bag_type, price, is_listed) -> dict:
+    if bag_type not in BAG_TYPES:
+        raise ValueError("请选择岩茶、红茶或宽版模板")
+    price_text = str(price).strip()
+    if not re.fullmatch(r"[0-9]{1,10}(?:\.[0-9]{1,2})?", price_text) or Decimal(price_text) <= 0:
+        raise ValueError("上传售价必须大于 0，最多两位小数，且不超过 9999999999.99 元/捆")
+    if is_listed not in (True, False, "1", "0"):
+        raise ValueError("请选择上传后是否上架")
+    return {"bag_type": bag_type, "price": float(Decimal(price_text)), "is_listed": is_listed in (True, "1")}
 
 
 class BagUploadWorkflow(BaseWorkflow):
@@ -266,7 +278,11 @@ class BagUploadWorkflow(BaseWorkflow):
             tasks = []
             next_number = None
             suffix = BAG_TYPES.get(bag_type, BAG_TYPES["岩茶"])["suffix"]
-            price = self._bag_price(bag_type)
+            price = state.get("price", self._bag_price(bag_type))
+            is_listed = state.get("is_listed")
+            if "price" in state or "is_listed" in state:
+                options = parse_bag_upload_options(bag_type, price, is_listed)
+                price, is_listed = options["price"], options["is_listed"]
             for index, item in enumerate(source_images, start=1):
                 raw_title = item["title"]
                 title = self._display_title_from_filename(raw_title)
@@ -279,6 +295,7 @@ class BagUploadWorkflow(BaseWorkflow):
                 tasks.append({
                     "index": index,
                     "raw_title": raw_title,
+                    "filename": item.get("filename") or raw_title,
                     "title": title,
                     "image_path": str(item["path"]),
                     "code": code,
@@ -286,6 +303,7 @@ class BagUploadWorkflow(BaseWorkflow):
                     "suffix": suffix,
                     "bag_type": bag_type,
                     "price": price,
+                    "is_listed": is_listed,
                 })
 
             results = []
@@ -312,6 +330,7 @@ class BagUploadWorkflow(BaseWorkflow):
                 "source": str(source),
                 "bag_type": bag_type,
                 "price": price,
+                "is_listed": is_listed,
                 "total": len(source_images),
                 "success": results,
                 "failures": failures,
@@ -374,6 +393,7 @@ class BagUploadWorkflow(BaseWorkflow):
                     detail_url=detail_oss["url"],
                     price=task["price"],
                     product_detail=product_detail,
+                    is_listed=task.get("is_listed"),
                 )
                 action = "更新"
             else:
@@ -384,8 +404,12 @@ class BagUploadWorkflow(BaseWorkflow):
                     main_url=main_oss["url"],
                     detail_url=detail_oss["url"],
                     price=task["price"],
+                    is_listed=task.get("is_listed"),
                 )
                 action = "新增"
+            if not isinstance(core_result, dict) or core_result.get("code") != 0:
+                message = core_result.get("msg") if isinstance(core_result, dict) else ""
+                raise ValueError(message or "商品保存失败")
             return {
                 "ok": True,
                 "item": {
@@ -395,6 +419,8 @@ class BagUploadWorkflow(BaseWorkflow):
                     "code": code,
                     "action": action,
                     "category_name": category["category_name"],
+                    "price": task["price"],
+                    "is_listed": task.get("is_listed"),
                     "main_url": main_oss["url"],
                     "detail_url": detail_oss["url"],
                     "core_result": core_result,
@@ -402,7 +428,7 @@ class BagUploadWorkflow(BaseWorkflow):
             }
         except Exception as e:
             logger.error(f"泡袋商品上传失败: title={title}, error={e}")
-            return {"ok": False, "item": {"index": task["index"], "title": title, "error": str(e)}}
+            return {"ok": False, "item": {"index": task["index"], "title": title, "filename": task.get("filename") or task.get("raw_title") or title, "error": str(e)}}
         finally:
             if assets:
                 self._cleanup_generated_assets(assets)
@@ -413,8 +439,10 @@ class BagUploadWorkflow(BaseWorkflow):
         lines = [
             f"泡袋批量处理完成：成功 {len(success)} 个，失败 {len(failures)} 个。",
             f"模板：{result.get('bag_type')}",
-            f"默认售价：{result.get('price', BAG_DEFAULT_PRICE)} 元",
+            f"上传售价：{result.get('price', BAG_DEFAULT_PRICE):g} 元/捆",
         ]
+        if result.get("is_listed") is not None:
+            lines.append("上架状态：" + ("已上架" if result["is_listed"] else "未上架"))
         if success:
             lines.append("\n已上传商品库：")
             for item in success[:20]:
@@ -436,7 +464,7 @@ class BagUploadWorkflow(BaseWorkflow):
             title = self._title_from_filename(source.name)
             copied = source_dir / f"001_{self._safe_filename(source.name)}"
             shutil.copy2(source, copied)
-            return [{"title": title, "path": copied}]
+            return [{"title": title, "path": copied, "filename": source.name}]
         raise ValueError("只支持 zip 压缩包或单张图片")
 
     def _is_zip_file(self, path: Path) -> bool:
@@ -462,7 +490,7 @@ class BagUploadWorkflow(BaseWorkflow):
                 out_path = source_dir / out_name
                 with zf.open(info) as src, out_path.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
-                images.append({"title": title, "path": out_path})
+                images.append({"title": title, "path": out_path, "filename": self._zip_member_name(info)})
         return images
 
     def _zip_member_name(self, info: zipfile.ZipInfo) -> str:
@@ -525,7 +553,7 @@ class BagUploadWorkflow(BaseWorkflow):
         if not code:
             return None
         try:
-            rows = get_product_service().search(code, limit=20)
+            rows = get_product_service().search(code, limit=20, active_only=False)
             for row in rows:
                 row_code = self._extract_sj_code(row.get("sku_no") or row.get("coding") or "")
                 title_code = self._extract_sj_code(row.get("title") or row.get("name") or row.get("product_name") or "")
@@ -577,7 +605,8 @@ class BagUploadWorkflow(BaseWorkflow):
         category_id: int,
         main_url: str,
         detail_url: str,
-        price: int = BAG_DEFAULT_PRICE,
+        price: float = BAG_DEFAULT_PRICE,
+        is_listed: bool | None = None,
     ) -> dict:
         unit_id = self._bag_unit_id()
         payload = {
@@ -612,6 +641,8 @@ class BagUploadWorkflow(BaseWorkflow):
                 }
             },
         }
+        if is_listed is not None:
+            payload["is_listed"] = is_listed
         return get_product_service().save(payload)
 
     def _update_existing_product_images(
@@ -621,8 +652,9 @@ class BagUploadWorkflow(BaseWorkflow):
         category_id: int,
         main_url: str,
         detail_url: str,
-        price: int = BAG_DEFAULT_PRICE,
+        price: float = BAG_DEFAULT_PRICE,
         product_detail: dict | None = None,
+        is_listed: bool | None = None,
     ) -> dict:
         product_id = int(existing_product.get("id") or existing_product.get("product_id") or 0)
         if not product_id:
@@ -649,6 +681,8 @@ class BagUploadWorkflow(BaseWorkflow):
         }
         if simple_desc:
             payload["simple_desc"] = simple_desc
+        if is_listed is not None:
+            payload["is_listed"] = is_listed
         return get_product_service().save(payload)
 
     def _bag_unit_id(self) -> int:
@@ -718,7 +752,7 @@ class BagUploadWorkflow(BaseWorkflow):
         existing_product: dict,
         code: str,
         main_url: str,
-        price: int,
+        price: float,
         product_id: int,
     ) -> dict:
         rows = detail.get("product_group_data") if isinstance(detail.get("product_group_data"), list) else []
@@ -785,56 +819,61 @@ class BagUploadWorkflow(BaseWorkflow):
 
         run_id = f"{code}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
         output_dir = BAG_GENERATED_DIR / run_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-        WEB_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-        bag_meta = BAG_TYPES.get(bag_type, BAG_TYPES["岩茶"])
-
-        prepared = output_dir / "_prepared" / f"{code}-standard.png"
-        debug_dir = output_dir / "debug"
-        self._run_command(
-            [
-                sys.executable,
-                str(BAG_PREPARE_SCRIPT),
-                str(source),
-                str(prepared),
-                "--debug-dir",
-                str(debug_dir),
-                "--target-width",
-                str(bag_meta["target_width"]),
-                "--target-height",
-                str(bag_meta["target_height"]),
-            ],
-            cwd=BAG_TEMPLATE_DIR,
-            timeout=120,
-        )
-
-        self._run_command(
-            [
-                sys.executable,
-                str(BAG_GENERATE_SCRIPT),
-                "--input",
-                str(prepared),
-                "--output",
-                str(output_dir),
-                "--start",
-                code,
-                "--title",
-                title or "九龙窠肉桂",
-                "--template",
-                bag_meta["render_template"],
-            ],
-            cwd=BAG_TEMPLATE_DIR,
-            timeout=180,
-        )
-
-        main_path, detail_path = self._find_generated_images(output_dir)
         web_token = uuid.uuid4().hex[:10]
         web_standard = WEB_IMAGE_DIR / f"{code}_{web_token}_standard.png"
         web_main = WEB_IMAGE_DIR / f"{code}_{web_token}_main.png"
         web_detail = WEB_IMAGE_DIR / f"{code}_{web_token}_detail.png"
-        shutil.copy2(prepared, web_standard)
-        shutil.copy2(main_path, web_main)
-        shutil.copy2(detail_path, web_detail)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            WEB_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+            bag_meta = BAG_TYPES.get(bag_type, BAG_TYPES["岩茶"])
+
+            prepared = output_dir / "_prepared" / f"{code}-standard.png"
+            debug_dir = output_dir / "debug"
+            self._run_command(
+                [
+                    sys.executable,
+                    str(BAG_PREPARE_SCRIPT),
+                    str(source),
+                    str(prepared),
+                    "--debug-dir",
+                    str(debug_dir),
+                    "--target-width",
+                    str(bag_meta["target_width"]),
+                    "--target-height",
+                    str(bag_meta["target_height"]),
+                ],
+                cwd=BAG_TEMPLATE_DIR,
+                timeout=120,
+            )
+
+            self._run_command(
+                [
+                    sys.executable,
+                    str(BAG_GENERATE_SCRIPT),
+                    "--input",
+                    str(prepared),
+                    "--output",
+                    str(output_dir),
+                    "--start",
+                    code,
+                    "--title",
+                    title or "九龙窠肉桂",
+                    "--template",
+                    bag_meta["render_template"],
+                ],
+                cwd=BAG_TEMPLATE_DIR,
+                timeout=180,
+            )
+
+            main_path, detail_path = self._find_generated_images(output_dir)
+            shutil.copy2(prepared, web_standard)
+            shutil.copy2(main_path, web_main)
+            shutil.copy2(detail_path, web_detail)
+        except Exception:
+            for path in (web_standard, web_main, web_detail, output_dir):
+                self._delete_path(path, "泡袋失败临时文件")
+            raise
 
         return {
             "generated_dir": str(output_dir),
