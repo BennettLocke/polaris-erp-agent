@@ -63,6 +63,33 @@ PNG 文件名就是商品名。支持下面这些编号格式：
 
 ## 部署要求
 
+### 上传限制
+
+- 单张图片默认 25MB，泡袋 ZIP 默认 100MB，分别由 `SJAGENT_MAX_IMAGE_UPLOAD_BYTES`、`SJAGENT_MAX_BAG_ARCHIVE_UPLOAD_BYTES` 设置（字节，MB 按 1024 × 1024 计算）。
+- 只有 `/api/images/upload` 的请求体额度增加，额外预留 1MB 表单开销；其他接口保持原额度。图片本身仍按 25MB 校验。
+- 前端从 `/api/images/upload-limits` 获取当前限制，超限文件不发送上传请求；失败会结束等待消息，并保留失败文件及尚未提交的文件供手动重试。
+- 每个 ZIP 最多 100 张 PNG、1000 个目录/文件项，单张解压后最多 64MB，整个压缩包解压后总大小最多 512MB；不支持加密 PNG。校验在解压和商品写入之前执行。
+- Nginx 在现有站点配置中为此入口增加精确匹配，保留原 HTTPS、鉴权转发等设置：
+
+```nginx
+location = /api/images/upload {
+    client_max_body_size 101m;
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+}
+```
+
+仓库中提供同内容的 `scripts/nginx/bag-upload.conf`，可在站点 `server` 块内使用 `include /opt/sjagent/scripts/nginx/bag-upload.conf;`，不要同时配置两份相同的 location。
+
+调整 ZIP 配额后同步更新该入口额度并预留 1MB；先运行 `nginx -t`，通过后再 reload。不要只改反代而遗漏应用额度。批量处理中断或超时后先核对已生成的商品，再重试，避免重复新增。
+
+回归检查：`python -m unittest tests.test_bag_upload_limits -q`；前端安装依赖后执行 `node --test tests/test_agent_upload_frontend.mjs`。
+
 在服务器上需要：
 
 ```bash

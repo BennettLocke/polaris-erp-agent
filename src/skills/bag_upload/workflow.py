@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from src.services.business import get_product_service
+from src.services.bag_archive import validate_bag_archive
 from src.skills.base import BaseWorkflow
 from src.utils import get_logger
 
@@ -436,6 +437,7 @@ class BagUploadWorkflow(BaseWorkflow):
     def _extract_zip_images(self, source: Path, source_dir: Path) -> list[dict]:
         images = []
         with zipfile.ZipFile(source) as zf:
+            validate_bag_archive(zf)
             infos = [
                 info for info in zf.infolist()
                 if not info.is_dir() and Path(self._zip_member_name(info)).suffix.lower() == ".png"

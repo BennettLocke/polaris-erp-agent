@@ -14,7 +14,8 @@ import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import quote, urlparse, urljoin
-from flask import Flask, request, jsonify, Response, send_from_directory, session, redirect
+from flask import Flask, Request, request, jsonify, Response, send_from_directory, session, redirect
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 from src.core.agent import Agent
 from src.engine.exceptions import DBError
@@ -92,10 +93,42 @@ ALLOWED_IMAGE_FORMATS_BY_EXTENSION = {
 ALLOWED_BAG_ARCHIVE_EXTENSIONS = {"zip"}
 MINIAPP_EXCLUDED_CATEGORY_NAMES = ("纯色泡袋", "品种茶泡袋", "2泡礼盒")
 MAX_IMAGE_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_IMAGE_UPLOAD_BYTES") or 25 * 1024 * 1024)
+MAX_BAG_ARCHIVE_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_BAG_ARCHIVE_UPLOAD_BYTES") or 100 * 1024 * 1024)
 MAX_IMAGE_PIXELS = int(os.environ.get("SJAGENT_MAX_IMAGE_PIXELS") or 24_000_000)
 DEFAULT_CROP_IMAGE_HOSTS = {"img.513sjbz.com"}
 DEFAULT_CROP_IMAGE_HOST_SUFFIXES = (".aliyuncs.com",)
 app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_UPLOAD_BYTES
+
+
+class WorkbenchUploadRequest(Request):
+    @property
+    def max_content_length(self):
+        # Flask 3.0 has no per-request limit setter. Leave other routes unchanged.
+        if self.path == "/api/images/upload":
+            return max(MAX_IMAGE_UPLOAD_BYTES, MAX_BAG_ARCHIVE_UPLOAD_BYTES) + 1024 * 1024
+        return super().max_content_length
+
+
+app.request_class = WorkbenchUploadRequest
+
+
+@app.before_request
+def _request_size_guard():
+    limit = request.max_content_length
+    if limit is not None and request.content_length is not None and request.content_length > limit:
+        raise RequestEntityTooLarge()
+
+
+@app.errorhandler(413)
+def _upload_too_large(error):
+    image_mb = MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024)
+    if request.path == "/api/images/upload":
+        archive_mb = MAX_BAG_ARCHIVE_UPLOAD_BYTES / (1024 * 1024)
+        message = f"上传文件过大：ZIP 压缩包最多 {archive_mb:g}MB，单张图片最多 {image_mb:g}MB。请拆分压缩包后重试。"
+    else:
+        message = f"上传内容过大，最多 {image_mb:g}MB。"
+    logger.warning(f"Upload size limit: path={request.path}, bytes={request.content_length}, limit={request.max_content_length}")
+    return jsonify({"code": 413, "msg": message}), 413
 
 
 def _api_exception_response(e: Exception):
@@ -2597,6 +2630,14 @@ def chat_stream():
     return Response(generate(), mimetype='text/event-stream')
 
 
+@app.route("/api/images/upload-limits", methods=["GET"])
+def image_upload_limits():
+    return jsonify({"code": 0, "data": {
+        "image_bytes": MAX_IMAGE_UPLOAD_BYTES,
+        "archive_bytes": MAX_BAG_ARCHIVE_UPLOAD_BYTES,
+    }})
+
+
 @app.route("/api/images/upload", methods=["POST"])
 def image_upload():
     """Upload an order/design image, run OCR, and create a workflow order when possible."""
@@ -2619,6 +2660,17 @@ def image_upload():
             return jsonify({"code": 400, "msg": "泡袋流程只支持 png/jpg/jpeg/webp/bmp 图片或 zip 压缩包"}), 400
     elif not _allowed_image(file.filename):
         return jsonify({"code": 400, "msg": "只支持 png/jpg/jpeg/webp/bmp 图片"}), 400
+
+    is_archive = Path(file.filename).suffix.lower() == ".zip"
+    file_limit = MAX_BAG_ARCHIVE_UPLOAD_BYTES if is_archive else MAX_IMAGE_UPLOAD_BYTES
+    file.stream.seek(0, io.SEEK_END)
+    file_bytes = file.stream.tell()
+    file.stream.seek(0)
+    if file_bytes > file_limit:
+        label = "ZIP 压缩包" if is_archive else "图片"
+        message = f"{label}大小 {file_bytes / (1024 * 1024):.1f}MB，最多允许 {file_limit / (1024 * 1024):g}MB。"
+        logger.warning(f"Upload file limit: filename={file.filename!r}, bytes={file_bytes}, limit={file_limit}")
+        return jsonify({"code": 413, "msg": message}), 413
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     allowed_suffixes = ALLOWED_IMAGE_EXTENSIONS | (ALLOWED_BAG_ARCHIVE_EXTENSIONS if is_bag_upload else set())

@@ -184,7 +184,10 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   });
   const payload = (await response.json().catch(() => null)) as ApiResult<T> | null;
   if (!response.ok || !payload || payload.code !== 0) {
-    throw new ApiError(payload?.msg || response.statusText || "请求失败", response.status, payload?.code ?? -1);
+    const fallback = response.status === 413
+      ? "上传文件过大，超过服务器大小限制。请拆分压缩包后重试。"
+      : response.statusText || "请求失败";
+    throw new ApiError(payload?.msg || fallback, response.status, payload?.code ?? -1);
   }
   return payload.data;
 }
@@ -284,7 +287,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId, state })
     }),
-  uploadAgentImage: (file: File, sessionId: string) => {
+  agentUploadLimits: () => request<{ image_bytes: number; archive_bytes: number }>("/api/images/upload-limits"),
+  uploadAgentImage: async (file: File, sessionId: string) => {
+    const limits = await api.agentUploadLimits();
+    const isArchive = file.name.toLowerCase().endsWith(".zip");
+    const limit = isArchive ? limits.archive_bytes : limits.image_bytes;
+    if (file.size > limit) {
+      throw new ApiError(
+        `${file.name} 为 ${(file.size / 1048576).toFixed(1)}MB，${isArchive ? "ZIP 压缩包" : "单张图片"}最多允许 ${limit / 1048576}MB。请缩小文件或拆分后重试。`,
+        413
+      );
+    }
     const form = new FormData();
     form.append("image", file, file.name || `agent_${Date.now()}.jpg`);
     form.append("session_id", sessionId);

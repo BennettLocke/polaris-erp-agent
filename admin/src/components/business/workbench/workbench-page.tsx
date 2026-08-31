@@ -1061,7 +1061,15 @@ export function WorkbenchPage() {
     const fileName = file.name || fileLabel;
     const userMessageId = appendMessage("user", `上传${fileLabel}：${fileName}`);
     const pendingId = appendMessage("assistant", isZipUploadFile(file) ? "正在处理压缩包..." : "正在识别图片...", "sending");
-    const data = await api.uploadAgentImage(file, sessionId);
+    let data;
+    try {
+      data = await api.uploadAgentImage(file, sessionId);
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "上传失败，请核对处理结果后重试";
+      updateMessage(pendingId, `上传失败：${text}`, "error");
+      setError(text);
+      return false;
+    }
     const previewUrl = data.result?.preview_url;
     const responseText = data.response || (isZipUploadFile(file) ? "压缩包已处理" : "图片已识别");
     const displayText = previewUrl ? `${responseText}\n${previewUrl}` : responseText;
@@ -1078,6 +1086,7 @@ export function WorkbenchPage() {
       openResultDialog(historyItem);
     }
     void refreshSummary(false);
+    return true;
   }
 
   async function sendMessage(explicitText?: string) {
@@ -1090,8 +1099,12 @@ export function WorkbenchPage() {
     setFiles([]);
     setIsSending(true);
     try {
-      for (const file of uploadFiles) {
-        await uploadImageFile(file);
+      for (const [index, file] of uploadFiles.entries()) {
+        if (!await uploadImageFile(file)) {
+          setFiles((current) => [...uploadFiles.slice(index), ...current].slice(0, 6));
+          setInput(message);
+          return;
+        }
       }
       if (message) {
         appendMessage("user", message);
