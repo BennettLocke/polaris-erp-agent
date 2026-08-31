@@ -330,22 +330,33 @@ class BagUploadWorkflow(BaseWorkflow):
     def _process_batch_item_result(self, task: dict) -> dict:
         title = task["title"]
         code = task["code"]
+        category_source = task.get("raw_title") or title
         assets = None
         try:
             existing_product = None
+            product_detail = None
             if task["has_existing_code"]:
                 existing_product = self._find_existing_product_by_code(code)
                 if not existing_product:
                     raise ValueError(f"文件名带编号 {code}，但商品库里没有找到对应商品；为避免重复创建，已跳过。")
-                if title == "泡袋新品":
-                    title = self._display_title_from_filename(
-                        existing_product.get("title") or existing_product.get("name") or existing_product.get("product_name") or ""
-                    )
-                core_title = existing_product.get("title") or self._format_core_title(code, title, task["suffix"])
+                product_id = int(existing_product.get("id") or existing_product.get("product_id") or 0)
+                if not product_id:
+                    raise ValueError(f"编号 {code} 找到的商品缺少 product_id")
+                product_detail = self._load_product_for_edit(product_id)
+                stored_title = (
+                    product_detail.get("title") or product_detail.get("name")
+                    or existing_product.get("title") or existing_product.get("name")
+                    or existing_product.get("product_name") or ""
+                )
+                if title == "泡袋新品" and "品种" not in category_source:
+                    category_source = stored_title
+                core_title = self._remove_variety_marker(stored_title) or self._format_core_title(code, title, task["suffix"])
+                title = self._display_title_from_filename(core_title)
             else:
                 core_title = self._format_core_title(code, title, task["suffix"])
 
-            category = self._classify_category(title, task["bag_type"]) or self._default_category(task["bag_type"])
+            # Keep the original marker for classification, not the cleaned display name.
+            category = self._classify_category(category_source, task["bag_type"]) or self._default_category(task["bag_type"])
             assets = self._generate_preview_assets(
                 image_path=task["image_path"],
                 code=code,
@@ -362,6 +373,7 @@ class BagUploadWorkflow(BaseWorkflow):
                     main_url=main_oss["url"],
                     detail_url=detail_oss["url"],
                     price=task["price"],
+                    product_detail=product_detail,
                 )
                 action = "更新"
             else:
@@ -482,12 +494,31 @@ class BagUploadWorkflow(BaseWorkflow):
         return f"SJ{match.group(1)}".upper()
 
     def _display_title_from_filename(self, title: str) -> str:
-        cleaned = str(title or "").strip()
+        cleaned = self._remove_variety_marker(title).strip()
         cleaned = re.sub(r"(?i)^【?\s*SJ[\s_-]*\d{3,6}\s*】?", "", cleaned).strip()
         cleaned = re.sub(r"(?i)[-_\s]*【?\s*SJ[\s_-]*\d{3,6}\s*】?$", "", cleaned).strip()
         cleaned = re.sub(r"^[\s._-]+", "", cleaned)
         cleaned = re.sub(r"[-_\s]*(长泡袋|短泡袋|宽版泡袋|泡袋)$", "", cleaned).strip()
         return cleaned[:120] or "泡袋新品"
+
+    def _remove_variety_marker(self, title: str) -> str:
+        text = str(title or "")
+        if "品种" not in text:
+            return text
+        marker = r"[\s._-]*(?:品种[\s._-]*)+"
+        text = re.sub(rf"(?:【{marker}】|\[{marker}\]|（{marker}）|\({marker}\))", "品种", text)
+
+        def remove_marker(match: re.Match) -> str:
+            if match.start() == 0 or match.end() == len(text):
+                return ""
+            separators = match.group(1) + match.group(2)
+            if any(char in separators for char in "._-"):
+                return "-"
+            return " " if separators else ""
+
+        text = re.sub(r"([\s._-]*)品种(?:[\s._-]*品种)*([\s._-]*)", remove_marker, text)
+        text = re.sub(r"(?i)^(【SJ\d+】)[\s._-]+", r"\1", text)
+        return text.strip(" \t\r\n._-")
 
     def _find_existing_product_by_code(self, code: str) -> dict | None:
         code = self._extract_sj_code(code) or str(code or "").strip().upper()
@@ -518,7 +549,7 @@ class BagUploadWorkflow(BaseWorkflow):
         return []
 
     def _format_core_title(self, code: str, name: str, suffix: str) -> str:
-        cleaned = str(name or "").strip()
+        cleaned = self._remove_variety_marker(name).strip()
         cleaned = re.sub(r"(?i)^【?\s*SJ[\s_-]*\d{3,6}\s*】?", "", cleaned).strip()
         cleaned = re.sub(r"(?i)[-_\s]*【?\s*SJ[\s_-]*\d{3,6}\s*】?$", "", cleaned).strip()
         cleaned = re.sub(r"[-_\s]*(长泡袋|短泡袋|宽版泡袋|泡袋)$", "", cleaned).strip()
@@ -591,15 +622,17 @@ class BagUploadWorkflow(BaseWorkflow):
         main_url: str,
         detail_url: str,
         price: int = BAG_DEFAULT_PRICE,
+        product_detail: dict | None = None,
     ) -> dict:
         product_id = int(existing_product.get("id") or existing_product.get("product_id") or 0)
         if not product_id:
             raise ValueError(f"编号 {code} 找到的商品缺少 product_id")
 
-        detail = self._load_product_for_edit(product_id)
+        detail = product_detail if product_detail is not None else self._load_product_for_edit(product_id)
         title = detail.get("title") or detail.get("name") or existing_product.get("title") or existing_product.get("name")
+        title = self._remove_variety_marker(title)
         category_ids = self._product_category_ids(detail) or self._product_category_ids(existing_product) or [category_id]
-        if category_id and category_id not in category_ids:
+        if category_id:
             category_ids = [category_id]
 
         simple_desc = detail.get("simple_desc") or existing_product.get("simple_desc") or ""
@@ -870,6 +903,8 @@ class BagUploadWorkflow(BaseWorkflow):
             return {"category_id": 21, "category_name": "宽版泡袋"}
         if bag_type == "红茶":
             return {"category_id": 12, "category_name": "红茶泡袋"}
+        if "品种" in name:
+            return {"category_id": 19, "category_name": "品种茶泡袋"}
         for key, cid, cname in BAG_CATEGORIES:
             if key in name:
                 return {"category_id": cid, "category_name": cname}
@@ -880,7 +915,7 @@ class BagUploadWorkflow(BaseWorkflow):
             return {"category_id": 12, "category_name": "红茶泡袋"}
         if bag_type == "宽版":
             return {"category_id": 21, "category_name": "宽版泡袋"}
-        return {"category_id": 7, "category_name": "肉桂泡袋"}
+        return {"category_id": 9, "category_name": "公版泡袋"}
 
     def _category_from_text(self, text: str) -> dict | None:
         text = str(text or "")
