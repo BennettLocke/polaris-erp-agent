@@ -209,15 +209,25 @@ class AdminProductEditContractTest(unittest.TestCase):
         editor_source = product_source.split("function ProductEditorDialog", 1)[1].split(
             "function ProductToolbar", 1
         )[0]
+        sortable_source = product_source.split("function SortableDetailImageTile", 1)[1].split(
+            "function DetailImagePreviewDialog", 1
+        )[0]
 
         self.assertIn('"@dnd-kit/core"', package_source)
         self.assertIn('"@dnd-kit/sortable"', package_source)
         self.assertIn("DndContext", product_source)
         self.assertIn("SortableContext", product_source)
         self.assertIn("useSortable", product_source)
-        self.assertIn("GripVertical", product_source)
+        self.assertIn('className="detail-image-drag-surface"', sortable_source)
+        self.assertIn("{...attributes}", sortable_source)
+        self.assertIn("{...listeners}", sortable_source)
+        self.assertIn("Maximize2", sortable_source)
+        self.assertIn("放大详情图", sortable_source)
+        self.assertNotIn("GripVertical", product_source)
+        self.assertNotIn("DragOverlay", product_source)
+        self.assertNotIn("activeDetailImage", editor_source)
         self.assertIn("arrayMove", editor_source)
-        self.assertIn("详情图拖动排序", product_source)
+        self.assertIn("拖动详情图", product_source)
         self.assertIn("DetailImagePreviewDialog", editor_source)
         self.assertIn("详情图预览", product_source)
         self.assertIn("ChevronLeft", product_source)

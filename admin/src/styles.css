@@ -3169,21 +3169,29 @@ nav button:hover {
   border-style: dashed;
 }
 
-.detail-image-preview-trigger {
+.detail-image-drag-surface {
   width: 100%;
   height: 100%;
   display: grid;
   place-items: center;
   border: 0;
   padding: 0;
-  cursor: zoom-in;
+  cursor: grab;
   background: var(--sj-soft);
+  touch-action: none;
+  user-select: none;
 }
 
-.detail-image-preview-trigger img {
+.detail-image-drag-surface:active,
+.detail-image-tile.is-dragging .detail-image-drag-surface {
+  cursor: grabbing;
+}
+
+.detail-image-drag-surface img {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  pointer-events: none;
 }
 
 .detail-image-order {
@@ -3215,31 +3223,6 @@ nav button:hover {
   color: #ffffff;
   background: rgba(24, 24, 27, 0.86);
   border-color: transparent;
-}
-
-.detail-image-drag-handle {
-  cursor: grab;
-  touch-action: none;
-}
-
-.detail-image-drag-handle:active {
-  cursor: grabbing;
-}
-
-.detail-image-drag-overlay {
-  width: 180px;
-  aspect-ratio: 4 / 5;
-  overflow: hidden;
-  border: 1px solid var(--sj-ring);
-  border-radius: 8px;
-  background: var(--sj-surface);
-  box-shadow: 0 18px 44px rgba(24, 24, 27, 0.22);
-}
-
-.detail-image-drag-overlay img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 .sj-dialog-content.detail-image-preview-dialog {

@@ -1,17 +1,15 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type WheelEvent } from "react";
-import { ChevronLeft, ChevronRight, Download, GripVertical, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ImagePlus, Maximize2, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   closestCenter,
   DndContext,
-  DragOverlay,
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
-  type DragEndEvent,
-  type DragStartEvent
+  type DragEndEvent
 } from "@dnd-kit/core";
 import {
   arrayMove,
@@ -1256,7 +1254,6 @@ function ProductEditorDialog({
   const [mainImages, setMainImages] = useState<string[]>([]);
   const [detailImages, setDetailImages] = useState<string[]>([]);
   const [detailPreviewIndex, setDetailPreviewIndex] = useState<number | null>(null);
-  const [activeDetailImage, setActiveDetailImage] = useState("");
   const [specs, setSpecs] = useState<ProductSpecForm[]>([]);
   const [mediaAssets, setMediaAssets] = useState<ProductMediaAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1299,7 +1296,6 @@ function ProductEditorDialog({
     setCropError("");
     setPendingSquareCrop(null);
     setDetailPreviewIndex(null);
-    setActiveDetailImage("");
     if (availableCategories.length) setCategories(availableCategories);
     applyProduct(product);
     const id = Number(product.id || product.product_id || 0);
@@ -1377,13 +1373,8 @@ function ProductEditorDialog({
     setDetailImages((prev) => Array.from(new Set(prev.concat(cleanUrls))));
   }
 
-  function handleDetailImageDragStart(event: DragStartEvent) {
-    setActiveDetailImage(String(event.active.id));
-  }
-
   function handleDetailImageDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-    setActiveDetailImage("");
     if (!over || active.id === over.id) return;
     setDetailImages((prev) => {
       const oldIndex = prev.indexOf(String(active.id));
@@ -1771,8 +1762,6 @@ function ProductEditorDialog({
                     <DndContext
                       sensors={detailImageSensors}
                       collisionDetection={closestCenter}
-                      onDragStart={handleDetailImageDragStart}
-                      onDragCancel={() => setActiveDetailImage("")}
                       onDragEnd={handleDetailImageDragEnd}
                     >
                       <div className="edit-image-row detail-images">
@@ -1792,13 +1781,6 @@ function ProductEditorDialog({
                           <strong>上传/选择</strong>
                         </Button>
                       </div>
-                      <DragOverlay>
-                        {activeDetailImage ? (
-                          <div className="detail-image-drag-overlay">
-                            <img src={activeDetailImage} alt="正在调整的详情图" />
-                          </div>
-                        ) : null}
-                      </DragOverlay>
                     </DndContext>
                   </CardContent>
                 </Card>
@@ -2175,7 +2157,14 @@ function SortableDetailImageTile({
       className={cn("detail-image-tile", isDragging && "is-dragging")}
       style={{ transform: CSS.Transform.toString(transform), transition }}
     >
-      <button type="button" className="detail-image-preview-trigger" onClick={onPreview} aria-label={`预览详情图 ${index + 1}`}>
+      <button
+        type="button"
+        className="detail-image-drag-surface"
+        aria-label={`拖动详情图 ${index + 1} 调整顺序`}
+        title="按住图片拖动排序"
+        {...attributes}
+        {...listeners}
+      >
         <img src={url} alt={`详情图 ${index + 1}`} loading="lazy" draggable={false} />
       </button>
       <span className="detail-image-order">{index + 1}</span>
@@ -2184,13 +2173,11 @@ function SortableDetailImageTile({
           type="button"
           variant="secondary"
           size="icon-xs"
-          className="detail-image-drag-handle"
-          aria-label="详情图拖动排序"
-          title="拖动排序"
-          {...attributes}
-          {...listeners}
+          aria-label={`放大详情图 ${index + 1}`}
+          title="放大查看"
+          onClick={onPreview}
         >
-          <GripVertical data-icon="inline-start" />
+          <Maximize2 data-icon="inline-start" />
         </Button>
         <Button type="button" variant="secondary" size="icon-xs" aria-label="移除详情图" onClick={onRemove}>
           <Trash2 data-icon="inline-start" />
