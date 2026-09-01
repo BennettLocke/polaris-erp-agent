@@ -1,6 +1,26 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type WheelEvent } from "react";
-import { ArrowDown, ArrowUp, Download, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, GripVertical, ImagePlus, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  rectSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 import { ApiError, api } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -691,34 +711,16 @@ function uploadedProductAsset(url: string, index: number): ProductMediaAsset {
 function ImageTile({
   url,
   label,
-  onRemove,
-  onMoveUp,
-  onMoveDown,
-  moveUpDisabled,
-  moveDownDisabled
+  onRemove
 }: {
   url: string;
   label?: string;
   onRemove: () => void;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
-  moveUpDisabled?: boolean;
-  moveDownDisabled?: boolean;
 }) {
   return (
     <div className="edit-image-tile">
       <img src={url} alt={label || "商品图片"} loading="lazy" />
       <div className="edit-image-tile-actions">
-        {onMoveUp ? (
-          <Button variant="secondary" size="icon-xs" aria-label="详情图上移" disabled={moveUpDisabled} onClick={onMoveUp}>
-            <ArrowUp data-icon="inline-start" />
-          </Button>
-        ) : null}
-        {onMoveDown ? (
-          <Button variant="secondary" size="icon-xs" aria-label="详情图下移" disabled={moveDownDisabled} onClick={onMoveDown}>
-            <ArrowDown data-icon="inline-start" />
-          </Button>
-        ) : null}
         <Button variant="secondary" size="icon-xs" aria-label="移除图片" onClick={onRemove}>
           <X data-icon="inline-start" />
         </Button>
@@ -1253,6 +1255,8 @@ function ProductEditorDialog({
   const [stockItem, setStockItem] = useState(true);
   const [mainImages, setMainImages] = useState<string[]>([]);
   const [detailImages, setDetailImages] = useState<string[]>([]);
+  const [detailPreviewIndex, setDetailPreviewIndex] = useState<number | null>(null);
+  const [activeDetailImage, setActiveDetailImage] = useState("");
   const [specs, setSpecs] = useState<ProductSpecForm[]>([]);
   const [mediaAssets, setMediaAssets] = useState<ProductMediaAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1266,6 +1270,11 @@ function ProductEditorDialog({
   const isCreate = open && !productId;
   const forcedNonStock = productEditorForcedNonStock(productType, categories, categoryIds);
   const effectiveStockItem = forcedNonStock ? false : stockItem;
+  const detailImageSensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   function applyProduct(productData: ProductItem, nextUnits = units) {
     setTitle(productData.title || productData.name || "");
@@ -1279,7 +1288,7 @@ function ProductEditorDialog({
     setOneCase((productData.purchase_policy || (Number(productData.is_one_case_purchase || 0) ? "one_case" : "order_qty")) === "one_case");
     setStockItem(Number(productData.is_stock_item ?? 1) !== 0);
     setMainImages(productData.main_images_list?.length ? productData.main_images_list : productImageUrl(productData) ? [productImageUrl(productData)] : []);
-    setDetailImages(detailImagesFromProduct(productData));
+    setDetailImages(Array.from(new Set(detailImagesFromProduct(productData))));
     setSpecs(productSpecRows(productData, nextUnits));
     setMediaAssets(Array.isArray(productData.media_assets) ? productData.media_assets : []);
   }
@@ -1289,6 +1298,8 @@ function ProductEditorDialog({
     setError("");
     setCropError("");
     setPendingSquareCrop(null);
+    setDetailPreviewIndex(null);
+    setActiveDetailImage("");
     if (availableCategories.length) setCategories(availableCategories);
     applyProduct(product);
     const id = Number(product.id || product.product_id || 0);
@@ -1366,13 +1377,19 @@ function ProductEditorDialog({
     setDetailImages((prev) => Array.from(new Set(prev.concat(cleanUrls))));
   }
 
-  function moveDetailImage(index: number, direction: -1 | 1) {
+  function handleDetailImageDragStart(event: DragStartEvent) {
+    setActiveDetailImage(String(event.active.id));
+  }
+
+  function handleDetailImageDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveDetailImage("");
+    if (!over || active.id === over.id) return;
     setDetailImages((prev) => {
-      const targetIndex = index + direction;
-      if (targetIndex < 0 || targetIndex >= prev.length) return prev;
-      const next = prev.slice();
-      [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
-      return next;
+      const oldIndex = prev.indexOf(String(active.id));
+      const newIndex = prev.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
     });
   }
 
@@ -1751,24 +1768,38 @@ function ProductEditorDialog({
                     <CardAction><Badge variant="outline">{detailImages.length} 张</Badge></CardAction>
                   </CardHeader>
                   <CardContent>
-                    <div className="edit-image-row detail-images">
-                      {detailImages.map((url, index) => (
-                        <ImageTile
-                          key={`${url}-${index}`}
-                          url={url}
-                          label={`详情 ${index + 1}`}
-                          onMoveUp={() => moveDetailImage(index, -1)}
-                          onMoveDown={() => moveDetailImage(index, 1)}
-                          moveUpDisabled={index === 0}
-                          moveDownDisabled={index === detailImages.length - 1}
-                          onRemove={() => setDetailImages((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
-                        />
-                      ))}
-                      <Button variant="outline" className="edit-upload-tile" onClick={() => setPickerTarget({ type: "detail" })}>
-                        <ImagePlus data-icon="inline-start" />
-                        <strong>上传/选择</strong>
-                      </Button>
-                    </div>
+                    <DndContext
+                      sensors={detailImageSensors}
+                      collisionDetection={closestCenter}
+                      onDragStart={handleDetailImageDragStart}
+                      onDragCancel={() => setActiveDetailImage("")}
+                      onDragEnd={handleDetailImageDragEnd}
+                    >
+                      <div className="edit-image-row detail-images">
+                        <SortableContext items={detailImages} strategy={rectSortingStrategy}>
+                          {detailImages.map((url, index) => (
+                            <SortableDetailImageTile
+                              key={url}
+                              url={url}
+                              index={index}
+                              onPreview={() => setDetailPreviewIndex(index)}
+                              onRemove={() => setDetailImages((prev) => prev.filter((item) => item !== url))}
+                            />
+                          ))}
+                        </SortableContext>
+                        <Button variant="outline" className="edit-upload-tile" onClick={() => setPickerTarget({ type: "detail" })}>
+                          <ImagePlus data-icon="inline-start" />
+                          <strong>上传/选择</strong>
+                        </Button>
+                      </div>
+                      <DragOverlay>
+                        {activeDetailImage ? (
+                          <div className="detail-image-drag-overlay">
+                            <img src={activeDetailImage} alt="正在调整的详情图" />
+                          </div>
+                        ) : null}
+                      </DragOverlay>
+                    </DndContext>
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -1843,6 +1874,12 @@ function ProductEditorDialog({
           if (!cropSaving) setPendingSquareCrop(null);
         }}
         onConfirm={confirmSquareCrop}
+      />
+      <DetailImagePreviewDialog
+        images={detailImages}
+        index={detailPreviewIndex}
+        onIndexChange={setDetailPreviewIndex}
+        onClose={() => setDetailPreviewIndex(null)}
       />
     </>
   );
@@ -2116,6 +2153,129 @@ function taobaoTaskCurrentStep(job: TaobaoDetailExportJob): TaobaoDetailExportSt
     || steps.find((step) => step.status === "running")
     || [...steps].reverse().find((step) => step.status === "completed")
     || null
+  );
+}
+
+function SortableDetailImageTile({
+  url,
+  index,
+  onPreview,
+  onRemove
+}: {
+  url: string;
+  index: number;
+  onPreview: () => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: url });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn("detail-image-tile", isDragging && "is-dragging")}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <button type="button" className="detail-image-preview-trigger" onClick={onPreview} aria-label={`预览详情图 ${index + 1}`}>
+        <img src={url} alt={`详情图 ${index + 1}`} loading="lazy" draggable={false} />
+      </button>
+      <span className="detail-image-order">{index + 1}</span>
+      <div className="detail-image-actions">
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon-xs"
+          className="detail-image-drag-handle"
+          aria-label="详情图拖动排序"
+          title="拖动排序"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical data-icon="inline-start" />
+        </Button>
+        <Button type="button" variant="secondary" size="icon-xs" aria-label="移除详情图" onClick={onRemove}>
+          <Trash2 data-icon="inline-start" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function DetailImagePreviewDialog({
+  images,
+  index,
+  onIndexChange,
+  onClose
+}: {
+  images: string[];
+  index: number | null;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+}) {
+  const open = index !== null && images.length > 0;
+  const activeIndex = Math.min(Math.max(index ?? 0, 0), Math.max(images.length - 1, 0));
+  const activeUrl = images[activeIndex] || "";
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "ArrowLeft" && activeIndex > 0) onIndexChange(activeIndex - 1);
+      if (event.key === "ArrowRight" && activeIndex < images.length - 1) onIndexChange(activeIndex + 1);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeIndex, images.length, onIndexChange, open]);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="detail-image-preview-dialog">
+        <DialogHeader>
+          <DialogTitle>详情图预览</DialogTitle>
+          <DialogDescription>{images.length ? `第 ${activeIndex + 1} / ${images.length} 张` : "查看详情图"}</DialogDescription>
+        </DialogHeader>
+        {activeUrl ? (
+          <div className="detail-image-preview">
+            <div className="detail-image-preview-main">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="上一张详情图"
+                disabled={activeIndex <= 0}
+                onClick={() => onIndexChange(Math.max(0, activeIndex - 1))}
+              >
+                <ChevronLeft data-icon="inline-start" />
+              </Button>
+              <img src={activeUrl} alt={`详情图 ${activeIndex + 1}`} />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="下一张详情图"
+                disabled={activeIndex >= images.length - 1}
+                onClick={() => onIndexChange(Math.min(images.length - 1, activeIndex + 1))}
+              >
+                <ChevronRight data-icon="inline-start" />
+              </Button>
+            </div>
+            {images.length > 1 ? (
+              <div className="detail-image-preview-thumbs" aria-label="详情图缩略图">
+                {images.map((url, imageIndex) => (
+                  <button
+                    type="button"
+                    key={`${url}-${imageIndex}`}
+                    className={cn(imageIndex === activeIndex && "is-active")}
+                    aria-label={`查看第 ${imageIndex + 1} 张详情图`}
+                    onClick={() => onIndexChange(imageIndex)}
+                  >
+                    <img src={url} alt="" loading="lazy" />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

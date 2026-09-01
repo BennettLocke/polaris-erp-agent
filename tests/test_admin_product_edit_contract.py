@@ -199,24 +199,32 @@ class AdminProductEditContractTest(unittest.TestCase):
         self.assertIn("selectImages(urls: string[])", editor_source)
         self.assertIn('selectionMode={pickerTarget?.type === "detail" ? "multiple" : "single"}', editor_source)
 
-    def test_product_detail_images_can_be_reordered(self):
+    def test_product_detail_images_support_drag_reorder_and_centered_preview(self):
         product_source = (
             ROOT / "admin" / "src" / "components" / "business" / "products" / "products-page.tsx"
         ).read_text(encoding="utf-8")
-        image_tile_source = product_source.split("function ImageTile", 1)[1].split(
-            "function ImageAssetPickerDialog", 1
-        )[0]
+        package_source = (
+            ROOT / "admin" / "package.json"
+        ).read_text(encoding="utf-8")
         editor_source = product_source.split("function ProductEditorDialog", 1)[1].split(
             "function ProductToolbar", 1
         )[0]
 
-        self.assertIn("ArrowUp", product_source)
-        self.assertIn("ArrowDown", product_source)
-        self.assertIn("onMoveUp", image_tile_source)
-        self.assertIn("onMoveDown", image_tile_source)
-        self.assertIn("moveDetailImage", editor_source)
-        self.assertIn("详情图上移", product_source)
-        self.assertIn("详情图下移", product_source)
+        self.assertIn('"@dnd-kit/core"', package_source)
+        self.assertIn('"@dnd-kit/sortable"', package_source)
+        self.assertIn("DndContext", product_source)
+        self.assertIn("SortableContext", product_source)
+        self.assertIn("useSortable", product_source)
+        self.assertIn("GripVertical", product_source)
+        self.assertIn("arrayMove", editor_source)
+        self.assertIn("详情图拖动排序", product_source)
+        self.assertIn("DetailImagePreviewDialog", editor_source)
+        self.assertIn("详情图预览", product_source)
+        self.assertIn("ChevronLeft", product_source)
+        self.assertIn("ChevronRight", product_source)
+        self.assertIn("MouseSensor", editor_source)
+        self.assertIn("KeyboardSensor", editor_source)
+        self.assertIn("TouchSensor", editor_source)
 
 
 if __name__ == "__main__":
