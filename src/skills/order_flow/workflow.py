@@ -219,10 +219,12 @@ class OrderFlowWorkflow(BaseWorkflow):
                 if self._is_stop_order(user_input) or any(word in user_input for word in ["取消", "不要", "否", "不"]):
                     return self._reply("已取消本次开单，没有创建销售单。")
                 return self._ask("还没有执行开单。请在确认弹窗核对后点确认，或回复「取消」停止。", state)
+            purchase_results = []
             if state.get("auto_purchase"):
                 purchase_result = self._execute_purchase(products, int(state.get("warehouse_id") or 2))
                 if purchase_result.get("error"):
                     return self._reply(f"进货失败：{purchase_result['error']}")
+                purchase_results = purchase_result.get("purchase_results", [])
             elif not state.get("skip_inventory"):
                 shortage = self._purchase_confirmation_for_shortage(customer_id, customer_name, products, int(state.get("warehouse_id") or 2))
                 if shortage:
@@ -233,6 +235,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 products,
                 state.get("warehouse_id", 2),
                 workflow_order_id=workflow_order_id,
+                purchase_results=purchase_results,
             )
 
         if pending_action == "confirm_product_name":
@@ -304,7 +307,14 @@ class OrderFlowWorkflow(BaseWorkflow):
                 return self._reply(f"进货失败：{purchase_result['error']}")
             if state.get("return_to_order"):
                 warehouse_id = int((products[0] or {}).get("warehouse_id") or warehouse_id) if products else warehouse_id
-                return self._create_order(customer_id, customer_name, products, warehouse_id, workflow_order_id=workflow_order_id)
+                return self._create_order(
+                    customer_id,
+                    customer_name,
+                    products,
+                    warehouse_id,
+                    workflow_order_id=workflow_order_id,
+                    purchase_results=purchase_result.get("purchase_results", []),
+                )
             return self._reply("进货成功。")
 
         warehouse = llm_extract_warehouse(user_input)
@@ -1352,12 +1362,19 @@ class OrderFlowWorkflow(BaseWorkflow):
         """Purchase all products marked as need_purchase into the selected warehouse."""
         warehouse_id = int(warehouse_id or 2)
         purchase_groups: dict[int, list[dict]] = {}
+        purchase_results = []
         for p in products:
             if not p.get("need_purchase"):
                 continue
             target_warehouse_id = int(p.get("purchase_warehouse_id") or p.get("warehouse_id") or warehouse_id or 2)
             plan = self._annotate_purchase_plan(p)
             purchase_groups.setdefault(target_warehouse_id, []).append(self._purchase_payload_item(p, plan))
+            purchase_results.append({
+                "product": re.sub(r"[【】\s]+", "", str(p.get("name") or p.get("title") or "商品")),
+                "color": str(p.get("color") or "默认颜色"),
+                "quantity": self._purchase_result_quantity(plan),
+                "note": self._purchase_destination_note(target_warehouse_id),
+            })
             p["warehouse_id"] = target_warehouse_id
             p["purchase_warehouse_id"] = target_warehouse_id
             p.pop("need_purchase", None)
@@ -1372,14 +1389,41 @@ class OrderFlowWorkflow(BaseWorkflow):
                     "other_enter_add",
                     warehouse_id=target_warehouse_id,
                     products=purchase_products,
-                    note=f"送至{self._warehouse_name(target_warehouse_id)}",
+                    note=self._purchase_destination_note(target_warehouse_id),
                 )
                 results.append(result)
                 if isinstance(result, dict) and result.get("error"):
                     return {"error": result["error"]}
         except Exception as e:
             return {"error": str(e)}
-        return {"ok": True, "result": results}
+        return {"ok": True, "result": results, "purchase_results": purchase_results}
+
+    def _purchase_destination_note(self, warehouse_id: int) -> str:
+        warehouse_name = self._warehouse_name(warehouse_id).replace("仓库", "")
+        return f"送至{warehouse_name}"
+
+    def _purchase_result_quantity(self, plan: dict) -> str:
+        quantity = int(plan.get("purchase_qty") or 0)
+        unit = str(plan.get("purchase_unit") or "套")
+        per_piece = int(plan.get("per_piece") or 0)
+        if unit == "件" and per_piece > 0:
+            return f"{quantity}件（{per_piece}套/件）"
+        return f"{quantity}{unit}"
+
+    def _format_purchase_results(self, purchase_results: list[dict]) -> str:
+        if not purchase_results:
+            return ""
+        lines = ["【进货结果】"]
+        for index, item in enumerate(purchase_results):
+            if index:
+                lines.append("")
+            lines.extend([
+                f"商品：{item.get('product') or '商品'}",
+                f"颜色：{item.get('color') or '默认颜色'}",
+                f"进货：{item.get('quantity') or '0套'}",
+                f"备注：{item.get('note') or '送至百鑫'}",
+            ])
+        return "\n".join(lines)
 
     def _purchase_payload_item(self, product: dict, plan: dict) -> dict:
         """ERP has no 件 unit, so 1件起 purchases are entered as equivalent 套."""
@@ -1478,6 +1522,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         products: list[dict],
         warehouse_id: int,
         workflow_order_id: int | None = None,
+        purchase_results: list[dict] | None = None,
     ) -> dict:
         """B5: 开销售单"""
         warehouse_id = int(warehouse_id or 2)
@@ -1539,7 +1584,11 @@ class OrderFlowWorkflow(BaseWorkflow):
                 sales_id = payload.get("sales_id") or payload.get("id") or ""
                 sales_no = payload.get("sales_no") or sales_id or data.get("data", "")
                 # 构建回复
-                lines = [f"开单成功！销售单号：{sales_no}", ""]
+                lines = []
+                purchase_text = self._format_purchase_results(purchase_results or [])
+                if purchase_text:
+                    lines.extend([purchase_text, ""])
+                lines.extend([f"开单成功！销售单号：{sales_no}", ""])
                 lines.append(f"客户：{customer_name}")
                 lines.append("商品：")
                 total = 0
@@ -1574,8 +1623,12 @@ class OrderFlowWorkflow(BaseWorkflow):
                 return self._reply("\n".join(lines))
             else:
                 msg = data.get("msg") or data.get("error") or "未知错误"
-                return self._reply(f"开单失败：{msg}")
+                purchase_text = self._format_purchase_results(purchase_results or [])
+                prefix = f"{purchase_text}\n\n" if purchase_text else ""
+                return self._reply(f"{prefix}开单失败：{msg}")
 
         except Exception as e:
             logger.error(f"[OrderFlow] 开单异常: {e}")
-            return self._reply(f"开单失败：{str(e)}")
+            purchase_text = self._format_purchase_results(purchase_results or [])
+            prefix = f"{purchase_text}\n\n" if purchase_text else ""
+            return self._reply(f"{prefix}开单失败：{str(e)}")

@@ -39,7 +39,49 @@ class FakeWorkflowCaller:
         return result
 
 
+class FakePurchaseOrderCaller(FakeOrderCaller):
+    def call(self, tool_name, **kwargs):
+        if tool_name == "other_enter_add":
+            self.calls.append((tool_name, kwargs))
+            return {"code": 0, "data": {"id": 321, "doc_no": "IN321"}}
+        return super().call(tool_name, **kwargs)
+
+
 class WorkflowSalesLinkingTest(unittest.TestCase):
+    def test_auto_purchase_order_reply_contains_compact_purchase_result(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow.caller = FakePurchaseOrderCaller()
+        state = {
+            "pending_action": "confirm_create_order",
+            "customer_id": 7,
+            "customer_name": "测试客户",
+            "warehouse_id": 2,
+            "auto_purchase": True,
+            "products": [
+                {
+                    "product_id": 88,
+                    "unit_id": 1,
+                    "unit": "套",
+                    "name": "【墨香】半斤",
+                    "color": "黄色",
+                    "qty": 10,
+                    "price": 27,
+                    "warehouse_id": 2,
+                    "purchase_warehouse_id": 2,
+                    "purchase_qty": 10,
+                    "purchase_unit": "套",
+                    "need_purchase": True,
+                }
+            ],
+        }
+
+        result = workflow.resume("确认", state)
+
+        notice = "【进货结果】\n商品：墨香半斤\n颜色：黄色\n进货：10套\n备注：送至百鑫"
+        self.assertIn(notice, result["reply"])
+        self.assertLess(result["reply"].index("【进货结果】"), result["reply"].index("开单成功"))
+        self.assertEqual(workflow.caller.last_call("other_enter_add")["note"], "送至百鑫")
+
     def test_order_flow_passes_workflow_order_id_to_sales_add_after_confirm(self):
         workflow = object.__new__(OrderFlowWorkflow)
         workflow.caller = FakeOrderCaller()
