@@ -832,6 +832,10 @@
   overflow-wrap: anywhere;
 }
 
+.workbench-result-copy p {
+  padding: 0;
+}
+
 .workbench-result-image {
   width: min(360px, calc(100% - 24px));
   aspect-ratio: 1 / 1;

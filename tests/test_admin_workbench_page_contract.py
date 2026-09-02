@@ -225,14 +225,15 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         message_section = extract_function_section(workbench_source, "MessageBubble")
         copy_button_section = extract_function_section(workbench_source, "PurchaseResultCopyButton")
 
-        self.assertIn('line === "【进货结果】"', result_table_section)
-        self.assertIn('line === "【进货结果】"', message_section)
+        self.assertIn("purchaseResultFirstLine", result_table_section)
+        self.assertIn("purchaseResultFirstLine", message_section)
         self.assertIn("<PurchaseResultCopyButton", result_table_section)
         self.assertIn("<PurchaseResultCopyButton", message_section)
         self.assertIn('aria-label="复制进货结果"', copy_button_section)
         self.assertIn("navigator.clipboard.writeText(purchaseResult)", copy_button_section)
         self.assertIn('response.indexOf("【进货结果】")', extract_section)
         self.assertIn('/\\n(?:开单成功|开单失败)/', extract_section)
+        self.assertIn('line !== "【进货结果】"', result_table_section)
         self.assertIn(".workbench-result-copy", styles_source)
         self.assertIn(".workbench-message-purchase-title", styles_source)
 

@@ -77,10 +77,22 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
 
         result = workflow.resume("确认", state)
 
-        notice = "【进货结果】\n商品：墨香半斤\n颜色：黄色\n进货：10套\n备注：送至百鑫"
+        notice = "商品：墨香半斤\n颜色：黄色\n进货：10套\n备注：送至百鑫"
         self.assertIn(notice, result["reply"])
-        self.assertLess(result["reply"].index("【进货结果】"), result["reply"].index("开单成功"))
+        self.assertNotIn("【进货结果】", result["reply"])
+        self.assertLess(result["reply"].index("商品：墨香半斤"), result["reply"].index("开单成功"))
         self.assertEqual(workflow.caller.last_call("other_enter_add")["note"], "送至百鑫")
+
+    def test_piece_purchase_result_omits_per_piece_description(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+
+        quantity = workflow._purchase_result_quantity({
+            "purchase_qty": 1,
+            "purchase_unit": "件",
+            "per_piece": 24,
+        })
+
+        self.assertEqual(quantity, "1件")
 
     def test_order_flow_passes_workflow_order_id_to_sales_add_after_confirm(self):
         workflow = object.__new__(OrderFlowWorkflow)

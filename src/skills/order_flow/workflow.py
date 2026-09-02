@@ -1405,15 +1405,12 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _purchase_result_quantity(self, plan: dict) -> str:
         quantity = int(plan.get("purchase_qty") or 0)
         unit = str(plan.get("purchase_unit") or "套")
-        per_piece = int(plan.get("per_piece") or 0)
-        if unit == "件" and per_piece > 0:
-            return f"{quantity}件（{per_piece}套/件）"
         return f"{quantity}{unit}"
 
     def _format_purchase_results(self, purchase_results: list[dict]) -> str:
         if not purchase_results:
             return ""
-        lines = ["【进货结果】"]
+        lines = []
         for index, item in enumerate(purchase_results):
             if index:
                 lines.append("")

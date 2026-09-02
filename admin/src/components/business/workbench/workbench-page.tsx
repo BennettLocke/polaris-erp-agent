@@ -1389,6 +1389,8 @@ function MessageList({
 function MessageBubble({ message }: { message: ChatMessage }) {
   const lines = message.content.split(/\r?\n/);
   const purchaseResult = message.role === "assistant" ? extractPurchaseResult(message.content) : "";
+  const purchaseResultFirstLine = purchaseResult.split(/\r?\n/, 1)[0] || "";
+  const purchaseResultFirstIndex = lines.findIndex((line) => line.trim() === purchaseResultFirstLine);
   return (
     <div className={`workbench-message workbench-message--${message.role}`} data-role={message.role}>
       <div className="workbench-message-bubble">
@@ -1396,9 +1398,10 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {lines.map((line, index) =>
           isImageLine(line) ? (
             <img className="workbench-message-image" src={line.trim()} alt="上传图片" key={`${line}_${index}`} />
-          ) : line === "【进货结果】" && purchaseResult ? (
+          ) : line.trim() === "【进货结果】" ? null
+          : line.trim() === purchaseResultFirstLine && index === purchaseResultFirstIndex ? (
             <div className="workbench-message-purchase-title" key={`${line}_${index}`}>
-              <strong>{line}</strong>
+              <p>{line}</p>
               <PurchaseResultCopyButton purchaseResult={purchaseResult} />
             </div>
           ) : (
@@ -1736,10 +1739,11 @@ function ImageOcrResultDialog({ result }: { result: WorkbenchResult }) {
 
 function extractPurchaseResult(response: string) {
   const start = response.indexOf("【进货结果】");
-  if (start < 0) return "";
-  const purchaseSection = response.slice(start).trim();
+  const purchaseSection = response.slice(start < 0 ? 0 : start + "【进货结果】".length).trim();
   const nextSection = purchaseSection.match(/\n(?:开单成功|开单失败)/);
-  return (nextSection?.index === undefined ? purchaseSection : purchaseSection.slice(0, nextSection.index)).trim();
+  const candidate = (nextSection?.index === undefined ? purchaseSection : purchaseSection.slice(0, nextSection.index)).trim();
+  const requiredFields = ["商品：", "颜色：", "进货：", "备注："];
+  return requiredFields.every((field) => candidate.includes(field)) ? candidate : "";
 }
 
 function fallbackCopyText(text: string) {
@@ -1787,8 +1791,10 @@ function PurchaseResultCopyButton({ purchaseResult }: { purchaseResult: string }
 }
 
 function ResultLineTable({ response }: { response: string }) {
-  const lines = response.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = response.split(/\r?\n/).map((line) => line.trim()).filter((line) => Boolean(line) && line !== "【进货结果】");
   const purchaseResult = extractPurchaseResult(response);
+  const purchaseResultFirstLine = purchaseResult.split(/\r?\n/, 1)[0] || "";
+  const purchaseResultFirstIndex = lines.findIndex((line) => line === purchaseResultFirstLine);
 
   return (
     <ScrollArea className="workbench-result-scroll">
@@ -1800,9 +1806,9 @@ function ResultLineTable({ response }: { response: string }) {
             ) : (
               <div className="workbench-result-row" key={`${line}_${index}`}>
                 <span>{index + 1}</span>
-                {line === "【进货结果】" && purchaseResult ? (
+                {line === purchaseResultFirstLine && index === purchaseResultFirstIndex ? (
                   <div className="workbench-result-copy">
-                    <strong>{line}</strong>
+                    <p>{line}</p>
                     <PurchaseResultCopyButton purchaseResult={purchaseResult} />
                   </div>
                 ) : (
