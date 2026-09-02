@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardE
 import {
   Bot,
   Check,
+  Copy,
   History,
   Image as ImageIcon,
   Loader2,
@@ -1387,6 +1388,7 @@ function MessageList({
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const lines = message.content.split(/\r?\n/);
+  const purchaseResult = message.role === "assistant" ? extractPurchaseResult(message.content) : "";
   return (
     <div className={`workbench-message workbench-message--${message.role}`} data-role={message.role}>
       <div className="workbench-message-bubble">
@@ -1394,6 +1396,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {lines.map((line, index) =>
           isImageLine(line) ? (
             <img className="workbench-message-image" src={line.trim()} alt="上传图片" key={`${line}_${index}`} />
+          ) : line === "【进货结果】" && purchaseResult ? (
+            <div className="workbench-message-purchase-title" key={`${line}_${index}`}>
+              <strong>{line}</strong>
+              <PurchaseResultCopyButton purchaseResult={purchaseResult} />
+            </div>
           ) : (
             <p key={`${line}_${index}`}>{line || " "}</p>
           )
@@ -1727,8 +1734,62 @@ function ImageOcrResultDialog({ result }: { result: WorkbenchResult }) {
   );
 }
 
+function extractPurchaseResult(response: string) {
+  const start = response.indexOf("【进货结果】");
+  if (start < 0) return "";
+  const purchaseSection = response.slice(start).trim();
+  const nextSection = purchaseSection.match(/\n(?:开单成功|开单失败)/);
+  return (nextSection?.index === undefined ? purchaseSection : purchaseSection.slice(0, nextSection.index)).trim();
+}
+
+function fallbackCopyText(text: string) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("copy failed");
+}
+
+function PurchaseResultCopyButton({ purchaseResult }: { purchaseResult: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(purchaseResult);
+      } else {
+        fallbackCopyText(purchaseResult);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon-sm"
+      onClick={() => void handleCopy()}
+      aria-label="复制进货结果"
+      title={copied ? "已复制" : "复制进货结果"}
+    >
+      {copied ? <Check data-icon="icon" /> : <Copy data-icon="icon" />}
+    </Button>
+  );
+}
+
 function ResultLineTable({ response }: { response: string }) {
   const lines = response.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const purchaseResult = extractPurchaseResult(response);
+
   return (
     <ScrollArea className="workbench-result-scroll">
       <div className="workbench-result-table">
@@ -1739,7 +1800,14 @@ function ResultLineTable({ response }: { response: string }) {
             ) : (
               <div className="workbench-result-row" key={`${line}_${index}`}>
                 <span>{index + 1}</span>
-                <p>{line}</p>
+                {line === "【进货结果】" && purchaseResult ? (
+                  <div className="workbench-result-copy">
+                    <strong>{line}</strong>
+                    <PurchaseResultCopyButton purchaseResult={purchaseResult} />
+                  </div>
+                ) : (
+                  <p>{line}</p>
+                )}
               </div>
             )
           )

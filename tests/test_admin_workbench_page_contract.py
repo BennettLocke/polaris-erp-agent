@@ -215,6 +215,27 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertNotIn("window.alert", workbench_source)
         self.assertNotIn("window.confirm", workbench_source)
 
+    def test_purchase_result_has_scoped_copy_button(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        styles_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+        result_table_section = extract_function_section(workbench_source, "ResultLineTable")
+        extract_section = extract_function_section(workbench_source, "extractPurchaseResult")
+        message_section = extract_function_section(workbench_source, "MessageBubble")
+        copy_button_section = extract_function_section(workbench_source, "PurchaseResultCopyButton")
+
+        self.assertIn('line === "【进货结果】"', result_table_section)
+        self.assertIn('line === "【进货结果】"', message_section)
+        self.assertIn("<PurchaseResultCopyButton", result_table_section)
+        self.assertIn("<PurchaseResultCopyButton", message_section)
+        self.assertIn('aria-label="复制进货结果"', copy_button_section)
+        self.assertIn("navigator.clipboard.writeText(purchaseResult)", copy_button_section)
+        self.assertIn('response.indexOf("【进货结果】")', extract_section)
+        self.assertIn('/\\n(?:开单成功|开单失败)/', extract_section)
+        self.assertIn(".workbench-result-copy", styles_source)
+        self.assertIn(".workbench-message-purchase-title", styles_source)
+
     def test_workbench_confirm_dialog_uses_typed_business_sections(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
