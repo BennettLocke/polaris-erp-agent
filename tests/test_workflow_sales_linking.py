@@ -94,6 +94,21 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
 
         self.assertEqual(quantity, "1件")
 
+    def test_multiple_purchase_results_merge_products_and_keep_one_final_note(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+
+        result = workflow._format_purchase_results([
+            {"product": "墨香半斤", "color": "黄色", "quantity": "10套", "note": "送至百鑫"},
+            {"product": "喜悦半斤", "color": "红色", "quantity": "5套", "note": "送至百鑫"},
+        ])
+
+        self.assertEqual(
+            result,
+            "商品：墨香半斤（黄色，10套）、喜悦半斤（红色，5套）\n备注：送至百鑫",
+        )
+        self.assertEqual(result.count("商品："), 1)
+        self.assertEqual(result.count("备注："), 1)
+
     def test_order_flow_passes_workflow_order_id_to_sales_add_after_confirm(self):
         workflow = object.__new__(OrderFlowWorkflow)
         workflow.caller = FakeOrderCaller()

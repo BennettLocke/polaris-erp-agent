@@ -365,17 +365,6 @@
   overflow-wrap: anywhere;
 }
 
-.workbench-message-purchase-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.workbench-message-purchase-title .sj-button {
-  flex: 0 0 auto;
-}
-
 .workbench-message-image {
   width: min(260px, 100%);
   aspect-ratio: 1 / 1;
@@ -817,23 +806,6 @@
   padding: 10px 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.workbench-result-copy {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px 6px 12px;
-}
-
-.workbench-result-copy strong {
-  overflow-wrap: anywhere;
-}
-
-.workbench-result-copy p {
-  padding: 0;
 }
 
 .workbench-result-image {
