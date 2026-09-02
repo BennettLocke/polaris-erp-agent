@@ -1410,13 +1410,6 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _format_purchase_results(self, purchase_results: list[dict]) -> str:
         if not purchase_results:
             return ""
-        if len(purchase_results) > 1:
-            products = "、".join(
-                f"{item.get('product') or '商品'}（{item.get('color') or '默认颜色'}，{item.get('quantity') or '0套'}）"
-                for item in purchase_results
-            )
-            notes = list(dict.fromkeys(str(item.get("note") or "送至百鑫") for item in purchase_results))
-            return f"商品：{products}\n备注：{'、'.join(notes)}"
         lines = []
         for index, item in enumerate(purchase_results):
             if index:

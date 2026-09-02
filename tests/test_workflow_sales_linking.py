@@ -94,7 +94,7 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
 
         self.assertEqual(quantity, "1件")
 
-    def test_multiple_purchase_results_merge_products_and_keep_one_final_note(self):
+    def test_multiple_purchase_results_render_each_product_separately(self):
         workflow = object.__new__(OrderFlowWorkflow)
 
         result = workflow._format_purchase_results([
@@ -104,10 +104,12 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
 
         self.assertEqual(
             result,
-            "商品：墨香半斤（黄色，10套）、喜悦半斤（红色，5套）\n备注：送至百鑫",
+            "商品：墨香半斤\n颜色：黄色\n进货：10套\n备注：送至百鑫"
+            "\n\n"
+            "商品：喜悦半斤\n颜色：红色\n进货：5套\n备注：送至百鑫",
         )
-        self.assertEqual(result.count("商品："), 1)
-        self.assertEqual(result.count("备注："), 1)
+        self.assertEqual(result.count("商品："), 2)
+        self.assertEqual(result.count("备注："), 2)
 
     def test_order_flow_passes_workflow_order_id_to_sales_add_after_confirm(self):
         workflow = object.__new__(OrderFlowWorkflow)
