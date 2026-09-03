@@ -6801,6 +6801,51 @@ textarea,
   overflow: hidden;
 }
 
+.workbench-confirm-checkbox {
+  min-height: var(--sj-input-height);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--sj-foreground);
+  font-size: 13px;
+}
+
+.workbench-confirm-checkbox [data-slot="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  border-radius: 3px;
+}
+
+.sales-create-price-field {
+  display: grid;
+  gap: 4px;
+  min-width: 132px;
+}
+
+.sales-create-price-field > span {
+  color: var(--sj-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sales-create-remember-price {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sj-foreground);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.sales-create-remember-price [data-slot="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  border-radius: 3px;
+}
+
 .inventory-ledger-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

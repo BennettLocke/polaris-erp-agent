@@ -143,6 +143,25 @@ def sales_history_price(customer_id: int, product_id: int) -> float | None:
         return None
 
 
+@tool("sales_price_preview", "按客户和商品规则预判销售价")
+def sales_price_preview(
+    customer_id: int,
+    product_id: int,
+    quantity: float = 1,
+    unit_id: int | None = None,
+) -> dict:
+    try:
+        return _sales_service().price_preview(
+            customer_id=customer_id,
+            product_id=product_id,
+            quantity=quantity,
+            unit_id=unit_id,
+        )
+    except Exception as e:
+        logger.error(f"native sales price preview failed: {e}")
+        return {"error": str(e)}
+
+
 @tool("get_product_price", "获取商品价格")
 def get_product_price(product_id: int) -> float | None:
     try:

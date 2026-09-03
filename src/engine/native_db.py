@@ -484,6 +484,8 @@ class NativeDBClient:
     _system_settings_lock = threading.Lock()
     _sales_delete_columns_ready = False
     _sales_delete_columns_lock = threading.Lock()
+    _sales_price_columns_ready = False
+    _sales_price_columns_lock = threading.Lock()
     _party_columns_ready = False
     _party_columns_lock = threading.Lock()
     _default_operator_ready = False
@@ -694,6 +696,43 @@ class NativeDBClient:
             except pymysql.Error as e:
                 logger.warning(f"native sales delete column check failed: {e}")
                 raise DBError(f"native sales delete column check failed: {e}") from e
+
+    def _ensure_sales_price_columns(self) -> None:
+        if self.__class__._sales_price_columns_ready:
+            return
+        with self.__class__._sales_price_columns_lock:
+            if self.__class__._sales_price_columns_ready:
+                return
+            try:
+                with self.cursor() as cursor:
+                    cursor.execute("SHOW COLUMNS FROM sales_order_item LIKE 'remember_price'")
+                    if not cursor.fetchone():
+                        cursor.execute(
+                            "ALTER TABLE sales_order_item "
+                            "ADD COLUMN remember_price TINYINT NOT NULL DEFAULT 1 AFTER price_source"
+                        )
+                    cursor.execute("SHOW COLUMNS FROM sales_order_item LIKE 'price_reference_item_id'")
+                    if not cursor.fetchone():
+                        cursor.execute(
+                            "ALTER TABLE sales_order_item "
+                            "ADD COLUMN price_reference_item_id BIGINT UNSIGNED NULL AFTER remember_price"
+                        )
+                    cursor.execute("SHOW INDEX FROM sales_order_item WHERE Key_name='idx_sales_item_price_lookup'")
+                    if not cursor.fetchone():
+                        cursor.execute(
+                            "ALTER TABLE sales_order_item "
+                            "ADD KEY idx_sales_item_price_lookup (sku_id, unit_id, sales_order_id, id)"
+                        )
+                    cursor.execute("SHOW INDEX FROM sales_order WHERE Key_name='idx_sales_customer_price_lookup'")
+                    if not cursor.fetchone():
+                        cursor.execute(
+                            "ALTER TABLE sales_order "
+                            "ADD KEY idx_sales_customer_price_lookup (customer_id, status, sales_at, id)"
+                        )
+                self.__class__._sales_price_columns_ready = True
+            except pymysql.Error as e:
+                logger.warning(f"native sales price column check failed: {e}")
+                raise DBError(f"native sales price column check failed: {e}") from e
 
     def _ensure_party_columns(self) -> None:
         if self.__class__._party_columns_ready:
@@ -3539,6 +3578,55 @@ class NativeDBClient:
         })
         return result, int(total_row.get("total") or 0), summary
 
+    def customer_price_history(
+        self,
+        customer_id: int,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[dict], int]:
+        self._ensure_sales_price_columns()
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or 20), 100))
+        where_sql = """
+            s.customer_id=%s
+            AND s.status IN ('confirmed', 'completed')
+            AND s.deleted_at IS NULL
+            AND i.remember_price=1
+            AND i.unit_price>0
+        """
+        total_rows = self.query(
+            f"""SELECT COUNT(*) AS total
+                FROM sales_order_item i
+                JOIN sales_order s ON s.id=i.sales_order_id
+                WHERE {where_sql}""",
+            (customer_id,),
+        )
+        rows = self.query(
+            f"""
+            SELECT i.id AS item_id, i.sku_id AS product_id, i.unit_price, i.quantity,
+                   i.price_source, i.price_reference_item_id, i.remember_price,
+                   s.id AS sales_id, s.sales_no, s.sales_at,
+                   sku.sku_no, sku.color, sku.spu_id, sku.unit_id,
+                   spu.title, spu.product_type,
+                   COALESCE(pc.name, '未分类') AS category_name,
+                   u.name AS unit_name
+            FROM sales_order_item i
+            JOIN sales_order s ON s.id=i.sales_order_id
+            LEFT JOIN product_sku sku ON sku.id=i.sku_id
+            LEFT JOIN product_spu spu ON spu.id=sku.spu_id
+            LEFT JOIN product_category pc
+              ON pc.id=COALESCE(sku.primary_category_id, spu.default_category_id)
+            LEFT JOIN product_unit u ON u.id=i.unit_id
+            WHERE {where_sql}
+            ORDER BY s.sales_at DESC, i.id DESC
+            LIMIT %s OFFSET %s
+            """,
+            (customer_id, page_size, (page - 1) * page_size),
+        )
+        total = int((total_rows[0] if total_rows else {}).get("total") or 0)
+        return rows, total
+
     def _next_balance_ledger_no(self) -> str:
         return f"CB{datetime.now().strftime('%Y%m%d%H%M%S')}{int(time.time() * 1000) % 1000:03d}"
 
@@ -5528,6 +5616,15 @@ class NativeDBClient:
                 "balance_adjust_reasons": ["手动调整", "客户充值", "售后退回", "对账修正"],
                 "monthly_customer_rule": "客户选择月结时销售单计入欠款，结款后改为已付。",
             },
+            "price_rules": {
+                "enabled": 1,
+                "valid_days": 180,
+                "min_retail_ratio": 0.5,
+                "max_retail_ratio": 2.0,
+                "default_policy": "suggest",
+                "category_policies": {},
+                "product_overrides": {},
+            },
             "image_rules": {
                 "oss_path": "products/{yyyy}/{mm}/",
                 "thumbnail_rule": "image/resize,w_240/quality,q_80",
@@ -5816,7 +5913,7 @@ class NativeDBClient:
         return merged
 
     def system_setting(self, key: str) -> dict:
-        allowed = {"product_basic", "inventory_rules", "payment_rules", "image_rules", "permission_rules", "miniapp_design"}
+        allowed = {"product_basic", "inventory_rules", "payment_rules", "price_rules", "image_rules", "permission_rules", "miniapp_design"}
         if key not in allowed:
             return {"code": 400, "msg": "设置项不存在"}
         with self.cursor() as cursor:
@@ -5824,8 +5921,9 @@ class NativeDBClient:
                 self._sync_inventory_policy_categories(cursor)
             data = self._system_setting_value(cursor, key)
             extras: dict[str, Any] = {}
-            if key in {"product_basic", "inventory_rules"}:
+            if key in {"product_basic", "inventory_rules", "price_rules"}:
                 extras["categories"] = self.product_categories()
+            if key in {"product_basic", "inventory_rules"}:
                 extras["units"] = self.query("SELECT id, name, code FROM product_unit WHERE is_enabled=1 ORDER BY id ASC")
             if key == "inventory_rules":
                 extras["warehouses"] = self.warehouse_list()
@@ -5841,7 +5939,7 @@ class NativeDBClient:
         return {"code": 0, "data": {"key": key, "value": data, **extras}}
 
     def save_system_setting(self, key: str, payload: dict, operator_user_id: Any = None) -> dict:
-        allowed = {"product_basic", "inventory_rules", "payment_rules", "image_rules", "permission_rules", "miniapp_design"}
+        allowed = {"product_basic", "inventory_rules", "payment_rules", "price_rules", "image_rules", "permission_rules", "miniapp_design"}
         if key not in allowed:
             return {"code": 400, "msg": "设置项不存在"}
         self._ensure_system_settings_tables()
@@ -5855,6 +5953,34 @@ class NativeDBClient:
             clean_value = default
         if key == "miniapp_design":
             clean_value = self._sanitize_miniapp_design_setting(clean_value)
+        if key == "price_rules":
+            try:
+                clean_value["enabled"] = 1 if int(clean_value.get("enabled") or 0) else 0
+            except (TypeError, ValueError):
+                clean_value["enabled"] = 1
+            try:
+                clean_value["valid_days"] = min(max(int(clean_value.get("valid_days") or 180), 1), 3650)
+            except (TypeError, ValueError):
+                clean_value["valid_days"] = 180
+            try:
+                min_ratio = float(clean_value.get("min_retail_ratio") or 0.5)
+            except (TypeError, ValueError):
+                min_ratio = 0.5
+            try:
+                max_ratio = float(clean_value.get("max_retail_ratio") or 2.0)
+            except (TypeError, ValueError):
+                max_ratio = 2.0
+            clean_value["min_retail_ratio"] = min(max(min_ratio, 0.01), 10.0)
+            clean_value["max_retail_ratio"] = min(max(max_ratio, clean_value["min_retail_ratio"]), 20.0)
+            default_policy = str(clean_value.get("default_policy") or "suggest").strip().lower()
+            clean_value["default_policy"] = default_policy if default_policy in {"auto", "suggest", "off"} else "suggest"
+            for field in ("category_policies", "product_overrides"):
+                source = clean_value.get(field) if isinstance(clean_value.get(field), dict) else {}
+                clean_value[field] = {
+                    str(item_key): str(policy).strip().lower()
+                    for item_key, policy in source.items()
+                    if str(policy).strip().lower() in {"auto", "suggest", "off"}
+                }
         if key == "product_basic":
             categories = clean_value.get("categories")
             if isinstance(categories, list):
@@ -7214,6 +7340,7 @@ class NativeDBClient:
         self._ensure_operator_columns()
         self._ensure_party_columns()
         self._ensure_system_settings_tables()
+        self._ensure_sales_price_columns()
         operator_user_id = self._operator_user_id(operator_user_id)
         if not products:
             return {"code": 400, "msg": "销售明细不能为空"}
@@ -7269,9 +7396,12 @@ class NativeDBClient:
                 line_warehouse_id = int(item.get("warehouse_id") or warehouse_id or sku.get("default_warehouse_id") or default_out_warehouse_id)
                 unit_id = int(item.get("unit_id") or sku.get("unit_id") or 1)
                 qty = Decimal(str(item.get("buy_number") or item.get("quantity") or item.get("number") or 0))
-                price = Decimal(str(item.get("price") or sku.get("retail_price") or 0))
+                raw_price = item.get("price")
+                price = Decimal(str(raw_price if raw_price not in (None, "") else sku.get("retail_price") or 0))
                 if qty <= 0:
                     raise DBError("销售数量必须大于0")
+                if price <= 0:
+                    raise DBError(f"{sku.get('title') or sku.get('sku_no') or '商品'} 缺少有效销售价格")
                 amount = qty * price
                 total_qty += qty
                 total_amount += amount
@@ -7280,8 +7410,8 @@ class NativeDBClient:
                     INSERT INTO sales_order_item
                         (sales_order_id, line_no, sku_id, sku_no_snapshot, title_snapshot, color_snapshot,
                          warehouse_id, unit_id, quantity, unit_price, amount, cost_price_snapshot,
-                         price_source, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'manual', %s)
+                         price_source, remember_price, price_reference_item_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         sales_id,
@@ -7296,6 +7426,9 @@ class NativeDBClient:
                         price,
                         amount,
                         sku.get("cost_price"),
+                        str(item.get("price_source") or "manual_override")[:30],
+                        1 if int(item.get("remember_price") or 0) == 1 else 0,
+                        int(item.get("price_reference_item_id") or 0) or None,
                         now,
                     ),
                 )
@@ -7646,22 +7779,62 @@ class NativeDBClient:
     def cancel_sales_order(self, sales_id: int, operator_user_id: Any = None) -> dict:
         return self.delete_sales_order(sales_id=sales_id, operator_user_id=operator_user_id)
 
-    def sales_history_price(self, customer_id: int, product_id: int) -> float | None:
+    def sales_price_context(self, customer_id: int, product_id: int, *, limit: int = 10) -> dict:
+        self._ensure_sales_price_columns()
         sku_id = self.resolve_sku_id(product_id)
         if not sku_id:
-            return None
-        rows = self.query(
+            return {"sku": {}, "history": []}
+        sku_rows = self.query(
             """
-            SELECT i.unit_price
-            FROM sales_order_item i
-            JOIN sales_order s ON s.id=i.sales_order_id
-            WHERE s.customer_id=%s AND i.sku_id=%s AND s.status NOT IN ('canceled', 'deleted')
-            ORDER BY s.sales_at DESC, i.id DESC
+            SELECT s.id, s.spu_id, s.sku_no, s.color, s.unit_id,
+                   s.retail_price, s.min_price, s.max_price, s.price_note,
+                   sp.title, sp.product_type,
+                   COALESCE(s.primary_category_id, sp.default_category_id) AS category_id,
+                   COALESCE(pc.name, '未分类') AS category_name,
+                   u.name AS unit_name
+            FROM product_sku s
+            JOIN product_spu sp ON sp.id=s.spu_id
+            LEFT JOIN product_category pc
+              ON pc.id=COALESCE(s.primary_category_id, sp.default_category_id)
+            LEFT JOIN product_unit u ON u.id=s.unit_id
+            WHERE s.id=%s AND s.deleted_at IS NULL
             LIMIT 1
             """,
-            (customer_id, sku_id),
+            (sku_id,),
         )
-        return float(rows[0]["unit_price"]) if rows else None
+        if not sku_rows:
+            return {"sku": {}, "history": []}
+        history_rows = self.query(
+            """
+            SELECT i.id AS item_id, i.unit_price, i.quantity, i.unit_id,
+                   i.remember_price, i.price_source, i.price_reference_item_id,
+                   s.id AS sales_id, s.sales_no, s.sales_at,
+                   DATEDIFF(CURDATE(), DATE(s.sales_at)) AS age_days,
+                   u.name AS unit_name
+            FROM sales_order_item i
+            JOIN sales_order s ON s.id=i.sales_order_id
+            LEFT JOIN product_unit u ON u.id=i.unit_id
+            WHERE s.customer_id=%s AND i.sku_id=%s
+              AND s.status IN ('confirmed', 'completed')
+              AND s.deleted_at IS NULL
+            ORDER BY s.sales_at DESC, i.id DESC
+            LIMIT %s
+            """,
+            (customer_id, sku_id, max(1, min(int(limit or 10), 50))),
+        )
+        return {"sku": sku_rows[0], "history": history_rows}
+
+    def sales_history_price(self, customer_id: int, product_id: int) -> float | None:
+        context = self.sales_price_context(customer_id, product_id, limit=20)
+        for row in context.get("history") or []:
+            try:
+                price = float(row.get("unit_price") or 0)
+                remember = int(row.get("remember_price") if row.get("remember_price") is not None else 1)
+            except (TypeError, ValueError):
+                continue
+            if price > 0 and remember == 1:
+                return price
+        return None
 
     def get_product_price(self, product_id: int) -> float | None:
         sku_id = self.resolve_sku_id(product_id)

@@ -10,6 +10,7 @@ import type {
   BagUploadResult,
   CustomerBalanceActionPayload,
   CustomerBalanceLedgerResult,
+  CustomerPriceHistoryItem,
   AuthUser,
   CustomerItem,
   CustomerListResult,
@@ -47,6 +48,7 @@ import type {
   SalesDetail,
   SalesOrderPayload,
   SalesOrderResult,
+  SalesPricePreview,
   SalesPaymentUpdatePayload,
   SalesPrintTask,
   SalesProduct,
@@ -570,6 +572,19 @@ export const api = {
   customerPrice: (customerId: number, productId: number) =>
     request<{ price: number | string | null }>(
       `/api/customer/price?customer_id=${customerId}&product_id=${productId}`
+    ),
+  pricePreview: (customerId: number, productId: number, quantity = 1, unitId?: number) => {
+    const params = new URLSearchParams({
+      customer_id: String(customerId),
+      product_id: String(productId),
+      quantity: String(quantity)
+    });
+    if (unitId) params.set("unit_id", String(unitId));
+    return request<SalesPricePreview>(`/api/sales/price-preview?${params.toString()}`);
+  },
+  customerPriceHistory: (id: number, page = 1, pageSize = 20) =>
+    request<ListResult<CustomerPriceHistoryItem>>(
+      `/api/customers/${id}/price-history?page=${page}&page_size=${pageSize}`
     ),
   retailPrice: (productId: number) =>
     request<{ price: number | string | null }>(`/api/product/retail-price?product_id=${productId}`),

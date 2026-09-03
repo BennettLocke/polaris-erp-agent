@@ -11,6 +11,36 @@ from typing import Any
 from .base import BusinessService
 
 
+AUTO_HISTORY_CATEGORIES = {
+    "半斤礼盒",
+    "三两礼盒",
+    "二两礼盒",
+    "一两礼盒",
+    "五格礼盒",
+    "3小盒礼盒",
+    "6小盒礼盒",
+}
+SUGGEST_HISTORY_CATEGORIES = {"2泡小盒", "pvc礼盒", "PVC礼盒", "快递纸箱", "未分类"}
+OFF_HISTORY_PRODUCT_TYPES = {"bag", "service", "accessory"}
+OFF_HISTORY_CATEGORIES = {"其他产品", "其他", "标签", "烫金", "内衬"}
+
+
+def _number(value: Any, fallback: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _setting_value(result: Any) -> dict:
+    if not isinstance(result, dict):
+        return {}
+    data = result.get("data")
+    if isinstance(data, dict) and isinstance(data.get("value"), dict):
+        return data["value"]
+    return result.get("value") if isinstance(result.get("value"), dict) else {}
+
+
 def _extract_sales_id(result: dict) -> int:
     if not isinstance(result, dict):
         return 0
@@ -26,7 +56,133 @@ def _extract_sales_id(result: dict) -> int:
 
 
 class SalesService(BusinessService):
-    def normalize_products(self, products: list[dict]) -> list[dict]:
+    def _price_rules(self) -> dict:
+        defaults = {
+            "enabled": 1,
+            "valid_days": 180,
+            "min_retail_ratio": 0.5,
+            "max_retail_ratio": 2.0,
+            "default_policy": "suggest",
+            "category_policies": {},
+            "product_overrides": {},
+        }
+        try:
+            configured = _setting_value(self.db.system_setting("price_rules"))
+        except Exception:
+            configured = {}
+        defaults.update(configured)
+        return defaults
+
+    def _history_policy(self, sku: dict, rules: dict) -> str:
+        if int(rules.get("enabled") or 0) != 1:
+            return "off"
+        overrides = rules.get("product_overrides") if isinstance(rules.get("product_overrides"), dict) else {}
+        override = str(overrides.get(str(sku.get("spu_id") or "")) or "").strip().lower()
+        if override in {"auto", "suggest", "off"}:
+            return override
+        policies = rules.get("category_policies") if isinstance(rules.get("category_policies"), dict) else {}
+        configured = str(
+            policies.get(str(sku.get("category_id") or ""))
+            or policies.get(str(sku.get("category_name") or ""))
+            or ""
+        ).strip().lower()
+        if configured in {"auto", "suggest", "off"}:
+            return configured
+        category_name = str(sku.get("category_name") or "未分类").strip()
+        product_type = str(sku.get("product_type") or "").strip().lower()
+        if (
+            product_type in OFF_HISTORY_PRODUCT_TYPES
+            or category_name in OFF_HISTORY_CATEGORIES
+            or "泡袋" in category_name
+            or "茶袋" in category_name
+        ):
+            return "off"
+        if category_name in AUTO_HISTORY_CATEGORIES:
+            return "auto"
+        if category_name in SUGGEST_HISTORY_CATEGORIES:
+            return "suggest"
+        return str(rules.get("default_policy") or "suggest")
+
+    def price_preview(
+        self,
+        *,
+        customer_id: int,
+        product_id: int,
+        quantity: Any = 1,
+        unit_id: int | None = None,
+    ) -> dict:
+        context = self.db.sales_price_context(customer_id, product_id, limit=10)
+        sku = context.get("sku") if isinstance(context, dict) else {}
+        sku = sku if isinstance(sku, dict) else {}
+        rules = self._price_rules()
+        policy = self._history_policy(sku, rules)
+        effective_policy = policy
+        retail_price = _number(sku.get("retail_price") or sku.get("min_price") or sku.get("max_price"))
+        selected_unit_id = int(unit_id or sku.get("unit_id") or 0)
+        warnings: list[str] = []
+        candidate = None
+
+        if policy != "off":
+            for row in context.get("history") or []:
+                if not isinstance(row, dict):
+                    continue
+                if _number(row.get("unit_price")) <= 0:
+                    continue
+                if int(row.get("remember_price") if row.get("remember_price") is not None else 1) != 1:
+                    continue
+                row_unit_id = int(row.get("unit_id") or 0)
+                if selected_unit_id and row_unit_id and row_unit_id != selected_unit_id:
+                    continue
+                candidate = row
+                break
+
+        history_data = None
+        if candidate:
+            history_price = _number(candidate.get("unit_price"))
+            history_data = {
+                **candidate,
+                "price": history_price,
+                "quantity": _number(candidate.get("quantity")),
+            }
+            age_days = int(_number(candidate.get("age_days"), 0))
+            valid_days = max(1, int(_number(rules.get("valid_days"), 180)))
+            if age_days > valid_days:
+                warnings.append(f"历史价已超过{valid_days}天")
+            if retail_price > 0:
+                ratio = history_price / retail_price
+                min_ratio = max(0.01, _number(rules.get("min_retail_ratio"), 0.5))
+                max_ratio = max(min_ratio, _number(rules.get("max_retail_ratio"), 2.0))
+                if ratio < min_ratio or ratio > max_ratio:
+                    warnings.append("历史价与当前零售价差异较大")
+            if policy == "auto" and warnings:
+                effective_policy = "suggest"
+
+        price = retail_price
+        source = "retail_price" if retail_price > 0 else "missing"
+        reference_item_id = None
+        if candidate and effective_policy == "auto":
+            price = _number(candidate.get("unit_price"))
+            source = "customer_history"
+            reference_item_id = int(candidate.get("item_id") or 0) or None
+
+        return {
+            "customer_id": int(customer_id),
+            "product_id": int(product_id),
+            "quantity": _number(quantity, 1),
+            "unit_id": selected_unit_id or None,
+            "price": price if price > 0 else None,
+            "source": source,
+            "policy": policy,
+            "effective_policy": effective_policy,
+            "retail_price": retail_price if retail_price > 0 else None,
+            "history": history_data,
+            "warnings": warnings,
+            "remember_default": policy == "auto",
+            "price_reference_item_id": reference_item_id,
+            "sku": sku,
+        }
+
+    def normalize_products(self, products: list[dict], *, customer_id: int = 0) -> list[dict]:
         normalized: list[dict] = []
         detail_cache: dict[int, dict] = {}
         for item in products or []:
@@ -49,6 +205,49 @@ class SalesService(BusinessService):
             next_item = dict(item)
             if not next_item.get("unit_id"):
                 next_item["unit_id"] = int(detail.get("unit_id") or 1)
+            explicit_price = next_item.get("price") not in (None, "")
+            if explicit_price:
+                next_item["price"] = _number(next_item.get("price"))
+                preview = {}
+                if not next_item.get("price_source") and customer_id:
+                    try:
+                        preview = self.price_preview(
+                            customer_id=int(customer_id),
+                            product_id=pid,
+                            quantity=next_item.get("buy_number") or next_item.get("quantity") or 1,
+                            unit_id=int(next_item.get("unit_id") or 0) or None,
+                        )
+                    except Exception:
+                        preview = {}
+                    preview_price = _number(preview.get("price"), -1)
+                    if preview_price > 0 and abs(preview_price - next_item["price"]) < 0.005:
+                        next_item["price_source"] = preview.get("source") or "retail_price"
+                        next_item["price_reference_item_id"] = preview.get("price_reference_item_id")
+                    else:
+                        next_item["price_source"] = "manual_override"
+                elif not next_item.get("price_source"):
+                    next_item["price_source"] = "manual_override"
+                if "remember_price" in next_item:
+                    next_item["remember_price"] = 1 if next_item.get("remember_price") else 0
+                else:
+                    next_item["remember_price"] = 1 if preview.get("remember_default") else 0
+                if next_item["price_source"] != "customer_history":
+                    next_item["price_reference_item_id"] = None
+            else:
+                try:
+                    preview = self.price_preview(
+                        customer_id=int(next_item.get("customer_id") or customer_id or 0),
+                        product_id=pid,
+                        quantity=next_item.get("buy_number") or next_item.get("quantity") or 1,
+                        unit_id=int(next_item.get("unit_id") or 0) or None,
+                    )
+                except Exception:
+                    preview = {}
+                if preview.get("price") not in (None, ""):
+                    next_item["price"] = preview["price"]
+                    next_item["price_source"] = preview.get("source") or "retail_price"
+                    next_item["remember_price"] = 1 if preview.get("remember_default") else 0
+                    next_item["price_reference_item_id"] = preview.get("price_reference_item_id")
             normalized.append(next_item)
         return normalized
 
@@ -65,7 +264,7 @@ class SalesService(BusinessService):
         workflow_order_id: int | None = None,
         allow_negative_stock: Any | None = None,
     ) -> dict:
-        normalized_products = self.normalize_products(products)
+        normalized_products = self.normalize_products(products, customer_id=customer_id)
         result = self.db.create_sales_order(
             customer_id=customer_id,
             warehouse_id=warehouse_id,

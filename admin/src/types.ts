@@ -696,6 +696,49 @@ export type SalesOrderLinePayload = {
   warehouse_id: number;
   buy_number: number;
   price: number;
+  price_source?: "customer_history" | "retail_price" | "manual_override" | string;
+  remember_price?: boolean | number;
+  price_reference_item_id?: number | null;
+};
+
+export type SalesPricePreview = {
+  customer_id: number;
+  product_id: number;
+  quantity: number;
+  unit_id?: number | null;
+  price: number | string | null;
+  source: string;
+  policy: "auto" | "suggest" | "off" | string;
+  effective_policy: "auto" | "suggest" | "off" | string;
+  retail_price?: number | string | null;
+  history?: {
+    item_id?: number;
+    price?: number | string;
+    quantity?: number | string;
+    sales_no?: string;
+    sales_at?: string;
+    unit_name?: string;
+  } | null;
+  warnings?: string[];
+  remember_default?: boolean;
+  price_reference_item_id?: number | null;
+};
+
+export type CustomerPriceHistoryItem = {
+  item_id: number;
+  product_id: number;
+  spu_id?: number;
+  title?: string;
+  color?: string;
+  sku_no?: string;
+  category_name?: string;
+  unit_price: number | string;
+  quantity: number | string;
+  unit_name?: string;
+  price_source?: string;
+  sales_id?: number;
+  sales_no?: string;
+  sales_at?: string;
 };
 
 export type SalesOrderPayload = {

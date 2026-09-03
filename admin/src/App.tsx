@@ -476,12 +476,27 @@ function SalesNewPage() {
     setError("");
     try {
       let price = toNumber(variant.price || variant.min_price || product.price || product.min_price);
+      let priceSource = "retail_price";
+      let pricePolicy = "off";
+      let suggestedHistoryPrice: number | string | null = null;
+      let priceWarning = "";
+      let rememberPrice = false;
+      let priceReferenceItemId: number | null = null;
       if (selectedCustomer?.id) {
         try {
-          const history = await api.customerPrice(Number(selectedCustomer.id), productId);
-          if (history.price !== null && history.price !== undefined && history.price !== "") {
-            price = toNumber(history.price, price);
-          }
+          const preview = await api.pricePreview(
+            Number(selectedCustomer.id),
+            productId,
+            Math.max(1, Number(lineQty || 1)),
+            Number(variant.unit_id || product.unit_id || 1)
+          );
+          if (preview.price !== null && preview.price !== undefined && preview.price !== "") price = toNumber(preview.price, price);
+          priceSource = preview.source || priceSource;
+          pricePolicy = preview.effective_policy || preview.policy || pricePolicy;
+          suggestedHistoryPrice = preview.history?.price ?? null;
+          priceWarning = (preview.warnings || []).join("；");
+          rememberPrice = Boolean(preview.remember_default);
+          priceReferenceItemId = preview.price_reference_item_id || null;
         } catch {
           const retail = await api.retailPrice(productId).catch(() => null);
           if (retail?.price !== null && retail?.price !== undefined && retail?.price !== "") {
@@ -504,14 +519,30 @@ function SalesNewPage() {
         purchase_policy: variant.purchase_policy || product.purchase_policy || "",
         is_one_case_purchase: Number(variant.is_one_case_purchase ?? product.is_one_case_purchase ?? 0),
         case_pack_qty: variant.case_pack_qty || product.case_pack_qty || "",
-        piece_text: variant.piece_text || product.piece_text || ""
+        piece_text: variant.piece_text || product.piece_text || "",
+        price_source: priceSource,
+        price_policy: pricePolicy,
+        suggested_history_price: suggestedHistoryPrice,
+        price_warning: priceWarning,
+        remember_price: rememberPrice,
+        price_reference_item_id: priceReferenceItemId
       };
       setLines((prev) => {
         const index = prev.findIndex((line) => line.product_id === nextLine.product_id && line.warehouse_id === nextLine.warehouse_id);
         if (index < 0) return [...prev, nextLine];
         return prev.map((line, lineIndex) => (
           lineIndex === index
-            ? { ...line, buy_number: toNumber(line.buy_number) + nextLine.buy_number, price: nextLine.price }
+            ? {
+                ...line,
+                buy_number: toNumber(line.buy_number) + nextLine.buy_number,
+                price: nextLine.price,
+                price_source: nextLine.price_source,
+                price_policy: nextLine.price_policy,
+                suggested_history_price: nextLine.suggested_history_price,
+                price_warning: nextLine.price_warning,
+                remember_price: nextLine.remember_price,
+                price_reference_item_id: nextLine.price_reference_item_id
+              }
             : line
         ));
       });
@@ -523,10 +554,14 @@ function SalesNewPage() {
     }
   }
 
-  function updateLine(index: number, field: "buy_number" | "price" | "warehouse_id", value: string) {
+  function updateLine(index: number, field: "buy_number" | "price" | "warehouse_id" | "remember_price", value: string) {
     setLines((prev) => prev.map((line, lineIndex) => {
       if (lineIndex !== index) return line;
+      if (field === "remember_price") return { ...line, remember_price: value === "1" };
       const clean = field === "price" ? Math.max(0, toNumber(value)) : Math.max(1, toNumber(value, 1));
+      if (field === "price") {
+        return { ...line, price: clean, price_source: "manual_override", price_reference_item_id: null };
+      }
       return { ...line, [field]: clean };
     }));
   }
@@ -555,7 +590,10 @@ function SalesNewPage() {
         unit_id: line.unit_id || 1,
         warehouse_id: Number(line.warehouse_id || defaultWarehouseId || 2),
         buy_number: Number(line.buy_number || 1),
-        price: Number(line.price || 0)
+        price: Number(line.price || 0),
+        price_source: line.price_source || "manual_override",
+        remember_price: line.remember_price ? 1 : 0,
+        price_reference_item_id: line.price_reference_item_id || null
       }))
     };
   }

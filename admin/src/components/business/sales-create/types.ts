@@ -20,6 +20,12 @@ export type SalesFormLine = {
   is_one_case_purchase?: number;
   case_pack_qty?: string | number;
   piece_text?: string;
+  price_source?: string;
+  price_policy?: string;
+  suggested_history_price?: number | string | null;
+  price_warning?: string;
+  remember_price?: boolean;
+  price_reference_item_id?: number | null;
 };
 
 export type SalesLoadingKey = "" | "customer" | "create-customer" | "product" | "submit" | "print-last" | "detail-last" | string;
@@ -79,6 +85,6 @@ export type ProductSearchProps = {
 export type LineTableProps = {
   lines: SalesFormLine[];
   warehouses: Warehouse[];
-  onUpdateLine: (index: number, field: "buy_number" | "price" | "warehouse_id", value: string) => void;
+  onUpdateLine: (index: number, field: "buy_number" | "price" | "warehouse_id" | "remember_price", value: string) => void;
   onRemoveLine: (index: number) => void;
 };

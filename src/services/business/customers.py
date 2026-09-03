@@ -102,6 +102,9 @@ class CustomerService(BusinessService):
             date_to=date_to,
         )
 
+    def price_history(self, customer_id: int, *, page: int = 1, page_size: int = 20) -> tuple[list[dict], int]:
+        return self.db.customer_price_history(customer_id, page=page, page_size=page_size)
+
 
 class CustomerBalanceService(BusinessService):
     def ledger(self, customer_id: int, *, page: int = 1, page_size: int = 100) -> tuple[list[dict], int, dict]:

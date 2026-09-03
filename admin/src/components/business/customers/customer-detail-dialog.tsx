@@ -40,6 +40,7 @@ import type {
   CustomerBalanceLedgerItem,
   CustomerBalanceSummary,
   CustomerItem,
+  CustomerPriceHistoryItem,
   CustomerSalesItem,
   CustomerSalesSummary,
   SalesCard,
@@ -61,6 +62,7 @@ import {
 
 const ledgerPageSize = 12;
 const salesPageSize = 12;
+const priceHistoryPageSize = 12;
 type CustomerSalesPayStatus = "all" | "unsettled" | "paid" | "monthly" | "unpaid";
 
 type Props = {
@@ -83,6 +85,9 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
   const [ledgerSummary, setLedgerSummary] = useState<CustomerBalanceSummary | null>(null);
   const [ledgerPage, setLedgerPage] = useState(1);
   const [ledgerTotal, setLedgerTotal] = useState(0);
+  const [priceHistory, setPriceHistory] = useState<CustomerPriceHistoryItem[]>([]);
+  const [priceHistoryPage, setPriceHistoryPage] = useState(1);
+  const [priceHistoryTotal, setPriceHistoryTotal] = useState(0);
   const [period, setPeriod] = useState("");
   const [month, setMonth] = useState("");
   const [loading, setLoading] = useState(false);
@@ -103,6 +108,7 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
   const canAdjustBalance = hasPermission(currentUser, "调余额");
   const salesPageCount = Math.max(1, Math.ceil(salesTotal / salesPageSize));
   const ledgerPageCount = Math.max(1, Math.ceil(ledgerTotal / ledgerPageSize));
+  const priceHistoryPageCount = Math.max(1, Math.ceil(priceHistoryTotal / priceHistoryPageSize));
 
   async function loadDetail(
     nextPeriod = period,
@@ -202,6 +208,28 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
     }
   }
 
+  async function loadPriceHistory(nextPage = 1, target = selected) {
+    if (!target) return;
+    const safePage = Math.max(1, nextPage);
+    setLoading(true);
+    setError("");
+    try {
+      const data = await api.customerPriceHistory(target.id, safePage, priceHistoryPageSize);
+      setPriceHistory(data.list || []);
+      setPriceHistoryPage(data.page || safePage);
+      setPriceHistoryTotal(data.total || 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "客户价格历史加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function changeTab(nextTab: string) {
+    setTab(nextTab);
+    if (nextTab === "prices" && !priceHistory.length) void loadPriceHistory(1);
+  }
+
   useEffect(() => {
     setCurrent(customer);
     setPeriod("");
@@ -215,6 +243,9 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
     setSalesPayStatus("all");
     setLedgerPage(1);
     setLedgerTotal(0);
+    setPriceHistory([]);
+    setPriceHistoryPage(1);
+    setPriceHistoryTotal(0);
     setNotice("");
     setTab(initialTab || "overview");
     if (customer) void loadDetail("", "", customer, 1, "all");
@@ -346,12 +377,13 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
         {error ? <div className="form-error">{error}</div> : null}
         {notice ? <div className="form-success">{notice}</div> : null}
 
-        <Tabs value={tab} onValueChange={setTab} className="customer-detail-tabs">
+        <Tabs value={tab} onValueChange={changeTab} className="customer-detail-tabs">
           <TabsList>
             <TabsTrigger value="overview">概览</TabsTrigger>
             <TabsTrigger value="sales">销售单</TabsTrigger>
             <TabsTrigger value="statement">对账单</TabsTrigger>
             <TabsTrigger value="ledger">余额明细</TabsTrigger>
+            <TabsTrigger value="prices">价格历史</TabsTrigger>
             <TabsTrigger value="profile">资料</TabsTrigger>
           </TabsList>
 
@@ -555,6 +587,51 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
                 </EmptyHeader>
               </Empty>
             ) : null}
+          </TabsContent>
+
+          <TabsContent value="prices">
+            <div className="customer-tab-header">
+              <div>
+                <strong>已记忆成交价</strong>
+                <span>共 {priceHistoryTotal} 条，均可追溯到原销售单</span>
+              </div>
+              <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void loadPriceHistory(priceHistoryPage)}>刷新</Button>
+            </div>
+            {priceHistory.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>商品</TableHead>
+                    <TableHead>颜色/SKU</TableHead>
+                    <TableHead>成交价</TableHead>
+                    <TableHead>数量</TableHead>
+                    <TableHead>来源单号</TableHead>
+                    <TableHead>时间</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {priceHistory.map((item) => (
+                    <TableRow key={item.item_id}>
+                      <TableCell><strong>{item.title || "商品"}</strong><br /><span>{item.category_name || "未分类"}</span></TableCell>
+                      <TableCell>{item.color || "默认颜色"}<br /><span>{item.sku_no || "未编号"}</span></TableCell>
+                      <TableCell><strong>{money(item.unit_price)}</strong> / {item.unit_name || "单位"}</TableCell>
+                      <TableCell>{item.quantity} {item.unit_name || ""}</TableCell>
+                      <TableCell>{item.sales_no || item.sales_id || "-"}</TableCell>
+                      <TableCell>{displayDate(item.sales_at)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : !loading ? (
+              <Empty><EmptyHeader><EmptyTitle>还没有可用价格历史</EmptyTitle><EmptyDescription>开启自动使用的分类，在成交后会出现在这里。</EmptyDescription></EmptyHeader></Empty>
+            ) : null}
+            <Pagination>
+              <PaginationContent>
+                <PaginationItem><PaginationPrevious disabled={priceHistoryPage <= 1 || loading} onClick={() => void loadPriceHistory(priceHistoryPage - 1)}>上一页</PaginationPrevious></PaginationItem>
+                <PaginationItem><Badge variant="outline">{Math.min(priceHistoryPage, priceHistoryPageCount)} / {priceHistoryPageCount}</Badge></PaginationItem>
+                <PaginationItem><PaginationNext disabled={priceHistoryPage >= priceHistoryPageCount || loading} onClick={() => void loadPriceHistory(priceHistoryPage + 1)}>下一页</PaginationNext></PaginationItem>
+              </PaginationContent>
+            </Pagination>
           </TabsContent>
 
           <TabsContent value="profile">

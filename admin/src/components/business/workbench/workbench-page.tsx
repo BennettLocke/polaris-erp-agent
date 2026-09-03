@@ -20,6 +20,7 @@ import { api } from "@/api";
 import { queryKeys } from "@/lib/admin-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardAction,
@@ -122,7 +123,7 @@ type PendingConfirmKind =
   | "generic";
 
 type ConfirmField = PendingField & {
-  control?: "input" | "warehouse-select";
+  control?: "input" | "warehouse-select" | "checkbox";
   inputMode?: "text" | "numeric" | "decimal";
   readOnly?: boolean;
 };
@@ -274,6 +275,12 @@ function warehouseIdFromName(value: string) {
 
 function displayConfirmValue(field: ConfirmField) {
   if (isWarehousePath(field.path)) return warehouseNameFromId(field.value);
+  if (field.path.endsWith("price_source")) {
+    const source = String(field.value || "");
+    if (source === "customer_history") return "客户历史价";
+    if (source === "manual_override") return "人工修改";
+    if (source === "retail_price") return "商品零售价";
+  }
   return field.value === undefined || field.value === null ? "" : String(field.value);
 }
 
@@ -308,6 +315,9 @@ function labelFromPath(path: string) {
     quantity: "数量",
     order_quantity: "数量",
     price: "单价",
+    price_source: "价格来源",
+    suggested_history_price: "客户历史价参考",
+    remember_price: "记住本次价格",
     warehouse_id: "仓库",
     purchase_warehouse_id: "入库仓库",
     from_wh: "调出仓库",
@@ -474,6 +484,9 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
     { paths: ["qty", "quantity", "order_quantity", "buy_number"], label: "数量", options: { inputMode: "decimal" as const } },
     { paths: ["unit", "unit_name"], label: "单位", required: false },
     { paths: ["price", "unit_price"], label: "单价", options: { inputMode: "decimal" as const }, required: false },
+    { paths: ["suggested_history_price"], label: "客户历史价参考", options: { inputMode: "decimal" as const, readOnly: true }, required: false },
+    { paths: ["price_source"], label: "价格来源", options: { readOnly: true }, required: false },
+    { paths: ["remember_price"], label: "记住本次价格", options: { control: "checkbox" as const }, required: false },
     { paths: ["warehouse_id", "warehouse_name"], label: "仓库", required: false, options: { control: "warehouse-select" as const } }
   ];
 
@@ -2089,6 +2102,14 @@ function ConfirmSectionEditor({
                   <SelectItem value="2">百鑫仓库</SelectItem>
                 </SelectContent>
               </Select>
+            ) : field.control === "checkbox" ? (
+              <label className="workbench-confirm-checkbox">
+                <Checkbox
+                  checked={["1", "true", "是", "已"].includes(String(values[field.path] ?? "").toLowerCase())}
+                  onCheckedChange={(checked) => onValueChange(field.path, checked ? "1" : "0")}
+                />
+                <span>将本次成交价用于该客户下次同款开单</span>
+              </label>
             ) : (
               <Input
                 value={values[field.path] ?? ""}

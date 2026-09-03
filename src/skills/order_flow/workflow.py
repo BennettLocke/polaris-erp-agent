@@ -1094,30 +1094,60 @@ class OrderFlowWorkflow(BaseWorkflow):
         ).strip()
 
     def _fill_price(self, customer_id: int, product: dict):
-        """B3: 填充价格（优先历史价，其次零售价）"""
+        """B3: Apply the shared customer-price policy used by manual sales."""
+        try:
+            preview = self.caller.call(
+                "sales_price_preview",
+                customer_id=customer_id,
+                product_id=product["product_id"],
+                quantity=product.get("qty") or product.get("quantity") or 1,
+                unit_id=product.get("unit_id"),
+            )
+            if isinstance(preview, dict) and isinstance(preview.get("data"), dict):
+                preview = preview["data"]
+            if isinstance(preview, dict) and not preview.get("error"):
+                product["price_policy"] = preview.get("effective_policy") or preview.get("policy")
+                history = preview.get("history") if isinstance(preview.get("history"), dict) else {}
+                if history.get("price") not in (None, ""):
+                    product["suggested_history_price"] = history.get("price")
+                if product.get("price_overridden"):
+                    product["price_source"] = "manual_override"
+                    product["remember_price"] = 1 if preview.get("remember_default") else 0
+                    product["price_reference_item_id"] = None
+                    logger.info(f"[OrderFlow] 用户指定价格: {product['name']} = {product['price']}")
+                    return
+                if preview.get("price") not in (None, "") and float(preview.get("price") or 0) > 0:
+                    product["price"] = float(preview["price"])
+                    product["price_source"] = preview.get("source") or "retail_price"
+                    product["remember_price"] = 1 if preview.get("remember_default") else 0
+                    product["price_reference_item_id"] = preview.get("price_reference_item_id")
+                    logger.info(f"[OrderFlow] 规则价格: {product['name']} = {product['price']}")
+                    return
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 价格预判失败: {product.get('name', '')}: {e}")
+
         if product.get("price_overridden"):
+            product["price_source"] = "manual_override"
+            product["remember_price"] = 0
+            product["price_reference_item_id"] = None
             logger.info(f"[OrderFlow] 用户指定价格: {product['name']} = {product['price']}")
             return
 
-        # 查历史成交价
-        try:
-            history = self.caller.call("sales_history_price",
-                customer_id=customer_id,
-                product_id=product["product_id"],
-            )
-            if history and isinstance(history, (int, float)) and history > 0:
-                product["price"] = float(history)
-                logger.info(f"[OrderFlow] 历史价: {product['name']} = {history}")
-                return
-        except Exception as e:
-            logger.warning(f"[OrderFlow] 历史价查询失败: {product.get('name', '')}: {e}")
-
-        if product["price"] > 0:
+        if product.get("price", 0) > 0:
+            product["price_source"] = product.get("price_source") or "retail_price"
+            product["remember_price"] = int(product.get("remember_price") or 0)
             logger.info(f"[OrderFlow] 零售价: {product['name']} = {product['price']}")
             return
 
-        # 用零售价（search_product 已返回 price）
-        # 如果还是 0，用 0（开单时 API 会用默认价）
+        try:
+            history = self.caller.call("sales_history_price", customer_id=customer_id, product_id=product["product_id"])
+            if history and isinstance(history, (int, float)) and history > 0:
+                product["price"] = float(history)
+                product["price_source"] = "customer_history"
+                product["remember_price"] = 1
+                return
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 历史价查询失败: {product.get('name', '')}: {e}")
         logger.info(f"[OrderFlow] 价格: {product['name']} = {product['price']}（零售价）")
 
     def _inventory_decision(self, products: list[dict], warehouse_hint: str | None) -> dict:
@@ -1561,6 +1591,9 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "buy_number": p.get("qty", 1),
                 "price": p.get("price", 0),
                 "warehouse_id": p.get("warehouse_id", warehouse_id),
+                "price_source": p.get("price_source") or "retail_price",
+                "remember_price": 1 if p.get("remember_price") else 0,
+                "price_reference_item_id": p.get("price_reference_item_id"),
             })
 
         if not api_products:

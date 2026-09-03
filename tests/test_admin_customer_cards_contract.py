@@ -6,6 +6,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AdminCustomerCardsContractTest(unittest.TestCase):
+    def test_customer_detail_exposes_auditable_price_history(self):
+        detail_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "customers" / "customer-detail-dialog.tsx"
+        ).read_text(encoding="utf-8")
+        api_source = (ROOT / "admin" / "src" / "api.ts").read_text(encoding="utf-8")
+        http_source = (ROOT / "src" / "channels" / "http_api" / "__init__.py").read_text(encoding="utf-8")
+        db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+
+        self.assertIn('value="prices"', detail_source)
+        self.assertIn("customerPriceHistory", detail_source)
+        self.assertIn("已记忆成交价", detail_source)
+        self.assertIn("/price-history", api_source)
+        self.assertIn("native_customer_price_history_api", http_source)
+        self.assertIn("def customer_price_history(", db_source)
+        self.assertIn("i.remember_price=1", db_source)
+
     def test_customer_balance_action_dialog_validates_settlement_and_adjustment(self):
         dialog_source = (
             ROOT

@@ -32,6 +32,8 @@ class AdminSalesNewContractTest(unittest.TestCase):
         self.assertIn("group=1", api_source)
         self.assertIn("customerPrice", api_source)
         self.assertIn("/api/customer/price", api_source)
+        self.assertIn("pricePreview", api_source)
+        self.assertIn("/api/sales/price-preview", api_source)
         self.assertIn("createSalesOrder", api_source)
         self.assertIn("/api/sales/add", api_source)
 
@@ -42,6 +44,8 @@ class AdminSalesNewContractTest(unittest.TestCase):
         self.assertIn("addSalesLine", app_source)
         self.assertIn("submitSalesOrder", app_source)
         self.assertIn("products: lines.map", app_source)
+        self.assertIn("price_source", app_source)
+        self.assertIn("remember_price", app_source)
 
     def test_sales_new_page_uses_shadcn_component_layer(self):
         app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")

@@ -5,6 +5,7 @@ import {
   Eye,
   Factory,
   Hash,
+  History,
   Image,
   Images,
   Layers,
@@ -109,12 +110,13 @@ type SettingsSectionKey =
   | "manufacturers"
   | "inventory"
   | "payment"
+  | "pricing"
   | "media"
   | "miniapp"
   | "users"
   | "print";
 
-type SettingKey = "product_basic" | "inventory_rules" | "payment_rules" | "image_rules";
+type SettingKey = "product_basic" | "inventory_rules" | "payment_rules" | "price_rules" | "image_rules";
 type MiniappImageField = MiniappImageUpdatePayload["field"];
 type MiniappImageTarget = MiniappImageUpdatePayload["target_type"];
 type MiniappAssetScene = "home_banner" | "bottom_tab";
@@ -153,6 +155,7 @@ const sectionItems: Array<{
   { key: "manufacturers", label: "厂家设置", desc: "厂家资料和停用", icon: Factory },
   { key: "inventory", label: "库存规则", desc: "扣库存和仓库", icon: Boxes },
   { key: "payment", label: "收款结款", desc: "付款状态和余额", icon: WalletCards },
+  { key: "pricing", label: "客户价格", desc: "历史成交价记忆规则", icon: History },
   { key: "media", label: "图片资产", desc: "商品图资产库", icon: Images },
   { key: "miniapp", label: "小程序设置", desc: "轮播、分类、导航", icon: Smartphone },
   { key: "users", label: "用户权限", desc: "账号角色和启用", icon: Users },
@@ -376,6 +379,7 @@ function SettingsPage({ currentUser }: SettingsPageProps) {
       {activeSection === "manufacturers" ? <ManufacturersPanel {...callbacks} /> : null}
       {activeSection === "inventory" ? <InventoryRulesPanel {...callbacks} /> : null}
       {activeSection === "payment" ? <PaymentRulesPanel {...callbacks} /> : null}
+      {activeSection === "pricing" ? <CustomerPriceRulesPanel {...callbacks} /> : null}
       {activeSection === "media" ? <MediaSettingsPanel {...callbacks} /> : null}
       {activeSection === "miniapp" ? <MiniappSettingsPanel {...callbacks} /> : null}
       {activeSection === "users" ? <UserPermissionsPanel {...callbacks} currentUser={currentUser} /> : null}
@@ -1461,6 +1465,165 @@ function InventoryRulesPanel({ markDirty, onSaved, onError, registerSave }: Pane
         saving={saving}
         onSave={() => void saveSystemSetting()}
       />
+    </>
+  );
+}
+
+function defaultCustomerPricePolicy(category: ProductCategory) {
+  const name = String(category.name || "");
+  const productType = String(category.product_type || "").toLowerCase();
+  if (["半斤礼盒", "三两礼盒", "二两礼盒", "一两礼盒", "五格礼盒", "3小盒礼盒", "6小盒礼盒"].includes(name)) return "auto";
+  if (["2泡小盒", "PVC礼盒", "pvc礼盒", "快递纸箱", "未分类"].includes(name)) return "suggest";
+  if (["bag", "service", "accessory"].includes(productType) || /泡袋|茶袋|标签|烫金|内衬|其他产品/.test(name)) return "off";
+  return "suggest";
+}
+
+function CustomerPriceRulesPanel({ markDirty, onSaved, onError, registerSave }: PanelCallbacks) {
+  const [setting, setSetting] = useState<SystemSetting | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      setSetting(await api.systemSetting("price_rules"));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "客户价格规则加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  function patchSetting(patch: Record<string, unknown>) {
+    setSetting((current) => {
+      const existing = current || { key: "price_rules", value: {} };
+      return { ...existing, value: { ...(existing.value || {}), ...patch } };
+    });
+    markDirty();
+  }
+
+  function updateCategoryPolicy(category: ProductCategory, policy: string) {
+    if (!category.id) return;
+    const value = setting?.value || {};
+    const current = value.category_policies && typeof value.category_policies === "object"
+      ? value.category_policies as Record<string, string>
+      : {};
+    patchSetting({ category_policies: { ...current, [String(category.id)]: policy } });
+  }
+
+  async function saveSystemSetting() {
+    if (!setting) return false;
+    setSaving(true);
+    try {
+      setSetting(await api.saveSystemSetting("price_rules", { value: setting.value || {} }));
+      onSaved("客户价格规则已保存，手工开单和 AI 开单会同时生效");
+      return true;
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "客户价格规则保存失败");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    registerSave("pricing", saveSystemSetting);
+  });
+
+  if (loading) return <SettingsLoading rows={5} />;
+  if (!setting) return <SettingsEmpty title="没有客户价格规则" desc="后端还没有返回价格记忆配置。" />;
+
+  const value = setting.value || {};
+  const policies = value.category_policies && typeof value.category_policies === "object"
+    ? value.category_policies as Record<string, string>
+    : {};
+
+  return (
+    <>
+      <div className="settings-two-column">
+        <Card>
+          <CardHeader>
+            <CardTitle>历史价安全规则</CardTitle>
+            <CardDescription>历史价格只匹配同一客户、同一颜色 SKU 和同一单位；零价、取消单和删除单不会参与。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup>
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel>启用客户历史价格</FieldLabel>
+                  <FieldDescription>关闭后所有分类都使用商品零售价，不读取客户历史价格。</FieldDescription>
+                </FieldContent>
+                <Switch checked={Number(value.enabled ?? 1) === 1} onCheckedChange={(checked) => patchSetting({ enabled: checked ? 1 : 0 })} />
+              </Field>
+              <Field>
+                <FieldLabel>有效期（天）</FieldLabel>
+                <FieldDescription>超过有效期的历史价只提示，不自动套用。</FieldDescription>
+                <Input type="number" min="1" max="3650" value={numberValue(value.valid_days, 180)} onChange={(event) => patchSetting({ valid_days: Number(event.target.value || 180) })} />
+              </Field>
+              <div className="settings-two-column">
+                <Field>
+                  <FieldLabel>最低零售价比例</FieldLabel>
+                  <Input type="number" min="0.01" max="10" step="0.01" value={numberValue(value.min_retail_ratio, 0.5)} onChange={(event) => patchSetting({ min_retail_ratio: Number(event.target.value || 0.5) })} />
+                </Field>
+                <Field>
+                  <FieldLabel>最高零售价比例</FieldLabel>
+                  <Input type="number" min="0.01" max="20" step="0.01" value={numberValue(value.max_retail_ratio, 2)} onChange={(event) => patchSetting({ max_retail_ratio: Number(event.target.value || 2) })} />
+                </Field>
+              </div>
+              <Field>
+                <FieldLabel>新分类默认策略</FieldLabel>
+                <Select value={String(value.default_policy || "suggest")} onValueChange={(next) => patchSetting({ default_policy: next })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">自动使用</SelectItem>
+                    <SelectItem value="suggest">只提示</SelectItem>
+                    <SelectItem value="off">不记忆</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>分类使用策略</CardTitle>
+            <CardDescription>稳定礼盒可自动使用；数量和工艺敏感商品建议只提示；泡袋、加工和辅料不记忆。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>分类</TableHead><TableHead>商品</TableHead><TableHead>策略</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {(setting.categories || []).map((category) => {
+                  const policy = policies[String(category.id)] || defaultCustomerPricePolicy(category);
+                  return (
+                    <TableRow key={category.id || category.name}>
+                      <TableCell><strong>{category.name}</strong></TableCell>
+                      <TableCell>{category.total || 0}</TableCell>
+                      <TableCell>
+                        <Select value={policy} onValueChange={(next) => updateCategoryPolicy(category, next)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">自动使用</SelectItem>
+                            <SelectItem value="suggest">只提示</SelectItem>
+                            <SelectItem value="off">不记忆</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+      <SettingsSaveBar text="保存后立即应用到后台手工开单与工作台 AI 开单。" saving={saving} onSave={() => void saveSystemSetting()} />
     </>
   );
 }

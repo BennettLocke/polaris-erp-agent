@@ -2,6 +2,7 @@ import { Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import {
@@ -22,6 +23,12 @@ import {
 } from "@/components/ui/table";
 import type { LineTableProps } from "./types";
 import { inputNoWheel, money, warehouseName } from "./utils";
+
+function priceSourceText(source?: string) {
+  if (source === "customer_history") return "已用客户历史价";
+  if (source === "manual_override") return "人工修改";
+  return "商品零售价";
+}
 
 function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineTableProps) {
   if (!lines.length) {
@@ -88,14 +95,29 @@ function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineT
                 )}
               </TableCell>
               <TableCell>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={line.price}
-                  onWheel={inputNoWheel}
-                  onChange={(event) => onUpdateLine(index, "price", event.target.value)}
-                />
+                <div className="sales-create-price-field">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={line.price}
+                    onWheel={inputNoWheel}
+                    onChange={(event) => onUpdateLine(index, "price", event.target.value)}
+                  />
+                  <span>{priceSourceText(line.price_source)}</span>
+                  {line.price_policy === "suggest" && line.suggested_history_price ? (
+                    <span>历史价 {money(line.suggested_history_price)}</span>
+                  ) : null}
+                  {line.price_warning ? <span>{line.price_warning}</span> : null}
+                  <label className="sales-create-remember-price">
+                    <Checkbox
+                      checked={Boolean(line.remember_price)}
+                      onCheckedChange={(checked) => onUpdateLine(index, "remember_price", checked ? "1" : "0")}
+                      aria-label="记住本次价格"
+                    />
+                    <span>记住本次价格</span>
+                  </label>
+                </div>
               </TableCell>
               <TableCell><strong>{money(line.buy_number * line.price)}</strong></TableCell>
               <TableCell>

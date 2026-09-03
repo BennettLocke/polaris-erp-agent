@@ -39,6 +39,7 @@ class AdminSettingsPageContractTest(unittest.TestCase):
             "ProductBasicPanel",
             "InventoryRulesPanel",
             "PaymentRulesPanel",
+            "CustomerPriceRulesPanel",
             "MediaSettingsPanel",
             "MiniappSettingsPanel",
             "UserPermissionsPanel",
@@ -87,6 +88,12 @@ class AdminSettingsPageContractTest(unittest.TestCase):
         self.assertIn("取消", settings_source)
         self.assertNotIn("window.confirm", settings_source)
         self.assertNotIn("window.alert", settings_source)
+        self.assertIn('label: "客户价格"', settings_source)
+        self.assertIn('api.systemSetting("price_rules")', settings_source)
+        self.assertIn('api.saveSystemSetting("price_rules"', settings_source)
+        self.assertIn("自动使用", settings_source)
+        self.assertIn("只提示", settings_source)
+        self.assertIn("不记忆", settings_source)
 
     def test_settings_page_can_manage_categories_and_inventory_rules(self):
         settings_source = (ROOT / "admin" / "src" / "components" / "business" / "settings" / "settings-page.tsx").read_text(encoding="utf-8")

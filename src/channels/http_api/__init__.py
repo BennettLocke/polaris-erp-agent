@@ -5293,6 +5293,28 @@ def customer_price():
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
+@app.route("/api/sales/price-preview", methods=["GET"])
+def sales_price_preview():
+    """Resolve the effective sales price and explain where it came from."""
+    customer_id = request.args.get("customer_id", type=int)
+    product_id = request.args.get("product_id", type=int)
+    quantity = request.args.get("quantity", default=1, type=float)
+    unit_id = request.args.get("unit_id", type=int)
+    if not customer_id or not product_id:
+        return jsonify({"code": 400, "msg": "customer_id and product_id are required"}), 400
+    try:
+        data = get_sales_service().price_preview(
+            customer_id=customer_id,
+            product_id=product_id,
+            quantity=quantity,
+            unit_id=unit_id,
+        )
+        return jsonify({"code": 0, "data": _safe_json(data)})
+    except Exception as e:
+        logger.error(f"销售价格预判异常: {e}")
+        return _api_exception_response(e)
+
+
 @app.route("/api/product/retail-price", methods=["GET"])
 def product_retail_price():
     """
@@ -5444,6 +5466,27 @@ def native_customer_statement_api(customer_id: int):
         return _api_exception_response(e)
     except Exception as e:
         logger.error(f"customer statement failed: customer_id={customer_id}, error={e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/customers/<int:customer_id>/price-history", methods=["GET"])
+def native_customer_price_history_api(customer_id: int):
+    """Remembered customer prices with their originating sales lines."""
+    page, page_size = _page_args(default_size=20, max_size=100)
+    try:
+        rows, total = get_customer_service().price_history(customer_id, page=page, page_size=page_size)
+        return jsonify({
+            "code": 0,
+            "data": {
+                "list": _safe_json(rows),
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "source": "native",
+            },
+        })
+    except Exception as e:
+        logger.error(f"客户历史价格查询异常: customer_id={customer_id}, error={e}")
         return _api_exception_response(e)
 
 
