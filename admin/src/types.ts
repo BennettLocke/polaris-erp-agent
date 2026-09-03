@@ -832,6 +832,7 @@ export type InventoryLedgerItem = {
   id: number;
   ledger_no?: string;
   sku_id?: number;
+  spu_id?: number;
   sku_no_snapshot?: string;
   title?: string;
   color?: string;
@@ -844,11 +845,34 @@ export type InventoryLedgerItem = {
   after_qty?: string | number;
   biz_type?: string;
   biz_id?: number;
+  biz_no?: string;
   counterparty_warehouse_id?: number;
+  counterparty_warehouse_name?: string;
   operator_name?: string;
   operator_username?: string;
   note?: string;
   occurred_at?: string;
+};
+
+export type InventoryLedgerContext = {
+  spu_id?: number;
+  title?: string;
+  selected_sku_id?: number | null;
+  skus?: Array<{
+    id: number;
+    sku_no?: string;
+    color?: string;
+  }>;
+  warehouses?: Array<{
+    id: number;
+    name: string;
+    quantity?: string | number;
+  }>;
+  total_quantity?: string | number;
+};
+
+export type InventoryLedgerResult = ListResult<InventoryLedgerItem> & {
+  context?: InventoryLedgerContext;
 };
 
 export type StockDocumentItem = {

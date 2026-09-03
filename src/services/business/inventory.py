@@ -59,17 +59,24 @@ class InventoryService(BusinessService):
         *,
         keyword: str = "",
         sku_id: int | None = None,
+        spu_id: int | None = None,
         warehouse_id: int | None = None,
+        biz_group: str = "",
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[dict], int]:
         return self.db.inventory_ledger(
             keyword=keyword,
             sku_id=sku_id,
+            spu_id=spu_id,
             warehouse_id=warehouse_id,
+            biz_group=biz_group,
             page=page,
             page_size=page_size,
         )
+
+    def ledger_context(self, *, sku_id: int | None = None, spu_id: int | None = None) -> dict:
+        return self.db.inventory_ledger_context(sku_id=sku_id, spu_id=spu_id)
 
     def stock_documents(self, *, keyword: str = "", page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
         return self.db.stock_documents(keyword=keyword, page=page, page_size=page_size)

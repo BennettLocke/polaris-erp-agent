@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -59,13 +60,6 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle
-} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -85,6 +79,7 @@ import type {
   InventoryActionPayload,
   InventoryActionResult,
   InventoryBalance,
+  InventoryLedgerContext,
   InventoryLedgerItem,
   InventorySummary,
   StockDocumentItem,
@@ -95,6 +90,7 @@ import type {
 
 type InventoryTab = "overview" | "balances" | "ledger" | "documents" | "stocktakes" | "transfers";
 type InventoryStatusFilter = "all" | "in_stock" | "zero" | "negative";
+type InventoryLedgerBizGroup = "all" | "sales" | "purchase" | "transfer" | "stocktake" | "initial";
 type InventoryActionMode = "purchase" | "transfer" | "stocktake";
 type InventoryActionTarget = {
   mode: InventoryActionMode;
@@ -137,6 +133,7 @@ const INVENTORY_PAGE_SIZE_RESIZE_DELAY = 160;
 const INVENTORY_ACTION_LOOKUP_PAGE_SIZE = 120;
 const STOCKTAKE_RISK_ABSOLUTE = 20;
 const STOCKTAKE_RISK_RATIO = 0.5;
+const INVENTORY_LEDGER_PAGE_SIZE = 20;
 
 const inventoryTabs: Array<{ value: InventoryTab; label: string }> = [
   { value: "overview", label: "库存总览" },
@@ -152,6 +149,15 @@ const statusFilters: Array<{ value: InventoryStatusFilter; label: string }> = [
   { value: "in_stock", label: "有库存" },
   { value: "zero", label: "零库存" },
   { value: "negative", label: "负库存" }
+];
+
+const ledgerBizGroups: Array<{ value: InventoryLedgerBizGroup; label: string }> = [
+  { value: "all", label: "全部类型" },
+  { value: "sales", label: "销售" },
+  { value: "purchase", label: "进货" },
+  { value: "transfer", label: "调拨" },
+  { value: "stocktake", label: "盘点" },
+  { value: "initial", label: "初始库存" }
 ];
 
 function clampInventoryPageSize(value: number) {
@@ -174,6 +180,12 @@ function quantityText(value: unknown) {
   const numeric = quantityNumber(value);
   if (!Number.isFinite(numeric)) return "0";
   return String(Number(numeric.toFixed(3))).replace(/\.0+$/, "");
+}
+
+function quantityDeltaText(value: unknown) {
+  const numeric = quantityNumber(value);
+  const text = quantityText(numeric);
+  return numeric > 0 ? `+${text}` : text;
 }
 
 function rowQuantity(row?: InventoryBalance | null) {
@@ -287,9 +299,22 @@ function bizTypeText(value?: string) {
     stocktake_adjust: "盘点修正",
     transfer_out: "调拨出库",
     transfer_in: "调拨入库",
-    migration_init: "迁移初始库存"
+    migration_init: "初始库存"
   };
   return map[value || ""] || "其他变动";
+}
+
+function ledgerWarehouseText(row: InventoryLedgerItem) {
+  const warehouse = row.warehouse_name || "未记录仓库";
+  const counterparty = row.counterparty_warehouse_name || "另一仓库";
+  if (row.biz_type === "transfer_out") return `${warehouse} → ${counterparty}`;
+  if (row.biz_type === "transfer_in") return `${counterparty} → ${warehouse}`;
+  return warehouse;
+}
+
+function ledgerChangeClass(row: InventoryLedgerItem) {
+  const value = quantityNumber(row.change_qty);
+  return cn(value > 0 && "is-positive", value < 0 && "is-negative", value === 0 && "is-zero");
 }
 
 function documentTypeText(value?: string) {
@@ -857,12 +882,14 @@ function InventoryLedgerTable({ rows, loading }: { rows: InventoryLedgerItem[]; 
         <TableRow>
           <TableHead>时间</TableHead>
           <TableHead>商品</TableHead>
-          <TableHead>仓库</TableHead>
+          <TableHead>业务类型</TableHead>
+          <TableHead>仓库/调拨方向</TableHead>
           <TableHead>变化</TableHead>
           <TableHead>变化前</TableHead>
           <TableHead>变化后</TableHead>
-          <TableHead>来源</TableHead>
+          <TableHead>关联单号</TableHead>
           <TableHead>操作人</TableHead>
+          <TableHead>备注</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -875,12 +902,16 @@ function InventoryLedgerTable({ rows, loading }: { rows: InventoryLedgerItem[]; 
                 <span>{row.color || "默认颜色"} · {row.sku_no_snapshot || row.sku_id}</span>
               </div>
             </TableCell>
-            <TableCell>{row.warehouse_name || "未记录仓库"}</TableCell>
-            <TableCell className="inventory-number-cell"><strong>{quantityText(row.change_qty)}</strong></TableCell>
+            <TableCell><Badge variant="outline">{bizTypeText(row.biz_type)}</Badge></TableCell>
+            <TableCell><span className="inventory-ledger-route">{ledgerWarehouseText(row)}</span></TableCell>
+            <TableCell className={cn("inventory-number-cell inventory-ledger-change", ledgerChangeClass(row))}>
+              <strong>{quantityDeltaText(row.change_qty)}</strong>
+            </TableCell>
             <TableCell className="inventory-number-cell">{quantityText(row.before_qty)}</TableCell>
             <TableCell className="inventory-number-cell">{quantityText(row.after_qty)}</TableCell>
-            <TableCell>{bizTypeText(row.biz_type)}</TableCell>
+            <TableCell><span className="inventory-ledger-doc-no">{row.biz_no || row.ledger_no || "未记录"}</span></TableCell>
             <TableCell>{row.operator_name || row.operator_username || "未记录"}</TableCell>
+            <TableCell><span className="inventory-ledger-note">{row.note || "-"}</span></TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -1016,42 +1047,182 @@ function TransferTable({ rows, loading }: { rows: TransferItem[]; loading: boole
   );
 }
 
-function InventoryLedgerDrawer({
+function InventoryLedgerDialog({
   row,
+  warehouses,
   onClose
 }: {
   row: InventoryBalance | null;
+  warehouses: Warehouse[];
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [items, setItems] = useState<InventoryLedgerItem[]>([]);
+  const [context, setContext] = useState<InventoryLedgerContext>({});
+  const [selectedSkuId, setSelectedSkuId] = useState("all");
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState("all");
+  const [selectedBizGroup, setSelectedBizGroup] = useState<InventoryLedgerBizGroup>("all");
+  const [readyRowSkuId, setReadyRowSkuId] = useState(0);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const pageCount = Math.max(1, Math.ceil(total / INVENTORY_LEDGER_PAGE_SIZE));
+  const rowSkuId = rowProductId(row);
+  const targetSpuId = rowSpuId(row);
+  const contextWarehouses = context.warehouses?.length
+    ? context.warehouses
+    : warehouses.map((warehouse) => ({ id: warehouse.id, name: warehouseLabel(warehouse), quantity: 0 }));
 
   useEffect(() => {
-    if (!row) return;
+    if (!row) {
+      setReadyRowSkuId(0);
+      return;
+    }
+    setSelectedSkuId(String(rowSkuId));
+    setSelectedWarehouseId("all");
+    setSelectedBizGroup("all");
+    setPage(1);
+    setItems([]);
+    setContext({});
+    setTotal(0);
+    setError("");
+    setReadyRowSkuId(rowSkuId);
+  }, [row, rowSkuId]);
+
+  useEffect(() => {
+    if (!row || !rowSkuId || readyRowSkuId !== rowSkuId) return;
+    const controller = new AbortController();
+    const query = {
+      skuId: selectedSkuId !== "all" ? selectedSkuId : undefined,
+      spuId: selectedSkuId === "all" ? targetSpuId : undefined,
+      warehouseId: selectedWarehouseId,
+      bizGroup: selectedBizGroup !== "all" ? selectedBizGroup : undefined,
+      page,
+      pageSize: INVENTORY_LEDGER_PAGE_SIZE
+    };
     setLoading(true);
     setError("");
-    api.inventoryLedger({ skuId: row.sku_id || rowProductId(row), warehouseId: row.warehouse_id, page: 1, pageSize: 30 })
-      .then((data) => setItems(data.list || []))
-      .catch((err) => setError(err instanceof Error ? err.message : "库存流水加载失败"))
-      .finally(() => setLoading(false));
-  }, [row]);
+    queryClient.fetchQuery({
+      queryKey: queryKeys.inventory.ledger(query),
+      queryFn: () => api.inventoryLedger(query, { signal: controller.signal }),
+      staleTime: 0
+    })
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setItems(data.list || []);
+        setContext(data.context || {});
+        setTotal(data.total || 0);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : "库存流水加载失败");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [page, queryClient, readyRowSkuId, row, rowSkuId, targetSpuId, selectedBizGroup, selectedSkuId, selectedWarehouseId]);
+
+  function changeSku(value: string) {
+    setSelectedSkuId(value);
+    setPage(1);
+  }
+
+  function changeWarehouse(value: string) {
+    setSelectedWarehouseId(value);
+    setPage(1);
+  }
+
+  function changeBizGroup(value: string) {
+    setSelectedBizGroup(value as InventoryLedgerBizGroup);
+    setPage(1);
+  }
 
   return (
-    <Sheet open={Boolean(row)} onOpenChange={(open) => {
+    <Dialog open={Boolean(row)} onOpenChange={(open) => {
       if (!open) onClose();
     }}>
-      <SheetContent side="right" className="inventory-ledger-drawer">
-        <SheetHeader>
-          <SheetTitle>单 SKU 流水</SheetTitle>
-          <SheetDescription>
-            {row ? `${rowTitle(row)} · ${rowColor(row)} · ${row.sku_no || rowProductId(row)}` : "选择库存行查看最近变动"}
-          </SheetDescription>
-        </SheetHeader>
+      <DialogContent className="inventory-ledger-dialog">
+        <DialogHeader>
+          <DialogTitle>商品库存流水</DialogTitle>
+          <DialogDescription>
+            {context.title || (row ? rowTitle(row) : "选择商品查看库存变动")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="inventory-ledger-controls">
+          <Field>
+            <FieldLabel>颜色/SKU</FieldLabel>
+            <Select value={selectedSkuId} onValueChange={changeSku}>
+              <SelectTrigger><SelectValue placeholder="选择颜色" /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {targetSpuId ? <SelectItem value="all">全部颜色</SelectItem> : null}
+                  {(context.skus || [{ id: rowSkuId, sku_no: row?.sku_no, color: rowColor(row) }]).map((sku) => (
+                    <SelectItem key={sku.id} value={String(sku.id)}>
+                      {sku.color || "默认颜色"} · {sku.sku_no || sku.id}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>流水类型</FieldLabel>
+            <Select value={selectedBizGroup} onValueChange={changeBizGroup}>
+              <SelectTrigger><SelectValue placeholder="全部类型" /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {ledgerBizGroups.map((group) => (
+                    <SelectItem key={group.value} value={group.value}>{group.label}</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
+
+        <Tabs value={selectedWarehouseId} onValueChange={changeWarehouse} className="inventory-ledger-warehouse-tabs">
+          <TabsList>
+            <TabsTrigger value="all">全部仓库</TabsTrigger>
+            {contextWarehouses.map((warehouse) => (
+              <TabsTrigger key={warehouse.id} value={String(warehouse.id)}>{warehouse.name}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+
+        <div className="inventory-ledger-summary" aria-label="当前库存">
+          {contextWarehouses.map((warehouse) => (
+            <div key={warehouse.id}>
+              <span>{warehouse.name}</span>
+              <strong>{quantityText(warehouse.quantity)}</strong>
+            </div>
+          ))}
+          <div>
+            <span>全部仓库合计</span>
+            <strong>{quantityText(context.total_quantity)}</strong>
+          </div>
+        </div>
+
         {error ? <div className="form-error">{error}</div> : null}
-        <InventoryLedgerTable rows={items} loading={loading} />
-      </SheetContent>
-    </Sheet>
+        <div className="inventory-ledger-table-wrap">
+          <InventoryLedgerTable rows={items} loading={loading} />
+        </div>
+        <DialogFooter className="inventory-ledger-footer">
+          <span>共 {total} 条流水</span>
+          <InventoryPager
+            page={page}
+            pageCount={pageCount}
+            loading={loading}
+            onPrevious={() => setPage((current) => Math.max(1, current - 1))}
+            onNext={() => setPage((current) => Math.min(pageCount, current + 1))}
+          />
+          <DialogClose asChild><Button type="button">关闭</Button></DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1518,7 +1689,7 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
         setTotal(data.total || 0);
         setPage(data.page || nextPage);
       } else if (nextTab === "ledger") {
-        const query = { keyword: nextKeyword, page: nextPage, pageSize: nextPageSize };
+        const query = { keyword: nextKeyword, warehouseId: nextWarehouseId, page: nextPage, pageSize: nextPageSize };
         const data = await queryClient.fetchQuery({
           queryKey: queryKeys.inventory.ledger(query),
           queryFn: ({ signal }) => api.inventoryLedger(query, { signal }),
@@ -1733,7 +1904,7 @@ export function InventoryPage({ currentUser }: { currentUser?: AuthUser } = {}) 
           onNext={() => void loadTab(activeTab, page + 1, keyword, warehouseId, pageSize, status)}
         />
       </CardContent>
-      <InventoryLedgerDrawer row={ledgerRow} onClose={() => setLedgerRow(null)} />
+      <InventoryLedgerDialog row={ledgerRow} warehouses={warehouses} onClose={() => setLedgerRow(null)} />
       <InventoryActionDialog
         action={actionTarget}
         warehouses={warehouses}

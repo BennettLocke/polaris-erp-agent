@@ -324,6 +324,7 @@ type SalesStockShortage = {
 } | null;
 
 function SalesNewPage() {
+  const queryClient = useQueryClient();
   const [customerKeyword, setCustomerKeyword] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerItem[]>([]);
   const [customerSearched, setCustomerSearched] = useState(false);
@@ -597,6 +598,8 @@ function SalesNewPage() {
 
   async function submitSalesOrderAfterStockReady(payload: SalesOrderPayload) {
     const result = await api.createSalesOrder(payload);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
     setLastResult(result);
     setNotice(`开单成功${result.sales_no ? `：${result.sales_no}` : ""}`);
     setLines([]);
@@ -702,6 +705,8 @@ function SalesNewPage() {
     setError("");
     try {
       await api.deleteSales(id);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
       setDetailOrder(null);
       setLastResult(null);
       setNotice("销售单已删除，库存和余额已按规则处理");
@@ -1081,6 +1086,7 @@ function SalesPage() {
         setDetail(null);
       }
       queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
+      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
       await load(page, filters);
     } catch (err) {
       setError(err instanceof Error ? err.message : "销售单删除失败");

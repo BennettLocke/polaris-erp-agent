@@ -5625,17 +5625,31 @@ def native_inventory_balances_api():
 def native_inventory_ledger_api():
     keyword = (request.args.get("keyword") or "").strip()
     sku_id = request.args.get("sku_id", type=int)
+    spu_id = request.args.get("spu_id", type=int)
     warehouse_id = request.args.get("warehouse_id", type=int)
+    biz_group = (request.args.get("biz_group") or "").strip()
     page, page_size = _page_args()
+    if biz_group not in {"", "sales", "purchase", "transfer", "stocktake", "initial"}:
+        return jsonify({"code": 400, "msg": "库存流水类型无效"}), 400
     try:
         rows, total = get_inventory_service().ledger(
             keyword=keyword,
             sku_id=sku_id,
+            spu_id=spu_id,
             warehouse_id=warehouse_id,
+            biz_group=biz_group,
             page=page,
             page_size=page_size,
         )
-        return jsonify({"code": 0, "data": {"list": _safe_json(rows), "total": total, "page": page, "page_size": page_size, "source": "native"}})
+        context = get_inventory_service().ledger_context(sku_id=sku_id, spu_id=spu_id)
+        return jsonify({"code": 0, "data": {
+            "list": _safe_json(rows),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "context": _safe_json(context),
+            "source": "native",
+        }})
     except Exception as e:
         logger.error(f"自有库库存日志异常: {e}")
         return jsonify({"code": 500, "msg": str(e)}), 500

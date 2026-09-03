@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Check,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { api } from "@/api";
+import { queryKeys } from "@/lib/admin-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -872,6 +874,7 @@ function formatTime(value: string) {
 }
 
 export function WorkbenchPage() {
+  const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState(readStoredSessionId);
   const [messages, setMessages] = useState<ChatMessage[]>(() => restoreMessages(readStoredSessionId()));
   const [businessHistory, setBusinessHistory] = useState<BusinessHistoryItem[]>(() =>
@@ -1046,6 +1049,10 @@ export function WorkbenchPage() {
   async function sendTextMessage(message: string) {
     const pendingId = appendMessage("assistant", "正在处理中...", "sending");
     const data = await api.agentChat({ message, session_id: sessionId, user_id: "web_user" });
+    if (message === "确认") {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
+    }
     const responseText = data.response || "已处理";
     updateMessage(pendingId, responseText);
     const nextSession = data.session || null;

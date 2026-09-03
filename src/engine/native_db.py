@@ -4996,42 +4996,81 @@ class NativeDBClient:
         self,
         keyword: str = "",
         sku_id: int | None = None,
+        spu_id: int | None = None,
         warehouse_id: int | None = None,
+        biz_group: str = "",
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[dict], int]:
         where = ["1=1"]
         params: list[Any] = []
         if sku_id:
+            resolved_sku_id = self.resolve_sku_id(int(sku_id))
+            if not resolved_sku_id:
+                return [], 0
             where.append("l.sku_id=%s")
-            params.append(int(sku_id))
+            params.append(int(resolved_sku_id))
+        if spu_id:
+            where.append("sp.id=%s")
+            params.append(int(spu_id))
         if warehouse_id:
             where.append("l.warehouse_id=%s")
             params.append(int(warehouse_id))
+        biz_types = {
+            "sales": ("sales_out", "sales_delete", "sales_cancel"),
+            "purchase": ("stock_in", "stock_out"),
+            "transfer": ("transfer_out", "transfer_in"),
+            "stocktake": ("stocktake", "stocktake_adjust"),
+            "initial": ("migration_init",),
+        }.get(str(biz_group or "").strip())
+        if biz_types:
+            placeholders = ",".join(["%s"] * len(biz_types))
+            where.append(f"l.biz_type IN ({placeholders})")
+            params.extend(biz_types)
         if keyword:
             like = f"%{keyword}%"
-            where.append("(l.ledger_no LIKE %s OR l.sku_no_snapshot LIKE %s OR sp.title LIKE %s OR s.color LIKE %s OR w.name LIKE %s OR l.biz_type LIKE %s)")
-            params.extend([like, like, like, like, like, like])
+            where.append(
+                "(l.ledger_no LIKE %s OR l.sku_no_snapshot LIKE %s OR sp.title LIKE %s "
+                "OR s.color LIKE %s OR w.name LIKE %s OR cw.name LIKE %s OR l.biz_type LIKE %s "
+                "OR l.note LIKE %s OR so.sales_no LIKE %s OR sd.doc_no LIKE %s "
+                "OR sto.stocktake_no LIKE %s OR tro.transfer_no LIKE %s)"
+            )
+            params.extend([like] * 12)
         where_sql = " AND ".join(where)
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or 50), 100))
+        joins_sql = """
+            JOIN product_sku s ON s.id=l.sku_id
+            JOIN product_spu sp ON sp.id=s.spu_id
+            JOIN warehouse w ON w.id=l.warehouse_id
+            LEFT JOIN warehouse cw ON cw.id=l.counterparty_warehouse_id
+            LEFT JOIN sales_order so
+              ON so.id=l.biz_id AND l.biz_type IN ('sales_out', 'sales_delete', 'sales_cancel')
+            LEFT JOIN stock_document sd
+              ON sd.id=l.biz_id AND l.biz_type IN ('stock_in', 'stock_out')
+            LEFT JOIN stocktake_order sto
+              ON sto.id=l.biz_id AND l.biz_type IN ('stocktake', 'stocktake_adjust')
+            LEFT JOIN transfer_order tro
+              ON tro.id=l.biz_id AND l.biz_type IN ('transfer_out', 'transfer_in')
+        """
         total_rows = self.query(
             f"""
             SELECT COUNT(*) AS total
             FROM inventory_ledger l
-            JOIN product_sku s ON s.id=l.sku_id
-            JOIN product_spu sp ON sp.id=s.spu_id
-            JOIN warehouse w ON w.id=l.warehouse_id
+            {joins_sql}
             WHERE {where_sql}
             """,
             params,
         )
         rows = self.query(
             f"""
-            SELECT l.*, sp.title, s.color, w.name AS warehouse_name, u.name AS unit_name,
+            SELECT l.*, sp.id AS spu_id, sp.title, s.color,
+                   w.name AS warehouse_name, cw.name AS counterparty_warehouse_name,
+                   u.name AS unit_name,
+                   COALESCE(so.sales_no, sd.doc_no, sto.stocktake_no, tro.transfer_no, l.ledger_no) AS biz_no,
                    wu.display_name AS operator_name, wu.username AS operator_username
             FROM inventory_ledger l
-            JOIN product_sku s ON s.id=l.sku_id
-            JOIN product_spu sp ON sp.id=s.spu_id
-            JOIN warehouse w ON w.id=l.warehouse_id
+            {joins_sql}
             LEFT JOIN product_unit u ON u.id=l.unit_id
             LEFT JOIN auth_user wu ON wu.id=l.operator_user_id
             WHERE {where_sql}
@@ -5041,6 +5080,96 @@ class NativeDBClient:
             params + [page_size, (max(1, page) - 1) * page_size],
         )
         return rows, int(total_rows[0].get("total") or 0) if total_rows else 0
+
+    def inventory_ledger_context(
+        self,
+        *,
+        sku_id: int | None = None,
+        spu_id: int | None = None,
+    ) -> dict:
+        selected_sku_id: int | None = None
+        product_rows: list[dict]
+        if sku_id:
+            resolved_sku_id = self.resolve_sku_id(int(sku_id))
+            if not resolved_sku_id:
+                return {}
+            selected_sku_id = int(resolved_sku_id)
+            product_rows = self.query(
+                """
+                SELECT sp.id AS spu_id, sp.title
+                FROM product_sku s
+                JOIN product_spu sp ON sp.id=s.spu_id
+                WHERE s.id=%s AND s.deleted_at IS NULL
+                LIMIT 1
+                """,
+                (selected_sku_id,),
+            )
+        elif spu_id:
+            product_rows = self.query(
+                """
+                SELECT sp.id AS spu_id, sp.title
+                FROM product_spu sp
+                WHERE sp.id=%s AND sp.deleted_at IS NULL
+                LIMIT 1
+                """,
+                (int(spu_id),),
+            )
+        else:
+            return {}
+        if not product_rows:
+            return {}
+
+        product = product_rows[0]
+        resolved_spu_id = int(product.get("spu_id") or 0)
+        skus = self.query(
+            """
+            SELECT s.id, s.sku_no, s.color
+            FROM product_sku s
+            WHERE s.spu_id=%s AND s.deleted_at IS NULL AND s.is_stock_item=1
+            ORDER BY s.color ASC, s.id ASC
+            """,
+            (resolved_spu_id,),
+        )
+        sku_filter_sql = " AND s.id=%s" if selected_sku_id else ""
+        balance_params: list[Any] = [resolved_spu_id]
+        if selected_sku_id:
+            balance_params.append(selected_sku_id)
+        warehouses = self.query(
+            f"""
+            SELECT w.id, w.name, COALESCE(SUM(b.quantity), 0) AS quantity
+            FROM warehouse w
+            LEFT JOIN product_sku s
+              ON s.spu_id=%s AND s.deleted_at IS NULL AND s.is_stock_item=1{sku_filter_sql}
+            LEFT JOIN inventory_balance b ON b.sku_id=s.id AND b.warehouse_id=w.id
+            WHERE w.is_enabled=1
+            GROUP BY w.id, w.name
+            ORDER BY w.id ASC
+            """,
+            balance_params,
+        )
+        context_warehouses = [
+            {
+                "id": row.get("id"),
+                "name": row.get("name") or "",
+                "quantity": _num(row.get("quantity")),
+            }
+            for row in warehouses
+        ]
+        return {
+            "spu_id": resolved_spu_id,
+            "title": product.get("title") or "商品",
+            "selected_sku_id": selected_sku_id,
+            "skus": [
+                {
+                    "id": row.get("id"),
+                    "sku_no": row.get("sku_no") or "",
+                    "color": row.get("color") or "默认颜色",
+                }
+                for row in skus
+            ],
+            "warehouses": context_warehouses,
+            "total_quantity": sum(warehouse.get("quantity", 0) for warehouse in context_warehouses),
+        }
 
     # ---- sales/workflow reads ----
 

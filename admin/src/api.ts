@@ -20,7 +20,7 @@ import type {
   InventoryActionResult,
   InventoryBalanceResult,
   InventoryCardsResult,
-  InventoryLedgerItem,
+  InventoryLedgerResult,
   InventoryLookupResult,
   ListResult,
   ManufacturerSavePayload,
@@ -89,6 +89,8 @@ export type UserUpdatePayload = Partial<Pick<UserListItem, "role" | "is_active" 
 export type InventoryListQuery = {
   keyword?: string;
   skuId?: number | string;
+  spuId?: number | string;
+  bizGroup?: string;
   stockStatus?: string;
   warehouseId?: number | string;
   groupByProduct?: boolean;
@@ -247,6 +249,12 @@ function listParams(options: InventoryListQuery = {}) {
   }
   if (options.skuId) {
     params.set("sku_id", String(options.skuId));
+  }
+  if (options.spuId) {
+    params.set("spu_id", String(options.spuId));
+  }
+  if (options.bizGroup) {
+    params.set("biz_group", options.bizGroup);
   }
   if (options.stockStatus && options.stockStatus !== "all") {
     params.set("stock_status", options.stockStatus);
@@ -648,7 +656,7 @@ export const api = {
   inventoryBalances: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
     request<InventoryBalanceResult>(`/api/inventory/balances?${listParams(query)}`, withRequestOptions(undefined, options)),
   inventoryLedger: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
-    request<ListResult<InventoryLedgerItem>>(`/api/inventory/ledger?${listParams(query)}`, withRequestOptions(undefined, options)),
+    request<InventoryLedgerResult>(`/api/inventory/ledger?${listParams(query)}`, withRequestOptions(undefined, options)),
   stockDocuments: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>
     request<ListResult<StockDocumentItem>>(`/api/stock-documents?${listParams(query)}`, withRequestOptions(undefined, options)),
   stocktakes: (query: InventoryListQuery = {}, options?: ApiRequestOptions) =>

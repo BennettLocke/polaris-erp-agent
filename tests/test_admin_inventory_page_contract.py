@@ -39,29 +39,58 @@ class AdminInventoryPageContractTest(unittest.TestCase):
         style_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn("skuId?: number | string", api_source)
+        self.assertIn("spuId?: number | string", api_source)
+        self.assertIn("bizGroup?: string", api_source)
         self.assertIn('params.set("sku_id", String(options.skuId))', api_source)
-        self.assertIn("api.inventoryLedger({ skuId:", inventory_source)
-        self.assertIn("warehouseId: row.warehouse_id", inventory_source)
-        ledger_drawer_source = inventory_source.split("function InventoryLedgerDrawer", 1)[1].split("function InventoryActionDialog", 1)[0]
-        self.assertNotIn("keyword: row.sku_no", ledger_drawer_source)
+        self.assertIn('params.set("spu_id", String(options.spuId))', api_source)
+        self.assertIn('params.set("biz_group", options.bizGroup)', api_source)
+        self.assertIn("api.inventoryLedger(query", inventory_source)
+        self.assertNotIn("warehouseId: row.warehouse_id", inventory_source)
+        ledger_dialog_source = inventory_source.split("function InventoryLedgerDialog", 1)[1].split("function InventoryActionDialog", 1)[0]
+        self.assertNotIn("keyword: row.sku_no", ledger_dialog_source)
+        self.assertIn('value="all"', ledger_dialog_source)
+        self.assertIn("selectedWarehouseId", ledger_dialog_source)
+        self.assertIn("selectedBizGroup", ledger_dialog_source)
+        self.assertIn("readyRowSkuId !== rowSkuId", ledger_dialog_source)
+        self.assertIn("InventoryPager", ledger_dialog_source)
+        self.assertIn("全部颜色", ledger_dialog_source)
+        self.assertIn("全部仓库", ledger_dialog_source)
+        self.assertIn("当前库存", ledger_dialog_source)
+        self.assertIn("关联单号", inventory_source)
+        self.assertIn("备注", inventory_source)
 
         self.assertIn('sku_id = request.args.get("sku_id", type=int)', http_source)
+        self.assertIn('spu_id = request.args.get("spu_id", type=int)', http_source)
         self.assertIn('warehouse_id = request.args.get("warehouse_id", type=int)', http_source)
+        self.assertIn('biz_group = (request.args.get("biz_group") or "").strip()', http_source)
         ledger_route_source = http_source.split("def native_inventory_ledger_api", 1)[1].split("\n\n@app.route", 1)[0]
         self.assertIn("get_inventory_service().ledger(", ledger_route_source)
+        self.assertIn("get_inventory_service().ledger_context(", ledger_route_source)
         self.assertIn("sku_id=sku_id", ledger_route_source)
+        self.assertIn("spu_id=spu_id", ledger_route_source)
         self.assertIn("warehouse_id=warehouse_id", ledger_route_source)
+        self.assertIn("biz_group=biz_group", ledger_route_source)
         self.assertIn("def ledger(", service_source)
         self.assertIn("sku_id: int | None = None", service_source)
+        self.assertIn("spu_id: int | None = None", service_source)
         self.assertIn("warehouse_id: int | None = None", service_source)
+        self.assertIn("biz_group: str = \"\"", service_source)
+        self.assertIn("def ledger_context(", service_source)
         self.assertIn("inventory_ledger(", service_source)
         self.assertIn("sku_id=sku_id", service_source)
+        self.assertIn("spu_id=spu_id", service_source)
         self.assertIn("warehouse_id=warehouse_id", service_source)
+        self.assertIn("biz_group=biz_group", service_source)
         self.assertIn("def inventory_ledger(", db_source)
         self.assertIn("sku_id: int | None = None", db_source)
+        self.assertIn("spu_id: int | None = None", db_source)
         self.assertIn("warehouse_id: int | None = None", db_source)
+        self.assertIn("biz_group: str = \"\"", db_source)
         self.assertIn("l.sku_id=%s", db_source)
+        self.assertIn("sp.id=%s", db_source)
         self.assertIn("l.warehouse_id=%s", db_source)
+        self.assertIn("counterparty_warehouse_name", db_source)
+        self.assertIn("AS biz_no", db_source)
 
         for token in [
             "AlertDialogContent",
@@ -196,7 +225,7 @@ class AdminInventoryPageContractTest(unittest.TestCase):
             "InventorySummaryStrip",
             "InventoryOverviewMatrix",
             "InventoryBalanceTable",
-            "InventoryLedgerDrawer",
+            "InventoryLedgerDialog",
             "InventoryActionDialog",
             "buildInventoryMatrix",
         ]:
@@ -207,8 +236,6 @@ class AdminInventoryPageContractTest(unittest.TestCase):
             "Tabs",
             "DialogContent",
             "DialogTitle",
-            "SheetContent",
-            "SheetTitle",
             "SelectTrigger",
             "Badge",
             "Pagination",
@@ -227,7 +254,7 @@ class AdminInventoryPageContractTest(unittest.TestCase):
         self.assertIn("inventory-stock-cell", inventory_source)
         self.assertIn("gridTemplateColumns", inventory_source)
         self.assertIn("sku.primaryRow = rowQuantity(row) > rowQuantity(sku.primaryRow)", inventory_source)
-        self.assertIn("单 SKU 流水", inventory_source)
+        self.assertIn("商品库存流水", inventory_source)
         self.assertIn("sku_no", inventory_source)
         self.assertIn("is_stock_item", inventory_source)
         self.assertIn("不扣库存", inventory_source)
@@ -269,6 +296,27 @@ class AdminInventoryPageContractTest(unittest.TestCase):
         for function_name in ["inventory_transfer_api", "inventory_purchase_api", "inventory_stocktaking_api"]:
             action_source = http_source.split(f"def {function_name}", 1)[1].split("\n@app.route", 1)[0]
             self.assertNotIn('"data": result})', action_source)
+
+    def test_sales_inventory_mutations_invalidate_inventory_queries(self):
+        app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+
+        sales_create_source = app_source.split("async function submitSalesOrderAfterStockReady", 1)[1].split(
+            "async function submitSalesOrder", 1
+        )[0]
+        sales_new_delete_source = app_source.split("async function deleteDetailSales", 1)[1].split(
+            "function continueSameCustomer", 1
+        )[0]
+        sales_list_delete_source = app_source.split("async function confirmDeleteSales", 1)[1].split(
+            "useEffect(() =>", 1
+        )[0]
+
+        for source in (sales_create_source, sales_new_delete_source, sales_list_delete_source):
+            self.assertIn("queryKeys.inventory.root", source)
+        self.assertIn("useQueryClient", workbench_source)
+        self.assertIn("queryKeys.inventory.root", workbench_source)
 
 
 if __name__ == "__main__":
