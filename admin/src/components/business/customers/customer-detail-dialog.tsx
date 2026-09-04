@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Eye, Printer, Trash2 } from "lucide-react";
+import { Eye, Pencil, Printer, Trash2 } from "lucide-react";
 
 import { api } from "@/api";
 import { PrintFeedbackToast, useSalesPrintFeedback } from "@/components/business/print-feedback";
@@ -14,10 +14,12 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
 import {
   Pagination,
   PaginationContent,
@@ -88,6 +90,9 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
   const [priceHistory, setPriceHistory] = useState<CustomerPriceHistoryItem[]>([]);
   const [priceHistoryPage, setPriceHistoryPage] = useState(1);
   const [priceHistoryTotal, setPriceHistoryTotal] = useState(0);
+  const [priceMemoryAction, setPriceMemoryAction] = useState<{ mode: "edit" | "delete"; item: CustomerPriceHistoryItem } | null>(null);
+  const [priceMemoryValue, setPriceMemoryValue] = useState("");
+  const [priceMemoryBusy, setPriceMemoryBusy] = useState(false);
   const [period, setPeriod] = useState("");
   const [month, setMonth] = useState("");
   const [loading, setLoading] = useState(false);
@@ -106,6 +111,7 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
   const selectedName = customerName(selected);
   const balance = moneyNumber(ledgerSummary?.balance_amount || selected?.balance_amount);
   const canAdjustBalance = hasPermission(currentUser, "调余额");
+  const canManagePriceMemory = hasPermission(currentUser, "设置");
   const salesPageCount = Math.max(1, Math.ceil(salesTotal / salesPageSize));
   const ledgerPageCount = Math.max(1, Math.ceil(ledgerTotal / ledgerPageSize));
   const priceHistoryPageCount = Math.max(1, Math.ceil(priceHistoryTotal / priceHistoryPageSize));
@@ -214,7 +220,7 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
     setLoading(true);
     setError("");
     try {
-      const data = await api.customerPriceHistory(target.id, safePage, priceHistoryPageSize);
+      const data = await api.customerPriceMemories(target.id, safePage, priceHistoryPageSize);
       setPriceHistory(data.list || []);
       setPriceHistoryPage(data.page || safePage);
       setPriceHistoryTotal(data.total || 0);
@@ -228,6 +234,39 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
   function changeTab(nextTab: string) {
     setTab(nextTab);
     if (nextTab === "prices" && !priceHistory.length) void loadPriceHistory(1);
+  }
+
+  function openPriceMemoryAction(mode: "edit" | "delete", item: CustomerPriceHistoryItem) {
+    setPriceMemoryAction({ mode, item });
+    setPriceMemoryValue(String(item.unit_price ?? ""));
+  }
+
+  async function submitPriceMemoryAction() {
+    if (!selected || !priceMemoryAction) return;
+    const memoryId = Number(priceMemoryAction.item.memory_id || 0);
+    if (!memoryId) return;
+    setPriceMemoryBusy(true);
+    setError("");
+    try {
+      if (priceMemoryAction.mode === "edit") {
+        const price = Number(priceMemoryValue);
+        if (!Number.isFinite(price) || price <= 0) {
+          setError("请输入大于0的有效价格");
+          return;
+        }
+        await api.updateCustomerPriceMemory(selected.id, memoryId, { unit_price: price });
+        setNotice("客户整款价格记忆已修改");
+      } else {
+        await api.deleteCustomerPriceMemory(selected.id, memoryId);
+        setNotice("客户整款价格记忆已清除");
+      }
+      setPriceMemoryAction(null);
+      await loadPriceHistory(priceHistoryPage, selected);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "客户价格记忆操作失败");
+    } finally {
+      setPriceMemoryBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -592,8 +631,8 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
           <TabsContent value="prices">
             <div className="customer-tab-header">
               <div>
-                <strong>已记忆成交价</strong>
-                <span>共 {priceHistoryTotal} 条，均可追溯到原销售单</span>
+                <strong>客户整款价格记忆</strong>
+                <span>共 {priceHistoryTotal} 款，同款不同颜色共用价格</span>
               </div>
               <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void loadPriceHistory(priceHistoryPage)}>刷新</Button>
             </div>
@@ -606,24 +645,36 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
                     <TableHead>成交价</TableHead>
                     <TableHead>数量</TableHead>
                     <TableHead>来源单号</TableHead>
-                    <TableHead>时间</TableHead>
+                    <TableHead>更新时间</TableHead>
+                    <TableHead>操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {priceHistory.map((item) => (
-                    <TableRow key={item.item_id}>
+                    <TableRow key={item.memory_id}>
                       <TableCell><strong>{item.title || "商品"}</strong><br /><span>{item.category_name || "未分类"}</span></TableCell>
-                      <TableCell>{item.color || "默认颜色"}<br /><span>{item.sku_no || "未编号"}</span></TableCell>
+                      <TableCell>{item.color || "默认颜色"}<br /><span>{item.sku_no || "未编号"} · 整款共享</span></TableCell>
                       <TableCell><strong>{money(item.unit_price)}</strong> / {item.unit_name || "单位"}</TableCell>
                       <TableCell>{item.quantity} {item.unit_name || ""}</TableCell>
-                      <TableCell>{item.sales_no || item.sales_id || "-"}</TableCell>
-                      <TableCell>{displayDate(item.sales_at)}</TableCell>
+                      <TableCell>
+                        {item.sales_no || item.sales_id || "人工调整"}
+                        {item.source_sales_status === "deleted" || item.source_sales_deleted_at ? <><br /><Badge variant="outline">来源订单已删除</Badge></> : null}
+                      </TableCell>
+                      <TableCell>{displayDate(item.updated_at || item.sales_at)}</TableCell>
+                      <TableCell>
+                        {canManagePriceMemory ? (
+                          <div className="customer-row-actions">
+                            <Button size="icon-sm" variant="ghost" aria-label="修改价格记忆" onClick={() => openPriceMemoryAction("edit", item)}><Pencil /></Button>
+                            <Button size="icon-sm" variant="ghost" aria-label="清除价格记忆" onClick={() => openPriceMemoryAction("delete", item)}><Trash2 /></Button>
+                          </div>
+                        ) : "-"}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             ) : !loading ? (
-              <Empty><EmptyHeader><EmptyTitle>还没有可用价格历史</EmptyTitle><EmptyDescription>开启自动使用的分类，在成交后会出现在这里。</EmptyDescription></EmptyHeader></Empty>
+              <Empty><EmptyHeader><EmptyTitle>还没有客户价格记忆</EmptyTitle><EmptyDescription>自动使用或只提示的分类，成交后会按整款商品记录。</EmptyDescription></EmptyHeader></Empty>
             ) : null}
             <Pagination>
               <PaginationContent>
@@ -694,6 +745,38 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
           onClose={() => setDeleteTarget(null)}
           onConfirm={() => void confirmDeleteSales()}
         />
+        <Dialog open={Boolean(priceMemoryAction)} onOpenChange={(open) => { if (!open && !priceMemoryBusy) setPriceMemoryAction(null); }}>
+          <DialogContent className="customer-price-memory-dialog">
+            <DialogHeader>
+              <DialogTitle>{priceMemoryAction?.mode === "edit" ? "修改客户价格记忆" : "清除客户价格记忆"}</DialogTitle>
+              <DialogDescription>
+                {priceMemoryAction?.item.title || "商品"}，同款所有颜色将共用这条价格记忆。
+              </DialogDescription>
+            </DialogHeader>
+            {priceMemoryAction?.mode === "edit" ? (
+              <div className="customer-price-memory-form">
+                <label htmlFor="customer-price-memory-value">销售单价</label>
+                <Input
+                  id="customer-price-memory-value"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={priceMemoryValue}
+                  disabled={priceMemoryBusy}
+                  onChange={(event) => setPriceMemoryValue(event.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="customer-price-memory-warning">清除后，下次开单将使用商品零售价；新成交后会重新形成记忆。</div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" disabled={priceMemoryBusy} onClick={() => setPriceMemoryAction(null)}>取消</Button>
+              <Button variant={priceMemoryAction?.mode === "delete" ? "destructive" : "default"} disabled={priceMemoryBusy} onClick={() => void submitPriceMemoryAction()}>
+                {priceMemoryBusy ? "处理中" : priceMemoryAction?.mode === "edit" ? "保存价格" : "确认清除"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {activeBusySalesId && !detail ? <Badge className="customer-floating-badge">处理中</Badge> : null}
         <PrintFeedbackToast feedback={printFeedback.feedback} onClose={printFeedback.closeFeedback} />
       </DialogContent>

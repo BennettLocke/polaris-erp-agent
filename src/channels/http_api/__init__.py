@@ -406,6 +406,7 @@ API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/inventory/stocktaking$"), "盘点"),
     ({"POST"}, re.compile(r"^/api/inventory/transfer$"), "调拨"),
     ({"POST", "PATCH"}, re.compile(r"^/api/customers/\d+$"), "设置"),
+    ({"PATCH", "DELETE"}, re.compile(r"^/api/customers/\d+/price-memories/\d+$"), "设置"),
     ({"POST"}, re.compile(r"^/api/customers/\d+/balance$"), "调余额"),
     ({"POST"}, re.compile(r"^/api/product/upload$"), "图片上传"),
     ({"POST"}, re.compile(r"^/api/product/crop-square$"), "图片上传"),
@@ -5487,6 +5488,40 @@ def native_customer_price_history_api(customer_id: int):
         })
     except Exception as e:
         logger.error(f"客户历史价格查询异常: customer_id={customer_id}, error={e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/customers/<int:customer_id>/price-memories", methods=["GET"])
+def native_customer_price_memories_api(customer_id: int):
+    """Current SPU-level remembered prices for one customer."""
+    return native_customer_price_history_api(customer_id)
+
+
+@app.route("/api/customers/<int:customer_id>/price-memories/<int:memory_id>", methods=["PATCH"])
+def native_customer_price_memory_update_api(customer_id: int, memory_id: int):
+    body = request.get_json(silent=True) or {}
+    try:
+        result = get_customer_service().update_price_memory(
+            customer_id,
+            memory_id,
+            unit_price=body.get("unit_price"),
+            note=str(body.get("note") or ""),
+        )
+        status = 200 if int(result.get("code") or 0) == 0 else int(result.get("code") or 400)
+        return jsonify(_safe_json(result)), status
+    except Exception as e:
+        logger.error(f"客户价格记忆修改异常: customer_id={customer_id}, memory_id={memory_id}, error={e}")
+        return _api_exception_response(e)
+
+
+@app.route("/api/customers/<int:customer_id>/price-memories/<int:memory_id>", methods=["DELETE"])
+def native_customer_price_memory_delete_api(customer_id: int, memory_id: int):
+    try:
+        result = get_customer_service().delete_price_memory(customer_id, memory_id)
+        status = 200 if int(result.get("code") or 0) == 0 else int(result.get("code") or 400)
+        return jsonify(_safe_json(result)), status
+    except Exception as e:
+        logger.error(f"客户价格记忆删除异常: customer_id={customer_id}, memory_id={memory_id}, error={e}")
         return _api_exception_response(e)
 
 

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.engine.exceptions import DBError
+
 from .base import BusinessService
 
 
@@ -177,8 +179,12 @@ class SalesService(BusinessService):
             "retail_price": retail_price if retail_price > 0 else None,
             "history": history_data,
             "warnings": warnings,
-            "remember_default": policy == "auto",
+            "remember_default": policy != "off",
             "price_reference_item_id": reference_item_id,
+            "memory_id": (int(candidate.get("memory_id") or 0) or None) if candidate else None,
+            "price_scope": "spu",
+            "source_sales_status": candidate.get("source_sales_status") if candidate else None,
+            "source_sales_deleted_at": candidate.get("source_sales_deleted_at") if candidate else None,
             "sku": sku,
         }
 
@@ -205,50 +211,62 @@ class SalesService(BusinessService):
             next_item = dict(item)
             if not next_item.get("unit_id"):
                 next_item["unit_id"] = int(detail.get("unit_id") or 1)
-            explicit_price = next_item.get("price") not in (None, "")
-            if explicit_price:
-                next_item["price"] = _number(next_item.get("price"))
-                preview = {}
-                if not next_item.get("price_source") and customer_id:
-                    try:
-                        preview = self.price_preview(
-                            customer_id=int(customer_id),
-                            product_id=pid,
-                            quantity=next_item.get("buy_number") or next_item.get("quantity") or 1,
-                            unit_id=int(next_item.get("unit_id") or 0) or None,
-                        )
-                    except Exception:
-                        preview = {}
-                    preview_price = _number(preview.get("price"), -1)
-                    if preview_price > 0 and abs(preview_price - next_item["price"]) < 0.005:
-                        next_item["price_source"] = preview.get("source") or "retail_price"
-                        next_item["price_reference_item_id"] = preview.get("price_reference_item_id")
-                    else:
-                        next_item["price_source"] = "manual_override"
-                elif not next_item.get("price_source"):
-                    next_item["price_source"] = "manual_override"
-                if "remember_price" in next_item:
-                    next_item["remember_price"] = 1 if next_item.get("remember_price") else 0
-                else:
-                    next_item["remember_price"] = 1 if preview.get("remember_default") else 0
-                if next_item["price_source"] != "customer_history":
-                    next_item["price_reference_item_id"] = None
-            else:
+            preview = {}
+            if customer_id:
                 try:
                     preview = self.price_preview(
-                        customer_id=int(next_item.get("customer_id") or customer_id or 0),
+                        customer_id=int(customer_id),
                         product_id=pid,
                         quantity=next_item.get("buy_number") or next_item.get("quantity") or 1,
                         unit_id=int(next_item.get("unit_id") or 0) or None,
                     )
                 except Exception:
                     preview = {}
+            sku_context = preview.get("sku") if isinstance(preview.get("sku"), dict) else detail
+            policy = str(preview.get("policy") or self._history_policy(sku_context, self._price_rules())).strip().lower()
+            if policy not in {"auto", "suggest", "off"}:
+                policy = "suggest"
+            next_item["price_policy"] = policy
+            next_item["remember_price"] = 0 if policy == "off" else 1
+            spu_id = int(sku_context.get("spu_id") or detail.get("spu_id") or 0)
+            if spu_id:
+                next_item["spu_id"] = spu_id
+
+            explicit_price = next_item.get("price") not in (None, "")
+            if explicit_price:
+                next_item["price"] = _number(next_item.get("price"))
+                current_source = str(next_item.get("price_source") or "").strip()
+                if current_source != "manual_override" and preview:
+                    preview_price = _number(preview.get("price"), -1)
+                    if preview_price > 0 and abs(preview_price - next_item["price"]) < 0.005:
+                        next_item["price_source"] = preview.get("source") or "retail_price"
+                        next_item["price_reference_item_id"] = preview.get("price_reference_item_id")
+                    else:
+                        next_item["price_source"] = "manual_override"
+                elif not current_source:
+                    next_item["price_source"] = "manual_override"
+                if next_item["price_source"] != "customer_history":
+                    next_item["price_reference_item_id"] = None
+            else:
                 if preview.get("price") not in (None, ""):
                     next_item["price"] = preview["price"]
                     next_item["price_source"] = preview.get("source") or "retail_price"
-                    next_item["remember_price"] = 1 if preview.get("remember_default") else 0
                     next_item["price_reference_item_id"] = preview.get("price_reference_item_id")
             normalized.append(next_item)
+
+        shared_prices: dict[tuple[int, int], float] = {}
+        for item in normalized:
+            if str(item.get("price_policy") or "") == "off":
+                continue
+            spu_id = int(item.get("spu_id") or 0)
+            unit_id = int(item.get("unit_id") or 0)
+            if not spu_id or not unit_id or item.get("price") in (None, ""):
+                continue
+            price = _number(item.get("price"))
+            key = (spu_id, unit_id)
+            if key in shared_prices and abs(shared_prices[key] - price) >= 0.005:
+                raise DBError("同一款商品不同颜色的销售价格必须一致")
+            shared_prices[key] = price
         return normalized
 
     def create_order(

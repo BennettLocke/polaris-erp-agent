@@ -2,7 +2,6 @@ import { Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import {
@@ -109,14 +108,7 @@ function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineT
                     <span>历史价 {money(line.suggested_history_price)}</span>
                   ) : null}
                   {line.price_warning ? <span>{line.price_warning}</span> : null}
-                  <label className="sales-create-remember-price">
-                    <Checkbox
-                      checked={Boolean(line.remember_price)}
-                      onCheckedChange={(checked) => onUpdateLine(index, "remember_price", checked ? "1" : "0")}
-                      aria-label="记住本次价格"
-                    />
-                    <span>记住本次价格</span>
-                  </label>
+                  {line.price_policy !== "off" ? <span>成交后自动记忆整款价格</span> : null}
                 </div>
               </TableCell>
               <TableCell><strong>{money(line.buy_number * line.price)}</strong></TableCell>

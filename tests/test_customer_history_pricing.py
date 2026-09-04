@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.services.business.sales import SalesService
+from src.engine.exceptions import DBError
 
 
 class PricingDB:
@@ -82,7 +83,7 @@ class CustomerHistoryPricingTest(unittest.TestCase):
         self.assertEqual(result["source"], "retail_price")
         self.assertEqual(result["policy"], "suggest")
         self.assertEqual(result["history"]["price"], 3.5)
-        self.assertFalse(result["remember_default"])
+        self.assertTrue(result["remember_default"])
 
     def test_bag_category_does_not_read_customer_history(self):
         service = SalesService(db=PricingDB(category_name="水仙泡袋", product_type="bag", history=[history("0.12")]))
@@ -125,7 +126,7 @@ class CustomerHistoryPricingTest(unittest.TestCase):
                 self.assertEqual(result["effective_policy"], "suggest")
                 self.assertTrue(result["warnings"])
 
-    def test_create_order_marks_manual_override_and_respects_remember_choice(self):
+    def test_create_order_marks_manual_override_and_ignores_legacy_remember_choice(self):
         db = PricingDB(history=[history("21.00")])
         service = SalesService(db=db)
 
@@ -143,8 +144,23 @@ class CustomerHistoryPricingTest(unittest.TestCase):
 
         saved = next(call[1] for call in db.calls if call[0] == "create_sales_order")["products"][0]
         self.assertEqual(saved["price_source"], "manual_override")
-        self.assertEqual(saved["remember_price"], 0)
+        self.assertEqual(saved["remember_price"], 1)
+        self.assertEqual(saved["price_policy"], "auto")
         self.assertIsNone(saved["price_reference_item_id"])
+
+    def test_off_policy_never_remembers_manual_price(self):
+        db = PricingDB(category_name="水仙泡袋", product_type="bag")
+        service = SalesService(db=db)
+
+        service.create_order(
+            customer_id=8,
+            warehouse_id=2,
+            products=[{"product_id": 10, "unit_id": 1, "buy_number": 100, "price": 0.12}],
+        )
+
+        saved = next(call[1] for call in db.calls if call[0] == "create_sales_order")["products"][0]
+        self.assertEqual(saved["price_policy"], "off")
+        self.assertEqual(saved["remember_price"], 0)
 
     def test_legacy_caller_price_is_classified_by_the_same_policy(self):
         db = PricingDB(history=[history("21.00")])
@@ -160,6 +176,19 @@ class CustomerHistoryPricingTest(unittest.TestCase):
         self.assertEqual(saved["price_source"], "customer_history")
         self.assertEqual(saved["remember_price"], 1)
         self.assertEqual(saved["price_reference_item_id"], 501)
+
+    def test_same_spu_with_different_prices_is_rejected(self):
+        service = SalesService(db=PricingDB())
+
+        with self.assertRaisesRegex(DBError, "同一款商品不同颜色"):
+            service.create_order(
+                customer_id=8,
+                warehouse_id=2,
+                products=[
+                    {"product_id": 10, "unit_id": 1, "buy_number": 1, "price": 20},
+                    {"product_id": 11, "unit_id": 1, "buy_number": 1, "price": 21},
+                ],
+            )
 
 
 if __name__ == "__main__":

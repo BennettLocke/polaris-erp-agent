@@ -697,7 +697,6 @@ export type SalesOrderLinePayload = {
   buy_number: number;
   price: number;
   price_source?: "customer_history" | "retail_price" | "manual_override" | string;
-  remember_price?: boolean | number;
   price_reference_item_id?: number | null;
 };
 
@@ -712,6 +711,7 @@ export type SalesPricePreview = {
   effective_policy: "auto" | "suggest" | "off" | string;
   retail_price?: number | string | null;
   history?: {
+    memory_id?: number;
     item_id?: number;
     price?: number | string;
     quantity?: number | string;
@@ -721,11 +721,23 @@ export type SalesPricePreview = {
   } | null;
   warnings?: string[];
   remember_default?: boolean;
+  memory_id?: number | null;
+  price_scope?: "spu" | string;
+  source_sales_status?: string | null;
+  source_sales_deleted_at?: string | null;
   price_reference_item_id?: number | null;
+  sku?: {
+    id?: number;
+    spu_id?: number;
+    title?: string;
+    color?: string;
+    unit_id?: number;
+  };
 };
 
 export type CustomerPriceHistoryItem = {
-  item_id: number;
+  memory_id: number;
+  item_id?: number | null;
   product_id: number;
   spu_id?: number;
   title?: string;
@@ -739,6 +751,12 @@ export type CustomerPriceHistoryItem = {
   sales_id?: number;
   sales_no?: string;
   sales_at?: string;
+  source_sales_status?: string;
+  source_sales_deleted_at?: string;
+  updated_at?: string;
+  note?: string;
+  updated_by_name?: string;
+  updated_by_username?: string;
 };
 
 export type SalesOrderPayload = {

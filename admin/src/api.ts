@@ -586,6 +586,19 @@ export const api = {
     request<ListResult<CustomerPriceHistoryItem>>(
       `/api/customers/${id}/price-history?page=${page}&page_size=${pageSize}`
     ),
+  customerPriceMemories: (id: number, page = 1, pageSize = 20) =>
+    request<ListResult<CustomerPriceHistoryItem>>(
+      `/api/customers/${id}/price-memories?page=${page}&page_size=${pageSize}`
+    ),
+  updateCustomerPriceMemory: (customerId: number, memoryId: number, payload: { unit_price: number; note?: string }) =>
+    request<{ id: number; unit_price: string }>(`/api/customers/${customerId}/price-memories/${memoryId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deleteCustomerPriceMemory: (customerId: number, memoryId: number) =>
+    request<{ id: number }>(`/api/customers/${customerId}/price-memories/${memoryId}`, {
+      method: "DELETE"
+    }),
   retailPrice: (productId: number) =>
     request<{ price: number | string | null }>(`/api/product/retail-price?product_id=${productId}`),
   createSalesOrder: (payload: SalesOrderPayload) =>

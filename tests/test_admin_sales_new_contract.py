@@ -45,7 +45,22 @@ class AdminSalesNewContractTest(unittest.TestCase):
         self.assertIn("submitSalesOrder", app_source)
         self.assertIn("products: lines.map", app_source)
         self.assertIn("price_source", app_source)
-        self.assertIn("remember_price", app_source)
+        self.assertNotIn('field: "remember_price"', app_source)
+
+        line_table_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "sales-create" / "sales-line-table.tsx"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("记住本次价格", line_table_source)
+        self.assertNotIn("remember_price", line_table_source)
+        self.assertIn("samePriceGroup", app_source)
+        self.assertIn("sharedPriceLine", app_source)
+
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("记住本次价格", workbench_source)
+        self.assertIn("changeFieldValue", workbench_source)
+        self.assertIn("candidate.spu_id", workbench_source)
 
     def test_sales_new_page_uses_shadcn_component_layer(self):
         app_source = (ROOT / "admin" / "src" / "App.tsx").read_text(encoding="utf-8")

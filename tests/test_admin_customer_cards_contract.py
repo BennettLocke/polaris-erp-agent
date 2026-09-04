@@ -15,12 +15,18 @@ class AdminCustomerCardsContractTest(unittest.TestCase):
         db_source = (ROOT / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
 
         self.assertIn('value="prices"', detail_source)
-        self.assertIn("customerPriceHistory", detail_source)
-        self.assertIn("已记忆成交价", detail_source)
+        self.assertIn("customerPriceMemories", detail_source)
+        self.assertIn("客户整款价格记忆", detail_source)
+        self.assertIn("updateCustomerPriceMemory", detail_source)
+        self.assertIn("deleteCustomerPriceMemory", detail_source)
         self.assertIn("/price-history", api_source)
+        self.assertIn("/price-memories", api_source)
         self.assertIn("native_customer_price_history_api", http_source)
-        self.assertIn("def customer_price_history(", db_source)
-        self.assertIn("i.remember_price=1", db_source)
+        self.assertIn("native_customer_price_memory_update_api", http_source)
+        self.assertIn("native_customer_price_memory_delete_api", http_source)
+        self.assertIn("def customer_price_memories(", db_source)
+        self.assertIn("def update_customer_price_memory(", db_source)
+        self.assertIn("def delete_customer_price_memory(", db_source)
 
     def test_customer_balance_action_dialog_validates_settlement_and_adjustment(self):
         dialog_source = (

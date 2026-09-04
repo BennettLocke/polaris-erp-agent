@@ -191,6 +191,27 @@ class FakeDB:
             "ledger": [],
         }
 
+    def customer_price_memories(self, customer_id: int, **kwargs):
+        self.calls.append(("customer_price_memories", {"customer_id": customer_id, **kwargs}))
+        return ([{"memory_id": 7, "spu_id": 91, "unit_price": "20.00"}], 1)
+
+    def update_customer_price_memory(self, customer_id: int, memory_id: int, unit_price, **kwargs):
+        self.calls.append(("update_customer_price_memory", {
+            "customer_id": customer_id,
+            "memory_id": memory_id,
+            "unit_price": unit_price,
+            **kwargs,
+        }))
+        return {"code": 0, "data": {"id": memory_id, "unit_price": str(unit_price)}}
+
+    def delete_customer_price_memory(self, customer_id: int, memory_id: int, **kwargs):
+        self.calls.append(("delete_customer_price_memory", {
+            "customer_id": customer_id,
+            "memory_id": memory_id,
+            **kwargs,
+        }))
+        return {"code": 0, "data": {"id": memory_id}}
+
     def update_customer_profile(self, customer_id: int, **kwargs):
         self.calls.append(("update_customer_profile", {"customer_id": customer_id, **kwargs}))
         return {"code": 0, "data": {"id": customer_id}}
@@ -800,8 +821,8 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(result["code"], 0)
         self.assertEqual(result["data"]["products"][0]["unit_id"], 9)
         self.assertEqual(db.calls[0], ("product_info", {"product_id": 88, "listed_only": False}))
-        self.assertEqual(db.calls[1][0], "create_sales_order")
-        self.assertEqual(db.calls[1][1]["operator_user_id"], 5)
+        create_call = next(call for call in db.calls if call[0] == "create_sales_order")
+        self.assertEqual(create_call[1]["operator_user_id"], 5)
 
     def test_sales_service_links_workflow_order_after_successful_create(self):
         db = FakeDB()
@@ -978,6 +999,26 @@ class BusinessServiceTests(unittest.TestCase):
                 },
             ),
         )
+
+    def test_customer_service_manages_spu_price_memories(self):
+        db = FakeDB()
+        service = CustomerService(db=db)
+
+        rows, total = service.price_history(11, page=2, page_size=10)
+        updated = service.update_price_memory(11, 7, unit_price=21, note="人工修正", operator_user_id=5)
+        deleted = service.delete_price_memory(11, 7, operator_user_id=5)
+
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["spu_id"], 91)
+        self.assertEqual(updated["code"], 0)
+        self.assertEqual(deleted["code"], 0)
+        self.assertEqual(db.calls[-3], (
+            "customer_price_memories",
+            {"customer_id": 11, "page": 2, "page_size": 10},
+        ))
+        self.assertEqual(db.calls[-2][1]["note"], "人工修正")
+        self.assertEqual(db.calls[-2][1]["operator_user_id"], 5)
+        self.assertEqual(db.calls[-1][1]["operator_user_id"], 5)
 
     def test_product_service_owns_product_writes_and_numbering(self):
         db = FakeDB()

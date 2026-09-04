@@ -1106,20 +1106,23 @@ class OrderFlowWorkflow(BaseWorkflow):
             if isinstance(preview, dict) and isinstance(preview.get("data"), dict):
                 preview = preview["data"]
             if isinstance(preview, dict) and not preview.get("error"):
-                product["price_policy"] = preview.get("effective_policy") or preview.get("policy")
+                product["price_policy"] = preview.get("policy") or preview.get("effective_policy")
+                sku_context = preview.get("sku") if isinstance(preview.get("sku"), dict) else {}
+                if sku_context.get("spu_id"):
+                    product["spu_id"] = int(sku_context["spu_id"])
                 history = preview.get("history") if isinstance(preview.get("history"), dict) else {}
                 if history.get("price") not in (None, ""):
                     product["suggested_history_price"] = history.get("price")
                 if product.get("price_overridden"):
                     product["price_source"] = "manual_override"
-                    product["remember_price"] = 1 if preview.get("remember_default") else 0
+                    product["remember_price"] = 1 if preview.get("policy") != "off" else 0
                     product["price_reference_item_id"] = None
                     logger.info(f"[OrderFlow] 用户指定价格: {product['name']} = {product['price']}")
                     return
                 if preview.get("price") not in (None, "") and float(preview.get("price") or 0) > 0:
                     product["price"] = float(preview["price"])
                     product["price_source"] = preview.get("source") or "retail_price"
-                    product["remember_price"] = 1 if preview.get("remember_default") else 0
+                    product["remember_price"] = 1 if preview.get("policy") != "off" else 0
                     product["price_reference_item_id"] = preview.get("price_reference_item_id")
                     logger.info(f"[OrderFlow] 规则价格: {product['name']} = {product['price']}")
                     return
@@ -1592,7 +1595,6 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "price": p.get("price", 0),
                 "warehouse_id": p.get("warehouse_id", warehouse_id),
                 "price_source": p.get("price_source") or "retail_price",
-                "remember_price": 1 if p.get("remember_price") else 0,
                 "price_reference_item_id": p.get("price_reference_item_id"),
             })
 

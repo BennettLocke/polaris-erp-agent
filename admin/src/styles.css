@@ -6829,21 +6829,26 @@ textarea,
   line-height: 16px;
 }
 
-.sales-create-remember-price {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--sj-foreground);
-  font-size: 11px;
-  line-height: 16px;
-  white-space: nowrap;
+.customer-price-memory-dialog {
+  width: min(460px, calc(100vw - 32px));
 }
 
-.sales-create-remember-price [data-slot="checkbox"] {
-  width: 16px;
-  height: 16px;
-  min-width: 16px;
-  border-radius: 3px;
+.customer-price-memory-form {
+  display: grid;
+  gap: 8px;
+}
+
+.customer-price-memory-form label {
+  color: var(--sj-muted);
+  font-size: 13px;
+}
+
+.customer-price-memory-warning {
+  border: 1px solid var(--sj-border);
+  padding: 12px;
+  color: var(--sj-foreground);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .inventory-ledger-controls {

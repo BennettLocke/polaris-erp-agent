@@ -7,6 +7,7 @@ import type {
 
 export type SalesFormLine = {
   product_id: number;
+  spu_id?: number;
   unit_id: number;
   title: string;
   spec: string;
@@ -24,7 +25,6 @@ export type SalesFormLine = {
   price_policy?: string;
   suggested_history_price?: number | string | null;
   price_warning?: string;
-  remember_price?: boolean;
   price_reference_item_id?: number | null;
 };
 
@@ -85,6 +85,6 @@ export type ProductSearchProps = {
 export type LineTableProps = {
   lines: SalesFormLine[];
   warehouses: Warehouse[];
-  onUpdateLine: (index: number, field: "buy_number" | "price" | "warehouse_id" | "remember_price", value: string) => void;
+  onUpdateLine: (index: number, field: "buy_number" | "price" | "warehouse_id", value: string) => void;
   onRemoveLine: (index: number) => void;
 };

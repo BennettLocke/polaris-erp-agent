@@ -729,6 +729,72 @@ class NativeDBClient:
                             "ALTER TABLE sales_order "
                             "ADD KEY idx_sales_customer_price_lookup (customer_id, status, sales_at, id)"
                         )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS customer_price_memory (
+                            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                            customer_id BIGINT UNSIGNED NOT NULL,
+                            spu_id BIGINT UNSIGNED NOT NULL,
+                            unit_id BIGINT UNSIGNED NOT NULL,
+                            unit_price DECIMAL(12,2) NOT NULL,
+                            last_quantity DECIMAL(12,3) NOT NULL DEFAULT 0,
+                            source_sku_id BIGINT UNSIGNED NULL,
+                            source_sales_order_id BIGINT UNSIGNED NULL,
+                            source_sales_item_id BIGINT UNSIGNED NULL,
+                            price_source VARCHAR(30) NOT NULL DEFAULT 'manual_override',
+                            note VARCHAR(500) NULL,
+                            updated_by_user_id BIGINT UNSIGNED NULL,
+                            deleted_by_user_id BIGINT UNSIGNED NULL,
+                            created_at DATETIME NOT NULL,
+                            updated_at DATETIME NOT NULL,
+                            deleted_at DATETIME NULL,
+                            PRIMARY KEY (id),
+                            UNIQUE KEY uniq_customer_price_memory (customer_id, spu_id, unit_id),
+                            KEY idx_customer_price_memory_spu (spu_id, unit_id),
+                            KEY idx_customer_price_memory_updated (customer_id, deleted_at, updated_at)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO customer_price_memory
+                            (customer_id, spu_id, unit_id, unit_price, last_quantity,
+                             source_sku_id, source_sales_order_id, source_sales_item_id,
+                             price_source, created_at, updated_at)
+                        SELECT s.customer_id, sku.spu_id, i.unit_id, i.unit_price, i.quantity,
+                               i.sku_id, s.id, i.id, COALESCE(i.price_source, 'manual_override'),
+                               COALESCE(s.sales_at, s.created_at, NOW()),
+                               COALESCE(s.sales_at, s.created_at, NOW())
+                        FROM sales_order_item i
+                        JOIN sales_order s ON s.id=i.sales_order_id
+                        JOIN product_sku sku ON sku.id=i.sku_id
+                        LEFT JOIN customer_price_memory m
+                          ON m.customer_id=s.customer_id
+                         AND m.spu_id=sku.spu_id
+                         AND m.unit_id=i.unit_id
+                        WHERE m.id IS NULL
+                          AND i.unit_price>0
+                          AND s.status IN ('confirmed', 'completed', 'deleted')
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM sales_order_item newer_i
+                              JOIN sales_order newer_s ON newer_s.id=newer_i.sales_order_id
+                              JOIN product_sku newer_sku ON newer_sku.id=newer_i.sku_id
+                              WHERE newer_s.customer_id=s.customer_id
+                                AND newer_sku.spu_id=sku.spu_id
+                                AND newer_i.unit_id=i.unit_id
+                                AND newer_i.unit_price>0
+                                AND newer_s.status IN ('confirmed', 'completed', 'deleted')
+                                AND (
+                                    COALESCE(newer_s.sales_at, newer_s.created_at) > COALESCE(s.sales_at, s.created_at)
+                                    OR (
+                                        COALESCE(newer_s.sales_at, newer_s.created_at) = COALESCE(s.sales_at, s.created_at)
+                                        AND newer_i.id > i.id
+                                    )
+                                )
+                          )
+                        """
+                    )
                 self.__class__._sales_price_columns_ready = True
             except pymysql.Error as e:
                 logger.warning(f"native sales price column check failed: {e}")
@@ -3578,7 +3644,7 @@ class NativeDBClient:
         })
         return result, int(total_row.get("total") or 0), summary
 
-    def customer_price_history(
+    def customer_price_memories(
         self,
         customer_id: int,
         *,
@@ -3588,44 +3654,116 @@ class NativeDBClient:
         self._ensure_sales_price_columns()
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or 20), 100))
-        where_sql = """
-            s.customer_id=%s
-            AND s.status IN ('confirmed', 'completed')
-            AND s.deleted_at IS NULL
-            AND i.remember_price=1
-            AND i.unit_price>0
-        """
+        where_sql = "m.customer_id=%s AND m.deleted_at IS NULL"
         total_rows = self.query(
-            f"""SELECT COUNT(*) AS total
-                FROM sales_order_item i
-                JOIN sales_order s ON s.id=i.sales_order_id
-                WHERE {where_sql}""",
+            f"SELECT COUNT(*) AS total FROM customer_price_memory m WHERE {where_sql}",
             (customer_id,),
         )
         rows = self.query(
             f"""
-            SELECT i.id AS item_id, i.sku_id AS product_id, i.unit_price, i.quantity,
-                   i.price_source, i.price_reference_item_id, i.remember_price,
-                   s.id AS sales_id, s.sales_no, s.sales_at,
-                   sku.sku_no, sku.color, sku.spu_id, sku.unit_id,
+            SELECT m.id AS memory_id, m.source_sales_item_id AS item_id,
+                   m.source_sku_id AS product_id, m.spu_id, m.unit_id,
+                   m.unit_price, m.last_quantity AS quantity,
+                   m.price_source, m.note, m.created_at, m.updated_at,
+                   m.source_sales_order_id AS sales_id,
+                   s.sales_no, s.sales_at, s.status AS source_sales_status,
+                   s.deleted_at AS source_sales_deleted_at,
+                   sku.sku_no, sku.color,
                    spu.title, spu.product_type,
                    COALESCE(pc.name, '未分类') AS category_name,
-                   u.name AS unit_name
-            FROM sales_order_item i
-            JOIN sales_order s ON s.id=i.sales_order_id
-            LEFT JOIN product_sku sku ON sku.id=i.sku_id
-            LEFT JOIN product_spu spu ON spu.id=sku.spu_id
+                   u.name AS unit_name,
+                   updater.display_name AS updated_by_name,
+                   updater.username AS updated_by_username
+            FROM customer_price_memory m
+            LEFT JOIN sales_order s ON s.id=m.source_sales_order_id
+            LEFT JOIN product_sku sku ON sku.id=m.source_sku_id
+            LEFT JOIN product_spu spu ON spu.id=m.spu_id
             LEFT JOIN product_category pc
               ON pc.id=COALESCE(sku.primary_category_id, spu.default_category_id)
-            LEFT JOIN product_unit u ON u.id=i.unit_id
+            LEFT JOIN product_unit u ON u.id=m.unit_id
+            LEFT JOIN auth_user updater ON updater.id=m.updated_by_user_id
             WHERE {where_sql}
-            ORDER BY s.sales_at DESC, i.id DESC
+            ORDER BY m.updated_at DESC, m.id DESC
             LIMIT %s OFFSET %s
             """,
             (customer_id, page_size, (page - 1) * page_size),
         )
         total = int((total_rows[0] if total_rows else {}).get("total") or 0)
         return rows, total
+
+    def customer_price_history(
+        self,
+        customer_id: int,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[dict], int]:
+        return self.customer_price_memories(customer_id, page=page, page_size=page_size)
+
+    def update_customer_price_memory(
+        self,
+        customer_id: int,
+        memory_id: int,
+        unit_price: Any,
+        *,
+        note: str = "",
+        operator_user_id: Any = None,
+    ) -> dict:
+        self._ensure_sales_price_columns()
+        try:
+            price = Decimal(str(unit_price)).quantize(Decimal("0.01"))
+        except Exception as exc:
+            raise DBError("价格格式不正确") from exc
+        if price <= 0:
+            raise DBError("价格必须大于0")
+        now = _now()
+        operator_user_id = self._operator_user_id(operator_user_id)
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT id FROM customer_price_memory
+                WHERE id=%s AND customer_id=%s AND deleted_at IS NULL
+                LIMIT 1 FOR UPDATE
+                """,
+                (memory_id, customer_id),
+            )
+            if not cursor.fetchone():
+                return {"code": 404, "msg": "客户价格记忆不存在"}
+            cursor.execute(
+                """
+                UPDATE customer_price_memory
+                SET unit_price=%s, price_source='manual_adjust', note=%s,
+                    source_sales_order_id=NULL, source_sales_item_id=NULL,
+                    updated_by_user_id=%s, updated_at=%s
+                WHERE id=%s AND customer_id=%s
+                """,
+                (price, str(note or "").strip()[:500] or None, operator_user_id, now, memory_id, customer_id),
+            )
+        return {"code": 0, "data": {"id": int(memory_id), "unit_price": _money(price)}}
+
+    def delete_customer_price_memory(
+        self,
+        customer_id: int,
+        memory_id: int,
+        *,
+        operator_user_id: Any = None,
+    ) -> dict:
+        self._ensure_sales_price_columns()
+        now = _now()
+        operator_user_id = self._operator_user_id(operator_user_id)
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE customer_price_memory
+                SET deleted_at=%s, deleted_by_user_id=%s, updated_at=%s
+                WHERE id=%s AND customer_id=%s AND deleted_at IS NULL
+                """,
+                (now, operator_user_id, now, memory_id, customer_id),
+            )
+            affected = int(cursor.rowcount or 0)
+        if not affected:
+            return {"code": 404, "msg": "客户价格记忆不存在"}
+        return {"code": 0, "data": {"id": int(memory_id)}}
 
     def _next_balance_ledger_no(self) -> str:
         return f"CB{datetime.now().strftime('%Y%m%d%H%M%S')}{int(time.time() * 1000) % 1000:03d}"
@@ -7405,6 +7543,8 @@ class NativeDBClient:
                 amount = qty * price
                 total_qty += qty
                 total_amount += amount
+                price_policy = str(item.get("price_policy") or "suggest").strip().lower()
+                remember_price = 0 if price_policy == "off" else 1
                 cursor.execute(
                     """
                     INSERT INTO sales_order_item
@@ -7427,12 +7567,48 @@ class NativeDBClient:
                         amount,
                         sku.get("cost_price"),
                         str(item.get("price_source") or "manual_override")[:30],
-                        1 if int(item.get("remember_price") or 0) == 1 else 0,
+                        remember_price,
                         int(item.get("price_reference_item_id") or 0) or None,
                         now,
                     ),
                 )
                 item_id = cursor.lastrowid
+                if remember_price:
+                    cursor.execute(
+                        """
+                        INSERT INTO customer_price_memory
+                            (customer_id, spu_id, unit_id, unit_price, last_quantity,
+                             source_sku_id, source_sales_order_id, source_sales_item_id,
+                             price_source, updated_by_user_id, created_at, updated_at, deleted_at, deleted_by_user_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL)
+                        ON DUPLICATE KEY UPDATE
+                            unit_price=VALUES(unit_price),
+                            last_quantity=VALUES(last_quantity),
+                            source_sku_id=VALUES(source_sku_id),
+                            source_sales_order_id=VALUES(source_sales_order_id),
+                            source_sales_item_id=VALUES(source_sales_item_id),
+                            price_source=VALUES(price_source),
+                            note=NULL,
+                            updated_by_user_id=VALUES(updated_by_user_id),
+                            updated_at=VALUES(updated_at),
+                            deleted_at=NULL,
+                            deleted_by_user_id=NULL
+                        """,
+                        (
+                            customer_id,
+                            int(sku.get("spu_id") or 0),
+                            unit_id,
+                            price,
+                            qty,
+                            sku_id,
+                            sales_id,
+                            item_id,
+                            str(item.get("price_source") or "manual_override")[:30],
+                            operator_user_id,
+                            now,
+                            now,
+                        ),
+                    )
                 if self._sku_tracks_inventory(sku):
                     self._change_inventory(
                         cursor,
@@ -7804,25 +7980,30 @@ class NativeDBClient:
         )
         if not sku_rows:
             return {"sku": {}, "history": []}
+        sku = sku_rows[0]
+        selected_unit_id = int(sku.get("unit_id") or 0)
         history_rows = self.query(
             """
-            SELECT i.id AS item_id, i.unit_price, i.quantity, i.unit_id,
-                   i.remember_price, i.price_source, i.price_reference_item_id,
-                   s.id AS sales_id, s.sales_no, s.sales_at,
-                   DATEDIFF(CURDATE(), DATE(s.sales_at)) AS age_days,
+            SELECT m.id AS memory_id, m.source_sales_item_id AS item_id,
+                   m.unit_price, m.last_quantity AS quantity, m.unit_id,
+                   1 AS remember_price, m.price_source, NULL AS price_reference_item_id,
+                   m.source_sales_order_id AS sales_id, s.sales_no, s.sales_at,
+                   s.status AS source_sales_status,
+                   s.deleted_at AS source_sales_deleted_at,
+                   m.updated_at AS remembered_at,
+                   DATEDIFF(CURDATE(), DATE(m.updated_at)) AS age_days,
                    u.name AS unit_name
-            FROM sales_order_item i
-            JOIN sales_order s ON s.id=i.sales_order_id
-            LEFT JOIN product_unit u ON u.id=i.unit_id
-            WHERE s.customer_id=%s AND i.sku_id=%s
-              AND s.status IN ('confirmed', 'completed')
-              AND s.deleted_at IS NULL
-            ORDER BY s.sales_at DESC, i.id DESC
+            FROM customer_price_memory m
+            LEFT JOIN sales_order s ON s.id=m.source_sales_order_id
+            LEFT JOIN product_unit u ON u.id=m.unit_id
+            WHERE m.customer_id=%s AND m.spu_id=%s AND m.unit_id=%s
+              AND m.deleted_at IS NULL
+            ORDER BY m.updated_at DESC, m.id DESC
             LIMIT %s
             """,
-            (customer_id, sku_id, max(1, min(int(limit or 10), 50))),
+            (customer_id, int(sku.get("spu_id") or 0), selected_unit_id, max(1, min(int(limit or 10), 50))),
         )
-        return {"sku": sku_rows[0], "history": history_rows}
+        return {"sku": sku, "history": history_rows}
 
     def sales_history_price(self, customer_id: int, product_id: int) -> float | None:
         context = self.sales_price_context(customer_id, product_id, limit=20)

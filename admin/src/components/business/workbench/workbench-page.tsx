@@ -317,7 +317,6 @@ function labelFromPath(path: string) {
     price: "单价",
     price_source: "价格来源",
     suggested_history_price: "客户历史价参考",
-    remember_price: "记住本次价格",
     warehouse_id: "仓库",
     purchase_warehouse_id: "入库仓库",
     from_wh: "调出仓库",
@@ -486,7 +485,6 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
     { paths: ["price", "unit_price"], label: "单价", options: { inputMode: "decimal" as const }, required: false },
     { paths: ["suggested_history_price"], label: "客户历史价参考", options: { inputMode: "decimal" as const, readOnly: true }, required: false },
     { paths: ["price_source"], label: "价格来源", options: { readOnly: true }, required: false },
-    { paths: ["remember_price"], label: "记住本次价格", options: { control: "checkbox" as const }, required: false },
     { paths: ["warehouse_id", "warehouse_name"], label: "仓库", required: false, options: { control: "warehouse-select" as const } }
   ];
 
@@ -2031,6 +2029,32 @@ function AgentConfirmDialog({
     onConfirm(nextState);
   }
 
+  function changeFieldValue(path: string, value: string) {
+    setValues((current) => {
+      const next = { ...current, [path]: value };
+      const match = path.match(/^(.*products\.)(\d+)\.(price|unit_price)$/);
+      if (!match) return next;
+      const state = session?.state || {};
+      const rowPath = `${match[1]}${match[2]}`;
+      const row = readValueByPath(state, rowPath);
+      if (!isPlainRecord(row) || !row.spu_id) return next;
+      const productsPath = match[1].slice(0, -1);
+      const products = readValueByPath(state, productsPath);
+      if (!Array.isArray(products)) return next;
+      products.forEach((candidate, index) => {
+        if (!isPlainRecord(candidate)) return;
+        if (
+          Number(candidate.spu_id || 0) === Number(row.spu_id || 0)
+          && Number(candidate.unit_id || 0) === Number(row.unit_id || 0)
+        ) {
+          const candidatePath = `${match[1]}${index}.${match[3]}`;
+          if (candidatePath in current) next[candidatePath] = value;
+        }
+      });
+      return next;
+    });
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="workbench-confirm-dialog">
@@ -2046,7 +2070,7 @@ function AgentConfirmDialog({
                   key={section.title}
                   section={section}
                   values={values}
-                  onValueChange={(path, value) => setValues((current) => ({ ...current, [path]: value }))}
+                  onValueChange={changeFieldValue}
                 />
               ))}
             </div>

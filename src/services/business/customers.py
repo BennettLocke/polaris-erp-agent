@@ -103,7 +103,37 @@ class CustomerService(BusinessService):
         )
 
     def price_history(self, customer_id: int, *, page: int = 1, page_size: int = 20) -> tuple[list[dict], int]:
-        return self.db.customer_price_history(customer_id, page=page, page_size=page_size)
+        return self.db.customer_price_memories(customer_id, page=page, page_size=page_size)
+
+    def update_price_memory(
+        self,
+        customer_id: int,
+        memory_id: int,
+        *,
+        unit_price: Any,
+        note: str = "",
+        operator_user_id: Any = None,
+    ) -> dict:
+        return self.db.update_customer_price_memory(
+            customer_id,
+            memory_id,
+            unit_price,
+            note=note,
+            operator_user_id=operator_user_id,
+        )
+
+    def delete_price_memory(
+        self,
+        customer_id: int,
+        memory_id: int,
+        *,
+        operator_user_id: Any = None,
+    ) -> dict:
+        return self.db.delete_customer_price_memory(
+            customer_id,
+            memory_id,
+            operator_user_id=operator_user_id,
+        )
 
 
 class CustomerBalanceService(BusinessService):
