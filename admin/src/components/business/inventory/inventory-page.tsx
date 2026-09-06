@@ -122,6 +122,7 @@ type InventoryMatrixSku = {
 type InventoryMatrixProduct = {
   key: string;
   title: string;
+  pieceText: string;
   total: number;
   skus: InventoryMatrixSku[];
 };
@@ -206,6 +207,10 @@ function rowTitle(row?: InventoryBalance | null) {
 
 function rowColor(row?: InventoryBalance | null) {
   return row?.color || row?.spec || "默认颜色";
+}
+
+function rowPieceText(row?: InventoryBalance | null) {
+  return String(row?.simple_desc || "").trim();
 }
 
 function inventoryActionLookupKeyword(row?: InventoryBalance | null) {
@@ -401,8 +406,10 @@ function buildInventoryMatrix(rows: InventoryBalance[], warehouseColumns: Invent
     const productKey = String(rowSpuId(row) || rowTitle(row));
     let product = products.get(productKey);
     if (!product) {
-      product = { key: productKey, title: rowTitle(row), total: 0, skus: [] };
+      product = { key: productKey, title: rowTitle(row), pieceText: rowPieceText(row), total: 0, skus: [] };
       products.set(productKey, product);
+    } else if (!product.pieceText) {
+      product.pieceText = rowPieceText(row);
     }
     const skuKey = String(rowProductId(row) || row.sku_no || `${rowTitle(row)}-${rowColor(row)}`);
     let sku = product.skus.find((item) => item.key === skuKey);
@@ -653,7 +660,10 @@ function InventoryOverviewMatrix({
           <div className="inventory-product-card-header">
             <div>
               <h3>{product.title}</h3>
-              <span>{product.skus.length} 个颜色/SKU</span>
+              <div className="inventory-product-meta">
+                <span>{product.skus.length} 个颜色/SKU</span>
+                {product.pieceText ? <span className="inventory-product-piece">件规：{product.pieceText}</span> : null}
+              </div>
             </div>
             <Badge variant={product.total > 0 ? "outline" : "secondary"}>合计 {quantityText(product.total)}</Badge>
           </div>
@@ -800,6 +810,7 @@ function InventoryBalanceTable({
                 <div className="inventory-sku-cell">
                   <strong>{rowTitle(row)}</strong>
                   <span>{rowColor(row)} · {row.sku_no || `SKU${skuId}`}</span>
+                  {rowPieceText(row) ? <span className="inventory-sku-piece">件规：{rowPieceText(row)}</span> : null}
                 </div>
               </TableCell>
               <TableCell>{row.warehouse_name || "未记录仓库"}</TableCell>

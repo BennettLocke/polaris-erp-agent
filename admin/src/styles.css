@@ -6537,6 +6537,25 @@ textarea,
   align-items: start;
 }
 
+.inventory-product-card-header > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.inventory-product-meta {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
+
+.inventory-product-piece,
+.inventory-sku-piece {
+  white-space: nowrap;
+}
+
 .inventory-product-card-header h3 {
   min-width: 0;
   margin: 0;
