@@ -71,6 +71,16 @@ class AdminSalesNewRedesignContractTest(unittest.TestCase):
         self.assertIn("Table", detail_sheet)
         self.assertIn("AlertDialog", detail_sheet)
 
+    def test_product_search_keeps_case_pack_visible(self):
+        product_search = (SALES_CREATE / "sales-product-search.tsx").read_text(encoding="utf-8")
+        styles = (ADMIN / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('className="sales-create-product-meta"', product_search)
+        self.assertIn('className="sales-create-product-piece"', product_search)
+        self.assertNotIn('product.piece_text ? `件规：${product.piece_text}` : ""].filter(Boolean).join(" · ")', product_search)
+        self.assertIn(".sales-create-product-piece", styles)
+        self.assertIn("white-space: nowrap", styles.split(".sales-create-product-piece", 1)[1].split("}", 1)[0])
+
 
 if __name__ == "__main__":
     unittest.main()

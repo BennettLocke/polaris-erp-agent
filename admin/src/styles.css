@@ -3838,6 +3838,29 @@ nav button:hover {
   min-width: 0;
 }
 
+.sales-create-product-card .sales-create-product-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  min-width: 0;
+}
+
+.sales-create-product-card .sales-create-product-meta span {
+  text-overflow: clip;
+}
+
+.sales-create-product-category {
+  flex: 1 1 90px;
+  min-width: 0;
+}
+
+.sales-create-product-card .sales-create-product-piece {
+  flex: 0 0 auto;
+  overflow: visible;
+  white-space: nowrap;
+}
+
 .sales-create-product-card span,
 .sales-create-line-title span {
   color: var(--sj-muted);

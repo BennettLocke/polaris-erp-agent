@@ -68,7 +68,10 @@ function SalesProductSearch({
               <header>
                 <div>
                   <strong>{productDisplayTitle(product)}</strong>
-                  <span>{[product.product_category_text, product.piece_text ? `件规：${product.piece_text}` : ""].filter(Boolean).join(" · ")}</span>
+                  <div className="sales-create-product-meta">
+                    {product.product_category_text ? <span className="sales-create-product-category">{product.product_category_text}</span> : null}
+                    {product.piece_text ? <span className="sales-create-product-piece">件规：{product.piece_text}</span> : null}
+                  </div>
                 </div>
                 <Badge variant="outline">{productColorCount(product)} 个颜色</Badge>
               </header>
