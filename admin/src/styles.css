@@ -4247,6 +4247,14 @@ nav button:hover {
   width: min(560px, calc(100vw - 32px));
 }
 
+.sj-dialog-content.sales-price-edit-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(88vh, 760px);
+  overflow: hidden;
+}
+
 .sales-detail-title-row {
   display: flex;
   align-items: flex-start;
@@ -4280,6 +4288,24 @@ nav button:hover {
   gap: 12px;
 }
 
+.sales-detail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.sales-detail-section-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.sales-detail-section-header span {
+  color: var(--sj-muted);
+  font-size: 12px;
+}
+
 .sales-payment-panel-header div {
   display: grid;
   gap: 3px;
@@ -4303,6 +4329,65 @@ nav button:hover {
 
 .sales-payment-edit-grid .full {
   grid-column: 1 / -1;
+}
+
+.sales-price-edit-body {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sales-price-edit-table {
+  min-width: 760px;
+}
+
+.sales-price-edit-table .sj-input {
+  width: 120px;
+}
+
+.sales-price-edit-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+}
+
+.sales-price-edit-summary span,
+.sales-price-log-item span {
+  color: var(--sj-muted);
+  font-size: 12px;
+}
+
+.sales-price-edit-summary strong {
+  font-size: 18px;
+}
+
+.sales-price-log-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.sales-price-log-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--sj-border);
+  border-radius: 8px;
+}
+
+.sales-price-log-item > div {
+  display: grid;
+  gap: 3px;
+}
+
+.sales-price-log-item > div:last-child {
+  text-align: right;
 }
 
 .sales-payment-warning {
@@ -8837,6 +8922,19 @@ textarea,
   .customer-detail-title-row,
   .customer-tab-header {
     flex-direction: column;
+  }
+
+  .sales-detail-section-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sales-price-log-item {
+    grid-template-columns: 1fr;
+  }
+
+  .sales-price-log-item > div:last-child {
+    text-align: left;
   }
 
   .sales-create-field--customer,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Eye, Pencil, Printer, Trash2, WalletCards } from "lucide-react";
+import { CircleDollarSign, Eye, Pencil, Printer, Trash2, WalletCards } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -30,7 +31,7 @@ import {
   TableRow
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import type { SalesDetail, SalesPaymentUpdatePayload } from "@/types";
+import type { SalesDetail, SalesPaymentUpdatePayload, SalesPriceUpdatePayload, SalesProduct } from "@/types";
 import { displayDate, money, payText, salesAmount, salesOrderId, salesQuantity, stockRuleText } from "./utils";
 import type { SalesOrderDetailDialogProps } from "./types";
 
@@ -194,6 +195,179 @@ function SalesPaymentEditDialog({ order, open, busy, onOpenChange, onSave }: Sal
   );
 }
 
+type SalesPriceEditDialogProps = {
+  order: SalesDetail | null;
+  open: boolean;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (payload: SalesPriceUpdatePayload) => Promise<void>;
+};
+
+function productPriceGroupKey(product: SalesProduct, index: number) {
+  if (product.spu_id && product.unit_id) return `${product.spu_id}:${product.unit_id}`;
+  return `item:${product.item_id || index}`;
+}
+
+function priceNumber(value: string | number | undefined) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function SalesPriceEditDialog({ order, open, busy, onOpenChange, onSave }: SalesPriceEditDialogProps) {
+  const products = order?.detail || order?.items || order?.products || [];
+  const [prices, setPrices] = useState<Record<number, string>>({});
+  const [note, setNote] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const nextPrices: Record<number, string> = {};
+    products.forEach((product) => {
+      const itemId = Number(product.item_id || 0);
+      if (itemId) nextPrices[itemId] = priceNumber(product.price).toFixed(2);
+    });
+    setPrices(nextPrices);
+    setNote("");
+    setLocalError("");
+  }, [order, open]);
+
+  function handlePriceChange(product: SalesProduct, index: number, value: string) {
+    const groupKey = productPriceGroupKey(product, index);
+    setPrices((current) => {
+      const next = { ...current };
+      products.forEach((candidate, candidateIndex) => {
+        const itemId = Number(candidate.item_id || 0);
+        if (itemId && productPriceGroupKey(candidate, candidateIndex) === groupKey) {
+          next[itemId] = value;
+        }
+      });
+      return next;
+    });
+  }
+
+  async function handleSave() {
+    const payloadItems: SalesPriceUpdatePayload["items"] = [];
+    for (const product of products) {
+      const itemId = Number(product.item_id || 0);
+      const value = String(prices[itemId] ?? "").trim();
+      if (!itemId) {
+        setLocalError("销售明细信息不完整，请刷新后重试");
+        return;
+      }
+      if (!/^\d+(?:\.\d{1,2})?$/.test(value) || priceNumber(value) <= 0) {
+        setLocalError("单价必须大于0，最多保留两位小数");
+        return;
+      }
+      payloadItems.push({ item_id: itemId, unit_price: priceNumber(value) });
+    }
+    setLocalError("");
+    setSaving(true);
+    try {
+      await onSave({ items: payloadItems, note: note.trim() });
+      onOpenChange(false);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "销售单价格保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const newGoodsAmount = products.reduce((total, product) => {
+    const itemId = Number(product.item_id || 0);
+    return total + priceNumber(product.quantity || product.buy_number) * priceNumber(prices[itemId]);
+  }, 0);
+  const disabled = busy || saving;
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!disabled) onOpenChange(nextOpen);
+    }}>
+      <DialogContent className="sales-price-edit-dialog">
+        <DialogHeader>
+          <DialogTitle>编辑销售价格</DialogTitle>
+          <DialogDescription>
+            只修改商品单价。数量不可修改，商品、颜色、仓库和库存流水均保持不变。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="sales-price-edit-body">
+          <Table className="sales-price-edit-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>商品</TableHead>
+                <TableHead>颜色/规格</TableHead>
+                <TableHead>数量</TableHead>
+                <TableHead>原单价</TableHead>
+                <TableHead>新单价</TableHead>
+                <TableHead>新金额</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {products.map((product, index) => {
+                const itemId = Number(product.item_id || 0);
+                const quantity = priceNumber(product.quantity || product.buy_number);
+                const nextPrice = prices[itemId] ?? "";
+                return (
+                  <TableRow key={itemId || index}>
+                    <TableCell>{product.title || product.name || "商品"}</TableCell>
+                    <TableCell>{product.spec || product.color || "默认颜色"}</TableCell>
+                    <TableCell>{product.quantity || product.buy_number || 0}</TableCell>
+                    <TableCell>{money(product.price)}</TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={nextPrice}
+                        disabled={disabled}
+                        aria-label={`${product.title || product.name || "商品"}新单价`}
+                        onChange={(event) => handlePriceChange(product, index, event.target.value)}
+                      />
+                    </TableCell>
+                    <TableCell>{money(quantity * priceNumber(nextPrice))}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+
+          <div className="sales-price-edit-summary">
+            <span>修改后商品金额</span>
+            <strong>{money(newGoodsAmount)}</strong>
+          </div>
+
+          <Field>
+            <FieldLabel>修改备注</FieldLabel>
+            <Textarea
+              rows={3}
+              value={note}
+              disabled={disabled}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="例如：客户议价、录入价格修正"
+            />
+          </Field>
+
+          <div className="sales-payment-warning">
+            <CircleDollarSign data-icon="inline-start" />
+            同款不同颜色会同步价格；余额付款会自动补扣或退回差额，符合规则的商品会更新客户历史价。
+          </div>
+          {localError ? <div className="form-error">{localError}</div> : null}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" type="button" disabled={disabled} onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button type="button" disabled={disabled || products.length === 0} onClick={() => void handleSave()}>
+            {disabled ? "保存中" : "保存价格"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SalesOrderDetailDialog({
   order,
   busySalesId,
@@ -201,15 +375,20 @@ function SalesOrderDetailDialog({
   onPrint,
   onPreview,
   onUpdatePayment,
+  onUpdatePrices,
   onDelete
 }: SalesOrderDetailDialogProps) {
   const [paymentEditOpen, setPaymentEditOpen] = useState(false);
+  const [priceEditOpen, setPriceEditOpen] = useState(false);
   const products = order?.detail || order?.items || order?.products || [];
   const orderId = salesOrderId(order);
   const busy = Boolean(orderId && busySalesId === orderId);
 
   useEffect(() => {
-    if (!order) setPaymentEditOpen(false);
+    if (!order) {
+      setPaymentEditOpen(false);
+      setPriceEditOpen(false);
+    }
   }, [order]);
 
   return (
@@ -219,6 +398,7 @@ function SalesOrderDetailDialog({
         onOpenChange={(open) => {
           if (!open) {
             setPaymentEditOpen(false);
+            setPriceEditOpen(false);
             onClose();
           }
         }}
@@ -256,6 +436,22 @@ function SalesOrderDetailDialog({
                   <TabsTrigger value="log">操作记录</TabsTrigger>
                 </TabsList>
                 <TabsContent value="detail">
+                  <div className="sales-detail-section-header">
+                    <div>
+                      <strong>销售商品</strong>
+                      <span>{order.price_editable === false ? order.price_edit_block_reason : "只允许修改单价，数量和库存不会变化。"}</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      disabled={!orderId || busy || order.price_editable !== true}
+                      title={order.price_editable === false ? order.price_edit_block_reason : undefined}
+                      onClick={() => setPriceEditOpen(true)}
+                    >
+                      <Pencil data-icon="inline-start" /> 编辑价格
+                    </Button>
+                  </div>
                   <div className="sales-detail-table-wrap">
                     <Table className="sales-detail-table">
                       <TableHeader>
@@ -314,6 +510,23 @@ function SalesOrderDetailDialog({
                     <div className="full"><span>删除说明</span><strong>{order.delete_reason || "库存和余额回滚由服务层处理"}</strong></div>
                     <div className="full"><span>收款备注</span><strong>{order.note || "-"}</strong></div>
                   </div>
+                  {order.price_change_logs?.length ? (
+                    <div className="sales-price-log-list">
+                      <strong>价格修改记录</strong>
+                      {order.price_change_logs.map((log) => (
+                        <div className="sales-price-log-item" key={log.id}>
+                          <div>
+                            <strong>{log.title} · {log.color}</strong>
+                            <span>{displayDate(log.created_at)} · {log.operator_name || "未记录操作人"}</span>
+                          </div>
+                          <div>
+                            <strong>{money(log.old_unit_price)} → {money(log.new_unit_price)}</strong>
+                            <span>{log.note || "未填写备注"}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </TabsContent>
               </Tabs>
             </div>
@@ -340,6 +553,13 @@ function SalesOrderDetailDialog({
         busy={busy}
         onOpenChange={setPaymentEditOpen}
         onSave={(payload) => orderId ? onUpdatePayment(orderId, payload) : Promise.resolve()}
+      />
+      <SalesPriceEditDialog
+        order={order}
+        open={priceEditOpen}
+        busy={busy}
+        onOpenChange={setPriceEditOpen}
+        onSave={(payload) => orderId ? onUpdatePrices(orderId, payload) : Promise.resolve()}
       />
     </>
   );

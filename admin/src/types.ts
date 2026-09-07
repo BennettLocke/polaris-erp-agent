@@ -484,6 +484,7 @@ export type CustomerBalanceActionPayload = {
 
 export type SalesProduct = {
   id?: number;
+  item_id?: number;
   product_id?: number;
   spu_id?: number;
   unit_id?: number;
@@ -671,6 +672,9 @@ export type SalesDetail = SalesCard & {
   delete_reason?: string;
   deleted_by_name?: string;
   note?: string;
+  price_editable?: boolean;
+  price_edit_block_reason?: string;
+  price_change_logs?: SalesPriceChangeLog[];
   detail?: SalesProduct[];
   items?: SalesProduct[];
 };
@@ -913,6 +917,29 @@ export type InventoryLedgerItem = {
   operator_username?: string;
   note?: string;
   occurred_at?: string;
+};
+
+export type SalesPriceUpdatePayload = {
+  items: Array<{
+    item_id: number;
+    unit_price: number;
+  }>;
+  note?: string;
+};
+
+export type SalesPriceChangeLog = {
+  id: number;
+  item_id?: number;
+  title?: string;
+  color?: string;
+  old_unit_price: string;
+  new_unit_price: string;
+  quantity: string | number;
+  old_amount: string;
+  new_amount: string;
+  operator_name?: string;
+  note?: string;
+  created_at?: string;
 };
 
 export type InventoryLedgerContext = {

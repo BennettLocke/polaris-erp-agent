@@ -1,4 +1,4 @@
-import type { SalesCard, SalesDetail, SalesPaymentUpdatePayload } from "@/types";
+import type { SalesCard, SalesDetail, SalesPaymentUpdatePayload, SalesPriceUpdatePayload } from "@/types";
 
 export type SalesPayStatusFilter = "" | "paid" | "monthly" | "unpaid";
 export type SalesStatusFilter = "active" | "deleted";
@@ -38,6 +38,7 @@ export type SalesOrderDetailDialogProps = Omit<SalesListActions, "onOpenDetail">
   order: SalesDetail | null;
   onClose: () => void;
   onUpdatePayment: (id: number, payload: SalesPaymentUpdatePayload) => Promise<void>;
+  onUpdatePrices: (id: number, payload: SalesPriceUpdatePayload) => Promise<void>;
 };
 
 export type SalesDeleteDialogProps = {

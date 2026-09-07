@@ -333,6 +333,21 @@ class SalesService(BusinessService):
             operator_user_id=operator_user_id,
         )
 
+    def update_prices(
+        self,
+        sales_id: int,
+        *,
+        items: list[dict],
+        note: str = "",
+        operator_user_id: Any = None,
+    ) -> dict:
+        return self.db.update_sales_order_prices(
+            sales_id,
+            items=items,
+            note=note,
+            operator_user_id=operator_user_id,
+        )
+
     def detail(self, sales_id: int) -> dict:
         return self.db.sales_detail(sales_id)
 

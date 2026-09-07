@@ -102,6 +102,7 @@ import type {
   SalesDetail,
   SalesOrderPayload,
   SalesPaymentUpdatePayload,
+  SalesPriceUpdatePayload,
   SalesProduct,
   Warehouse
 } from "./types";
@@ -1130,6 +1131,34 @@ function SalesPage() {
     }
   }
 
+  async function handleUpdatePrices(id: number, payload: SalesPriceUpdatePayload) {
+    if (!id) return;
+    setError("");
+    setNotice("");
+    setBusySalesId(id);
+    try {
+      const result = await api.updateSalesPrices(id, payload);
+      setNotice(
+        result.changed_count > 0
+          ? `销售单价格已更新，应收金额 ¥${result.receivable_amount}`
+          : "销售单价格没有变化"
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
+      queryClient.invalidateQueries({ queryKey: queryKeys.customers.root });
+      setDetail(await queryClient.fetchQuery({
+        queryKey: queryKeys.sales.detail(id),
+        queryFn: ({ signal }) => api.salesDetail(id, { signal }),
+        staleTime: 0
+      }));
+      await load(page, filters);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "销售单价格更新失败");
+      throw err;
+    } finally {
+      setBusySalesId(null);
+    }
+  }
+
   async function confirmDeleteSales() {
     const id = Number(deleteTarget?.id || deleteTarget?.sales_id || 0);
     if (!id) return;
@@ -1234,6 +1263,7 @@ function SalesPage() {
         onPrint={handlePrint}
         onPreview={handlePreview}
         onUpdatePayment={handleUpdatePayment}
+        onUpdatePrices={handleUpdatePrices}
         onDelete={handleDelete}
       />
       <SalesDeleteDialog

@@ -757,6 +757,27 @@ class NativeDBClient:
                     )
                     cursor.execute(
                         """
+                        CREATE TABLE IF NOT EXISTS sales_order_price_log (
+                            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                            sales_order_id BIGINT UNSIGNED NOT NULL,
+                            sales_order_item_id BIGINT UNSIGNED NOT NULL,
+                            sku_id BIGINT UNSIGNED NOT NULL,
+                            old_unit_price DECIMAL(12,2) NOT NULL,
+                            new_unit_price DECIMAL(12,2) NOT NULL,
+                            quantity DECIMAL(12,3) NOT NULL,
+                            old_amount DECIMAL(12,2) NOT NULL,
+                            new_amount DECIMAL(12,2) NOT NULL,
+                            operator_user_id BIGINT UNSIGNED NULL,
+                            note VARCHAR(500) NULL,
+                            created_at DATETIME NOT NULL,
+                            PRIMARY KEY (id),
+                            KEY idx_sales_price_log_order (sales_order_id, created_at),
+                            KEY idx_sales_price_log_item (sales_order_item_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
                         INSERT INTO customer_price_memory
                             (customer_id, spu_id, unit_id, unit_price, last_quantity,
                              source_sku_id, source_sales_order_id, source_sales_item_id,
@@ -5540,6 +5561,7 @@ class NativeDBClient:
     def sales_detail(self, sales_id: int) -> dict:
         self._ensure_operator_columns()
         self._ensure_sales_delete_columns()
+        self._ensure_sales_price_columns()
         rows = self.query(
             """
             SELECT s.*,
@@ -5563,7 +5585,7 @@ class NativeDBClient:
         sale = rows[0]
         item_rows = self.query(
             """
-            SELECT i.*, w.name AS warehouse_name, s.main_image_url
+            SELECT i.*, w.name AS warehouse_name, s.main_image_url, s.spu_id
             FROM sales_order_item i
             LEFT JOIN warehouse w ON w.id=i.warehouse_id
             LEFT JOIN product_sku s ON s.id=i.sku_id
@@ -5574,7 +5596,10 @@ class NativeDBClient:
         )
         detail = [
             {
+                "item_id": item.get("id"),
                 "product_id": item.get("sku_id"),
+                "spu_id": item.get("spu_id"),
+                "unit_id": item.get("unit_id"),
                 "title": item.get("title_snapshot") or "商品",
                 "spec": item.get("color_snapshot") or "",
                 "buy_number": _qty_text(item.get("quantity")),
@@ -5616,6 +5641,41 @@ class NativeDBClient:
             }
             for row in ledger_rows
         ]
+        price_log_rows = self.query(
+            """
+            SELECT l.*, i.title_snapshot, i.color_snapshot,
+                   wu.display_name AS operator_name, wu.username AS operator_username
+            FROM sales_order_price_log l
+            LEFT JOIN sales_order_item i ON i.id=l.sales_order_item_id
+            LEFT JOIN auth_user wu ON wu.id=l.operator_user_id
+            WHERE l.sales_order_id=%s
+            ORDER BY l.created_at DESC, l.id DESC
+            """,
+            (sales_id,),
+        )
+        price_change_logs = [
+            {
+                "id": row.get("id"),
+                "item_id": row.get("sales_order_item_id"),
+                "title": row.get("title_snapshot") or "商品",
+                "color": row.get("color_snapshot") or "默认颜色",
+                "old_unit_price": _money(row.get("old_unit_price")),
+                "new_unit_price": _money(row.get("new_unit_price")),
+                "quantity": _qty_text(row.get("quantity")),
+                "old_amount": _money(row.get("old_amount")),
+                "new_amount": _money(row.get("new_amount")),
+                "operator_name": row.get("operator_name") or row.get("operator_username") or "",
+                "note": row.get("note") or "",
+                "created_at": str(row.get("created_at") or ""),
+            }
+            for row in price_log_rows
+        ]
+        price_editable = sale.get("status") not in ("canceled", "deleted") and not sale.get("settlement_ledger_id")
+        price_edit_block_reason = ""
+        if sale.get("status") in ("canceled", "deleted"):
+            price_edit_block_reason = "已取消或已删除的销售单不能修改价格"
+        elif sale.get("settlement_ledger_id"):
+            price_edit_block_reason = "已完成月结结算的销售单不能修改价格"
         return {
             "code": 0,
             "data": {
@@ -5654,6 +5714,9 @@ class NativeDBClient:
                 "products": detail,
                 "items": detail,
                 "inventory_ledgers": ledgers,
+                "price_change_logs": price_change_logs,
+                "price_editable": price_editable,
+                "price_edit_block_reason": price_edit_block_reason,
                 "note": sale.get("note") or "",
             },
         }
@@ -7677,6 +7740,257 @@ class NativeDBClient:
                     ),
                 )
         return {"code": 0, "data": {"id": sales_id, "sales_id": sales_id, "sales_no": sales_no}}
+
+    def update_sales_order_prices(
+        self,
+        sales_id: int,
+        *,
+        items: list[dict],
+        note: str = "",
+        operator_user_id: Any = None,
+    ) -> dict:
+        self._ensure_operator_columns()
+        self._ensure_sales_delete_columns()
+        self._ensure_sales_price_columns()
+        operator_user_id = self._operator_user_id(operator_user_id)
+        now = _now()
+        clean_note = str(note or "").strip()[:500]
+        requested_prices: dict[int, Decimal] = {}
+        for item in items or []:
+            try:
+                item_id = int(item.get("item_id") or item.get("id") or 0)
+                unit_price = Decimal(str(item.get("unit_price") or item.get("price") or "0")).quantize(Decimal("0.01"))
+            except (AttributeError, TypeError, ValueError, ArithmeticError):
+                return {"code": 400, "msg": "销售明细或单价格式不正确"}
+            if item_id <= 0:
+                return {"code": 400, "msg": "销售明细不存在"}
+            if unit_price <= 0:
+                return {"code": 400, "msg": "销售单价必须大于0"}
+            if item_id in requested_prices and requested_prices[item_id] != unit_price:
+                return {"code": 400, "msg": "同一销售明细不能提交多个价格"}
+            requested_prices[item_id] = unit_price
+        if not requested_prices:
+            return {"code": 400, "msg": "请至少修改一个商品价格"}
+
+        with self.transaction() as cursor:
+            cursor.execute("SELECT * FROM sales_order WHERE id=%s FOR UPDATE", (int(sales_id),))
+            sale = cursor.fetchone()
+            if not sale:
+                return {"code": 404, "msg": "销售单不存在"}
+            if sale.get("status") in ("canceled", "deleted"):
+                return {"code": 400, "msg": "已取消或已删除的销售单不能修改价格"}
+            if sale.get("settlement_ledger_id"):
+                return {"code": 400, "msg": "已完成月结结算的销售单不能修改价格"}
+
+            cursor.execute(
+                """
+                SELECT i.*, sku.spu_id
+                FROM sales_order_item i
+                JOIN product_sku sku ON sku.id=i.sku_id
+                WHERE i.sales_order_id=%s
+                ORDER BY i.line_no ASC
+                FOR UPDATE
+                """,
+                (int(sales_id),),
+            )
+            order_items = list(cursor.fetchall())
+            item_by_id = {int(row.get("id") or 0): row for row in order_items}
+            missing_ids = sorted(set(requested_prices) - set(item_by_id))
+            if missing_ids:
+                return {"code": 400, "msg": "存在不属于该销售单的商品明细"}
+
+            group_prices: dict[tuple[int, int], Decimal] = {}
+            for item_id, unit_price in requested_prices.items():
+                row = item_by_id[item_id]
+                key = (int(row.get("spu_id") or 0), int(row.get("unit_id") or 0))
+                if not key[0] or not key[1]:
+                    return {"code": 400, "msg": "商品或销售单位信息不完整"}
+                if key in group_prices and group_prices[key] != unit_price:
+                    return {"code": 400, "msg": "同一款商品不同颜色的销售价格必须一致"}
+                group_prices[key] = unit_price
+
+            changed_rows: list[dict] = []
+            changed_groups: set[tuple[int, int]] = set()
+            total_amount = Decimal("0.00")
+            for row in order_items:
+                key = (int(row.get("spu_id") or 0), int(row.get("unit_id") or 0))
+                quantity = Decimal(str(row.get("quantity") or "0"))
+                old_price = Decimal(str(row.get("unit_price") or "0")).quantize(Decimal("0.01"))
+                old_amount = Decimal(str(row.get("amount") or "0")).quantize(Decimal("0.01"))
+                new_price = group_prices.get(key, old_price)
+                new_amount = (quantity * new_price).quantize(Decimal("0.01"))
+                total_amount += new_amount
+                if new_price == old_price and new_amount == old_amount:
+                    continue
+                cursor.execute(
+                    """
+                    UPDATE sales_order_item
+                    SET unit_price=%s, amount=%s, price_source='post_sale_adjustment',
+                        price_reference_item_id=NULL
+                    WHERE id=%s AND sales_order_id=%s
+                    """,
+                    (new_price, new_amount, int(row["id"]), int(sales_id)),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO sales_order_price_log
+                        (sales_order_id, sales_order_item_id, sku_id, old_unit_price, new_unit_price,
+                         quantity, old_amount, new_amount, operator_user_id, note, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        int(sales_id),
+                        int(row["id"]),
+                        int(row.get("sku_id") or 0),
+                        old_price,
+                        new_price,
+                        quantity,
+                        old_amount,
+                        new_amount,
+                        operator_user_id,
+                        clean_note or None,
+                        now,
+                    ),
+                )
+                changed_rows.append({**row, "new_price": new_price, "new_amount": new_amount})
+                changed_groups.add(key)
+
+            total_amount = total_amount.quantize(Decimal("0.01"))
+            discount_amount = Decimal(str(sale.get("discount_amount") or "0")).quantize(Decimal("0.01"))
+            if total_amount < discount_amount:
+                raise DBError("修改后的商品金额不能小于原优惠金额")
+            receivable_amount = (total_amount - discount_amount).quantize(Decimal("0.01"))
+            old_receivable = Decimal(str(sale.get("receivable_amount") or "0")).quantize(Decimal("0.01"))
+            balance_delta = (receivable_amount - old_receivable).quantize(Decimal("0.01"))
+
+            if changed_rows and sale.get("pay_status") == "paid" and sale.get("pay_type") == "balance" and balance_delta:
+                customer_id = int(sale.get("customer_id") or 0)
+                cursor.execute("SELECT id FROM party WHERE id=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE", (customer_id,))
+                if not cursor.fetchone():
+                    raise DBError("客户不存在")
+                adjustment = abs(balance_delta)
+                if balance_delta > 0:
+                    cursor.execute(
+                        """
+                        SELECT
+                          COALESCE((SELECT SUM(balance_delta) FROM customer_balance_ledger WHERE customer_id=%s), 0) AS wallet_amount,
+                          COALESCE((
+                            SELECT SUM(receivable_amount)
+                            FROM sales_order
+                            WHERE customer_id=%s AND id<>%s
+                              AND status NOT IN ('canceled', 'deleted')
+                              AND pay_status IN ('unpaid', 'monthly', 'partial')
+                          ), 0) AS debt_amount
+                        """,
+                        (customer_id, customer_id, int(sales_id)),
+                    )
+                    wallet_row = cursor.fetchone() or {}
+                    wallet_amount = Decimal(str(wallet_row.get("wallet_amount") or "0")).quantize(Decimal("0.01"))
+                    debt_amount = Decimal(str(wallet_row.get("debt_amount") or "0")).quantize(Decimal("0.01"))
+                    available_amount = wallet_amount - debt_amount
+                    if available_amount < adjustment:
+                        raise DBError(f"客户余额不足，改单还需补扣{_money(adjustment)}，当前可用余额{_money(available_amount)}")
+                    entry_type = "balance_pay"
+                    ledger_delta = -adjustment
+                    ledger_note = f"销售单 {sale.get('sales_no')} 改价补扣余额"
+                else:
+                    entry_type = "balance_refund"
+                    ledger_delta = adjustment
+                    ledger_note = f"销售单 {sale.get('sales_no')} 改价退回余额"
+                if clean_note:
+                    ledger_note = f"{ledger_note}；{clean_note}"
+                cursor.execute(
+                    """
+                    INSERT INTO customer_balance_ledger
+                        (ledger_no, customer_id, entry_type, pay_type, amount, applied_amount,
+                         balance_delta, related_month, note, created_by_user_id, created_at)
+                    VALUES (%s, %s, %s, 'balance', %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        self._ledger_no("CB"),
+                        customer_id,
+                        entry_type,
+                        adjustment,
+                        adjustment,
+                        ledger_delta,
+                        str(sale.get("sales_at") or now)[:7],
+                        ledger_note[:500],
+                        operator_user_id,
+                        now,
+                    ),
+                )
+
+            if changed_rows:
+                cursor.execute(
+                    """
+                    UPDATE sales_order
+                    SET goods_amount=%s, receivable_amount=%s, updated_at=%s
+                    WHERE id=%s
+                    """,
+                    (total_amount, receivable_amount, now, int(sales_id)),
+                )
+                for group_key in changed_groups:
+                    group_rows = [
+                        row for row in changed_rows
+                        if (int(row.get("spu_id") or 0), int(row.get("unit_id") or 0)) == group_key
+                    ]
+                    if not group_rows or not any(int(row.get("remember_price") or 0) == 1 for row in group_rows):
+                        continue
+                    source_row = group_rows[0]
+                    group_quantity = sum(
+                        Decimal(str(row.get("quantity") or "0"))
+                        for row in order_items
+                        if (int(row.get("spu_id") or 0), int(row.get("unit_id") or 0)) == group_key
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO customer_price_memory
+                            (customer_id, spu_id, unit_id, unit_price, last_quantity,
+                             source_sku_id, source_sales_order_id, source_sales_item_id,
+                             price_source, note, updated_by_user_id, created_at, updated_at,
+                             deleted_at, deleted_by_user_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                                'post_sale_adjustment', %s, %s, %s, %s, NULL, NULL)
+                        ON DUPLICATE KEY UPDATE
+                            unit_price=VALUES(unit_price),
+                            last_quantity=VALUES(last_quantity),
+                            source_sku_id=VALUES(source_sku_id),
+                            source_sales_order_id=VALUES(source_sales_order_id),
+                            source_sales_item_id=VALUES(source_sales_item_id),
+                            price_source=VALUES(price_source),
+                            note=VALUES(note),
+                            updated_by_user_id=VALUES(updated_by_user_id),
+                            updated_at=VALUES(updated_at),
+                            deleted_at=NULL,
+                            deleted_by_user_id=NULL
+                        """,
+                        (
+                            int(sale.get("customer_id") or 0),
+                            group_key[0],
+                            group_key[1],
+                            source_row["new_price"],
+                            group_quantity,
+                            int(source_row.get("sku_id") or 0),
+                            int(sales_id),
+                            int(source_row.get("id") or 0),
+                            clean_note or None,
+                            operator_user_id,
+                            now,
+                            now,
+                        ),
+                    )
+
+        return {
+            "code": 0,
+            "data": {
+                "id": int(sales_id),
+                "sales_id": int(sales_id),
+                "changed_count": len(changed_rows),
+                "goods_amount": _money(total_amount),
+                "receivable_amount": _money(receivable_amount),
+                "balance_delta": _money(balance_delta),
+            },
+        }
 
     def update_sales_order_payment(
         self,

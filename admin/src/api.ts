@@ -50,6 +50,7 @@ import type {
   SalesOrderResult,
   SalesPricePreview,
   SalesPaymentUpdatePayload,
+  SalesPriceUpdatePayload,
   SalesPrintTask,
   SalesProduct,
   StockDocumentItem,
@@ -592,6 +593,18 @@ export const api = {
     ),
   updateCustomerPriceMemory: (customerId: number, memoryId: number, payload: { unit_price: number; note?: string }) =>
     request<{ id: number; unit_price: string }>(`/api/customers/${customerId}/price-memories/${memoryId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  updateSalesPrices: (id: number, payload: SalesPriceUpdatePayload) =>
+    request<{
+      id: number;
+      sales_id?: number;
+      changed_count: number;
+      goods_amount: string;
+      receivable_amount: string;
+      balance_delta?: string;
+    }>(`/api/sales/${id}/prices`, {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),

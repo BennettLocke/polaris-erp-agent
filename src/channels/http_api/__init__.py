@@ -397,6 +397,7 @@ API_PERMISSION_RULES = [
     ({"GET"}, re.compile(r"^/api/users$"), "设置"),
     ({"POST", "PATCH"}, re.compile(r"^/api/users/\d+$"), "设置"),
     ({"POST"}, re.compile(r"^/api/sales/add$"), "开单"),
+    ({"PATCH"}, re.compile(r"^/api/sales/\d+/prices$"), "开单"),
     ({"DELETE"}, re.compile(r"^/api/sales/\d+$"), "删单"),
     ({"PATCH"}, re.compile(r"^/api/sales/\d+/payment$"), "调余额"),
     ({"POST"}, re.compile(r"^/api/sales/\d+/print-task$"), "打印"),
@@ -3385,6 +3386,36 @@ def sales_update_payment_api(sales_id: int):
         return jsonify({"code": 400, "msg": str(e)}), 400
     except Exception as e:
         logger.error(f"sales payment update failed: sales_id={sales_id}, error={e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/sales/<int:sales_id>/prices", methods=["PATCH"])
+def sales_update_prices_api(sales_id: int):
+    """Update sales item prices without changing quantities or inventory."""
+    if sales_id <= 0:
+        return jsonify({"code": 400, "msg": "sales_id is required"}), 400
+    payload = request.get_json(silent=True) or {}
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return jsonify({"code": 400, "msg": "请至少修改一个商品价格"}), 400
+    try:
+        user = _current_web_user() or {}
+        operator_user_id = user.get("native_user_id") or user.get("id")
+        result = get_sales_service().update_prices(
+            sales_id,
+            items=items,
+            note=payload.get("note") or "",
+            operator_user_id=operator_user_id,
+        )
+        if isinstance(result, dict) and result.get("code") not in (None, 0):
+            status_code = 404 if int(result.get("code") or 0) == 404 else 400
+            return jsonify(result), status_code
+        return jsonify(result if isinstance(result, dict) else {"code": 0, "data": result})
+    except DBError as e:
+        logger.warning(f"sales price update rejected: sales_id={sales_id}, error={e}")
+        return jsonify({"code": 400, "msg": str(e)}), 400
+    except Exception as e:
+        logger.error(f"sales price update failed: sales_id={sales_id}, error={e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 

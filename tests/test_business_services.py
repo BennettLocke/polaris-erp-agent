@@ -281,6 +281,18 @@ class FakeDB:
         self.calls.append(("create_sales_order", kwargs))
         return {"code": 0, "data": {"id": 123, "products": kwargs["products"]}}
 
+    def update_sales_order_prices(self, sales_id: int, *, items: list[dict], note: str = "", operator_user_id=None) -> dict:
+        self.calls.append((
+            "update_sales_order_prices",
+            {
+                "sales_id": sales_id,
+                "items": items,
+                "note": note,
+                "operator_user_id": operator_user_id,
+            },
+        ))
+        return {"code": 0, "data": {"id": sales_id, "goods_amount": "100.00"}}
+
     def link_workflow_sales_order(self, workflow_order_id: int, sales_order_id: int, operator_user_id=None) -> dict:
         self.calls.append((
             "link_workflow_sales_order",
@@ -840,6 +852,28 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(db.calls[-1], (
             "link_workflow_sales_order",
             {"workflow_order_id": 456, "sales_order_id": 123, "operator_user_id": 5},
+        ))
+
+    def test_sales_service_updates_prices_through_the_business_boundary(self):
+        db = FakeDB()
+        service = SalesService(db=db)
+
+        result = service.update_prices(
+            123,
+            items=[{"item_id": 9, "unit_price": 20}],
+            note="客户议价",
+            operator_user_id=5,
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(db.calls[-1], (
+            "update_sales_order_prices",
+            {
+                "sales_id": 123,
+                "items": [{"item_id": 9, "unit_price": 20}],
+                "note": "客户议价",
+                "operator_user_id": 5,
+            },
         ))
 
     def test_workflow_service_links_sales_order(self):

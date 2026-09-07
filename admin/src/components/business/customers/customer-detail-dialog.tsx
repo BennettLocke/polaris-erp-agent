@@ -47,7 +47,8 @@ import type {
   CustomerSalesSummary,
   SalesCard,
   SalesDetail,
-  SalesPaymentUpdatePayload
+  SalesPaymentUpdatePayload,
+  SalesPriceUpdatePayload
 } from "@/types";
 import { CustomerBalanceActionDialog } from "./customer-balance-action-dialog";
 import { CustomerFormDialog } from "./customer-form-dialog";
@@ -359,6 +360,30 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "收款方式更新失败");
+      throw err;
+    } finally {
+      setBusySalesId(null);
+    }
+  }
+
+  async function updateSalesPrices(id: number, payload: SalesPriceUpdatePayload) {
+    if (!id) return;
+    setBusySalesId(id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.updateSalesPrices(id, payload);
+      setNotice(
+        result.changed_count > 0
+          ? `销售单价格已更新，应收金额 ¥${result.receivable_amount}`
+          : "销售单价格没有变化"
+      );
+      setDetail(await api.salesDetail(id));
+      await loadDetail(period, month, selected, salesPage, salesPayStatus);
+      await loadPriceHistory(priceHistoryPage);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "销售单价格更新失败");
       throw err;
     } finally {
       setBusySalesId(null);
@@ -737,6 +762,7 @@ function CustomerDetailDialog({ customer, currentUser, initialTab = "overview", 
           onPrint={(id) => void printSales(id)}
           onPreview={previewSales}
           onUpdatePayment={updateSalesPayment}
+          onUpdatePrices={updateSalesPrices}
           onDelete={(order) => setDeleteTarget(order)}
         />
         <SalesDeleteDialog

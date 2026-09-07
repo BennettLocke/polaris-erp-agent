@@ -236,6 +236,24 @@ CREATE TABLE IF NOT EXISTS sales_order_item (
     KEY idx_sales_order_item_workflow (workflow_order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS sales_order_price_log (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    sales_order_id BIGINT UNSIGNED NOT NULL,
+    sales_order_item_id BIGINT UNSIGNED NOT NULL,
+    sku_id BIGINT UNSIGNED NOT NULL,
+    old_unit_price DECIMAL(12,2) NOT NULL,
+    new_unit_price DECIMAL(12,2) NOT NULL,
+    quantity DECIMAL(12,3) NOT NULL,
+    old_amount DECIMAL(12,2) NOT NULL,
+    new_amount DECIMAL(12,2) NOT NULL,
+    operator_user_id BIGINT UNSIGNED NULL,
+    note VARCHAR(500) NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_sales_price_log_order (sales_order_id, created_at),
+    KEY idx_sales_price_log_item (sales_order_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS customer_balance_ledger (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     ledger_no VARCHAR(80) NOT NULL,
