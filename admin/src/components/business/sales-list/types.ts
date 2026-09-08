@@ -37,6 +37,7 @@ export type SalesMobileCardListProps = SalesListActions & {
 export type SalesOrderDetailDialogProps = Omit<SalesListActions, "onOpenDetail"> & {
   order: SalesDetail | null;
   onClose: () => void;
+  onMergePreview?: (id: number) => void;
   onUpdatePayment: (id: number, payload: SalesPaymentUpdatePayload) => Promise<void>;
   onUpdatePrices: (id: number, payload: SalesPriceUpdatePayload) => Promise<void>;
 };

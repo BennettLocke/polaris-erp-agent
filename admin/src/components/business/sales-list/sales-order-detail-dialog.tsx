@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CircleDollarSign, Eye, Pencil, Printer, Trash2, WalletCards } from "lucide-react";
+import { CircleDollarSign, Eye, Files, Pencil, Printer, Trash2, WalletCards } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -374,6 +374,7 @@ function SalesOrderDetailDialog({
   onClose,
   onPrint,
   onPreview,
+  onMergePreview,
   onUpdatePayment,
   onUpdatePrices,
   onDelete
@@ -533,6 +534,17 @@ function SalesOrderDetailDialog({
           ) : null}
 
           <DialogFooter>
+            {onMergePreview ? (
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                disabled={!orderId || busy || ["deleted", "canceled"].includes(String(order?.status || ""))}
+                onClick={() => onMergePreview(orderId)}
+              >
+                <Files data-icon="inline-start" /> 合并预览
+              </Button>
+            ) : null}
             <Button variant="outline" size="sm" type="button" disabled={!orderId} onClick={() => onPreview(orderId)}>
               <Eye data-icon="inline-start" /> 打印预览
             </Button>

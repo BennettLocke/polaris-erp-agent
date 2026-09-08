@@ -2,6 +2,8 @@ export { SalesDeleteDialog } from "./sales-delete-dialog";
 export { SalesListEmpty } from "./sales-list-empty";
 export { SalesListTable } from "./sales-list-table";
 export { SalesListToolbar } from "./sales-list-toolbar";
+export { SalesMergeDialog } from "./sales-merge-dialog";
+export { SalesMergePreviewPage } from "./sales-merge-preview-page";
 export { SalesMobileCardList } from "./sales-mobile-card-list";
 export { SalesOrderDetailDialog } from "./sales-order-detail-dialog";
 export type {

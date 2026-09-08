@@ -39,6 +39,8 @@ import {
   SalesListEmpty,
   SalesListTable,
   SalesListToolbar,
+  SalesMergeDialog,
+  SalesMergePreviewPage,
   SalesMobileCardList,
   SalesOrderDetailDialog,
   type SalesListFilters
@@ -100,6 +102,7 @@ import type {
   CustomerItem,
   SalesCard,
   SalesDetail,
+  SalesMergeCandidates,
   SalesOrderPayload,
   SalesPaymentUpdatePayload,
   SalesPriceUpdatePayload,
@@ -107,7 +110,7 @@ import type {
   Warehouse
 } from "./types";
 
-type RouteKey = "dashboard" | "sales-new" | "sales" | "data" | "customers" | "products" | "media" | "miniapp-images" | "inventory" | "orders" | "settings";
+type RouteKey = "dashboard" | "sales-new" | "sales" | "sales-merge-preview" | "data" | "customers" | "products" | "media" | "miniapp-images" | "inventory" | "orders" | "settings";
 
 const navItems: Array<{ key: RouteKey; label: string; icon: typeof Home; badge?: string }> = [
   { key: "dashboard", label: "工作台", icon: Home },
@@ -131,6 +134,7 @@ const pageMap: Record<RouteKey, { title: string; desc: string; status: string }>
   dashboard: { title: "工作台", desc: "AI 对话、结构化确认和最近业务记录。", status: "已接入" },
   "sales-new": { title: "开单", desc: "选择客户、商品、结款状态并创建销售单。", status: "已接入基础版" },
   sales: { title: "销售单", desc: "查看销售单卡片和账单详情。", status: "已接入基础版" },
+  "sales-merge-preview": { title: "合并销售单预览", desc: "查看、打印或下载勾选销售单的连续明细。", status: "已接入" },
   data: { title: "数据", desc: "查看销售额、订单、客户和热销商品。", status: "已接入" },
   customers: { title: "客户", desc: "查看客户卡片、最近消费和余额。", status: "已接入基础版" },
   products: { title: "商品", desc: "维护商品 SPU、SKU、颜色、件规、价格、上下架和图片绑定。", status: "已接入" },
@@ -159,6 +163,7 @@ function routeFromLocation(): RouteKey {
   const segment = window.location.pathname.replace(/^\/admin\/?/, "").split("/")[0];
   const route = segment || "dashboard";
   if (route === "sales-new") return "sales-new";
+  if (route === "sales-merge-preview") return "sales-merge-preview";
   if (route === "workflow") return "orders";
   if (route === "media") return "media";
   if (route === "miniapp-images") return "miniapp-images";
@@ -1031,6 +1036,10 @@ function SalesPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [detail, setDetail] = useState<SalesDetail | null>(null);
+  const [mergeCandidates, setMergeCandidates] = useState<SalesMergeCandidates | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [mergeError, setMergeError] = useState("");
   const [busySalesId, setBusySalesId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SalesCard | SalesDetail | null>(null);
   const printFeedback = useSalesPrintFeedback();
@@ -1129,6 +1138,36 @@ function SalesPage() {
     } finally {
       setBusySalesId(null);
     }
+  }
+
+  async function handleOpenMergePreview(id: number) {
+    if (!id) return;
+    setMergeOpen(true);
+    setMergeCandidates(null);
+    setMergeError("");
+    setMergeLoading(true);
+    try {
+      const data = await queryClient.fetchQuery({
+        queryKey: queryKeys.sales.mergeCandidates(id),
+        queryFn: ({ signal }) => api.salesMergeCandidates(id, { signal }),
+        staleTime: 0
+      });
+      setMergeCandidates(data);
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : "可合并销售单加载失败");
+    } finally {
+      setMergeLoading(false);
+    }
+  }
+
+  function openGeneratedMergePreview(selectedIds: number[]) {
+    if (!mergeCandidates || !selectedIds.length) return;
+    const params = new URLSearchParams({
+      base: String(mergeCandidates.base_sales_id),
+      ids: selectedIds.join(",")
+    });
+    window.open(`/admin/sales-merge-preview?${params.toString()}`, "_blank", "noopener");
+    setMergeOpen(false);
   }
 
   async function handleUpdatePrices(id: number, payload: SalesPriceUpdatePayload) {
@@ -1262,9 +1301,18 @@ function SalesPage() {
         busySalesId={activeBusySalesId}
         onPrint={handlePrint}
         onPreview={handlePreview}
+        onMergePreview={(id) => void handleOpenMergePreview(id)}
         onUpdatePayment={handleUpdatePayment}
         onUpdatePrices={handleUpdatePrices}
         onDelete={handleDelete}
+      />
+      <SalesMergeDialog
+        open={mergeOpen}
+        loading={mergeLoading}
+        error={mergeError}
+        candidates={mergeCandidates}
+        onOpenChange={setMergeOpen}
+        onGenerate={openGeneratedMergePreview}
       />
       <SalesDeleteDialog
         order={deleteTarget}
@@ -1340,6 +1388,10 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
     await api.logout().catch(() => undefined);
     onLogout();
     window.history.replaceState({}, "", "/admin/login");
+  }
+
+  if (route === "sales-merge-preview") {
+    return <SalesMergePreviewPage />;
   }
 
   return (

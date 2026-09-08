@@ -25,7 +25,8 @@ export const queryKeys = {
   sales: {
     root: ["sales"] as const,
     cards: (query: SalesListQuery) => ["sales", "cards", query] as const,
-    detail: (id: number) => ["sales", "detail", id] as const
+    detail: (id: number) => ["sales", "detail", id] as const,
+    mergeCandidates: (id: number) => ["sales", "merge-candidates", id] as const
   },
   settings: {
     root: ["settings"] as const,

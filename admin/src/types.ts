@@ -679,6 +679,49 @@ export type SalesDetail = SalesCard & {
   items?: SalesProduct[];
 };
 
+export type SalesMergeItem = {
+  item_id: number;
+  line_no: number;
+  title: string;
+  color: string;
+  quantity: string | number;
+  unit_price: string | number;
+  amount: string | number;
+};
+
+export type SalesMergeOrder = {
+  id: number;
+  sales_no: string;
+  status: string;
+  status_text: string;
+  pay_status: string;
+  pay_status_text: string;
+  pay_type: string;
+  pay_type_text: string;
+  total_quantity: string | number;
+  goods_amount: string | number;
+  discount_amount: string | number;
+  receivable_amount: string | number;
+  sales_at: string;
+  created_by_name?: string;
+  note?: string;
+  items: SalesMergeItem[];
+};
+
+export type SalesMergeCandidates = {
+  base_sales_id: number;
+  customer: {
+    id: number;
+    name: string;
+    contact_name?: string;
+    phone?: string;
+    address?: string;
+  };
+  date_from: string;
+  date_to: string;
+  orders: SalesMergeOrder[];
+};
+
 export type SalesPrintTask = {
   id?: number;
   task_id?: number;

@@ -88,6 +88,42 @@ class AdminSalesActionsContractTest(unittest.TestCase):
         self.assertIn("<Dialog", sales_components)
         self.assertNotIn("<Sheet", sales_components)
 
+    def test_sales_detail_exposes_merge_candidate_selection(self):
+        api_source = (ADMIN / "api.ts").read_text(encoding="utf-8")
+        app_source = (ADMIN / "App.tsx").read_text(encoding="utf-8")
+        detail_source = (SALES_LIST / "sales-order-detail-dialog.tsx").read_text(encoding="utf-8")
+        dialog_path = SALES_LIST / "sales-merge-dialog.tsx"
+
+        self.assertTrue(dialog_path.exists(), "sales merge dialog should exist")
+        if not dialog_path.exists():
+            return
+        dialog_source = dialog_path.read_text(encoding="utf-8")
+        self.assertIn("合并预览", detail_source)
+        self.assertIn("merge-candidates", api_source)
+        self.assertIn("base_sales_id", dialog_source)
+        self.assertIn("全部选择", dialog_source)
+        self.assertIn("生成合并预览", dialog_source)
+        self.assertIn("sales-merge-preview", app_source)
+        self.assertIn("<Checkbox", dialog_source)
+        self.assertIn("<DialogContent", dialog_source)
+
+    def test_sales_merge_preview_is_a_continuous_printable_table(self):
+        app_source = (ADMIN / "App.tsx").read_text(encoding="utf-8")
+        preview_path = SALES_LIST / "sales-merge-preview-page.tsx"
+
+        self.assertTrue(preview_path.exists(), "sales merge preview page should exist")
+        if not preview_path.exists():
+            return
+        preview_source = preview_path.read_text(encoding="utf-8")
+        self.assertIn("sales-merge-preview", app_source)
+        self.assertIn("连续明细", preview_source)
+        self.assertIn("原单号", preview_source)
+        self.assertIn("包含多种付款方式", preview_source)
+        self.assertIn("toPng", preview_source)
+        self.assertIn("window.print()", preview_source)
+        self.assertIn("flatMap", preview_source)
+        self.assertNotIn("reduce((grouped", preview_source)
+
 
 if __name__ == "__main__":
     unittest.main()

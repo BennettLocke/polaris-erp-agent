@@ -46,6 +46,7 @@ import type {
   RecentWorkflow,
   SalesCard,
   SalesDetail,
+  SalesMergeCandidates,
   SalesOrderPayload,
   SalesOrderResult,
   SalesPricePreview,
@@ -426,6 +427,11 @@ export const api = {
   },
   salesDetail: (id: number, options?: ApiRequestOptions) =>
     request<SalesDetail>(`/api/sales/${id}/detail`, withRequestOptions(undefined, options)),
+  salesMergeCandidates: (id: number, options?: ApiRequestOptions) =>
+    request<SalesMergeCandidates>(
+      `/api/sales/${id}/merge-candidates`,
+      withRequestOptions(undefined, options)
+    ),
   updateSalesPayment: (id: number, payload: SalesPaymentUpdatePayload) =>
     request<{
       id: number;
