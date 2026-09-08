@@ -351,6 +351,9 @@ class SalesService(BusinessService):
     def detail(self, sales_id: int) -> dict:
         return self.db.sales_detail(sales_id)
 
+    def merge_candidates(self, sales_id: int) -> dict:
+        return self.db.sales_merge_candidates(sales_id)
+
     def cards(
         self,
         *,

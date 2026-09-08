@@ -403,6 +403,7 @@ API_PERMISSION_RULES = [
     ({"POST"}, re.compile(r"^/api/sales/\d+/print-task$"), "打印"),
     ({"GET"}, re.compile(r"^/api/sales/print-tasks/\d+$"), "打印"),
     ({"GET"}, re.compile(r"^/api/sales/\d+/print-html$"), "打印"),
+    ({"GET"}, re.compile(r"^/api/sales/\d+/merge-candidates$"), "打印"),
     ({"POST"}, re.compile(r"^/api/inventory/purchase$"), "调库存"),
     ({"POST"}, re.compile(r"^/api/inventory/stocktaking$"), "盘点"),
     ({"POST"}, re.compile(r"^/api/inventory/transfer$"), "调拨"),
@@ -3386,6 +3387,21 @@ def sales_update_payment_api(sales_id: int):
         return jsonify({"code": 400, "msg": str(e)}), 400
     except Exception as e:
         logger.error(f"sales payment update failed: sales_id={sales_id}, error={e}")
+        return jsonify({"code": 500, "msg": str(e)}), 500
+
+
+@app.route("/api/sales/<int:sales_id>/merge-candidates", methods=["GET"])
+def sales_merge_candidates_api(sales_id: int):
+    """Return read-only same-customer sales candidates for a merged preview."""
+    if sales_id <= 0:
+        return jsonify({"code": 400, "msg": "sales_id is required"}), 400
+    try:
+        return jsonify(get_sales_service().merge_candidates(sales_id))
+    except DBError as e:
+        logger.warning(f"sales merge candidates rejected: sales_id={sales_id}, error={e}")
+        return _api_exception_response(e)
+    except Exception as e:
+        logger.error(f"sales merge candidates failed: sales_id={sales_id}, error={e}")
         return jsonify({"code": 500, "msg": str(e)}), 500
 
 
