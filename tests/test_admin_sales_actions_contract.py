@@ -124,6 +124,14 @@ class AdminSalesActionsContractTest(unittest.TestCase):
         self.assertIn("flatMap", preview_source)
         self.assertNotIn("reduce((grouped", preview_source)
 
+    def test_checkbox_keeps_a_square_size_inside_sales_table(self):
+        styles = (ADMIN / "styles.css").read_text(encoding="utf-8")
+        checkbox_rule = styles.split(".sj-checkbox {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("min-width: 18px", checkbox_rule)
+        self.assertIn("min-height: 18px", checkbox_rule)
+        self.assertIn("aspect-ratio: 1 / 1", checkbox_rule)
+
 
 if __name__ == "__main__":
     unittest.main()
