@@ -6358,6 +6358,136 @@ class NativeDBClient:
         }
         return {"code": 0, "data": data}
 
+    def sales_merge_candidates(self, sales_id: int) -> dict:
+        base_rows = self.query(
+            """
+            SELECT s.id, s.customer_id, s.customer_name_snapshot, s.status, s.sales_at,
+                   p.name AS customer_name, p.phone, p.address, p.contact_name
+            FROM sales_order s
+            LEFT JOIN party p ON p.id=s.customer_id
+            WHERE s.id=%s
+            LIMIT 1
+            """,
+            (int(sales_id),),
+        )
+        if not base_rows:
+            raise DBError("销售单不存在")
+        base = base_rows[0]
+        if str(base.get("status") or "") in {"canceled", "deleted"}:
+            raise DBError("已删除或已取消的销售单不能合并预览")
+        customer_id = int(base.get("customer_id") or 0)
+        if not customer_id:
+            raise DBError("销售单没有关联客户，不能合并预览")
+
+        raw_sales_at = base.get("sales_at")
+        if isinstance(raw_sales_at, datetime):
+            date_to_value = raw_sales_at.date()
+        else:
+            try:
+                date_to_value = datetime.fromisoformat(str(raw_sales_at or "")[:19]).date()
+            except (TypeError, ValueError):
+                raise DBError("销售单日期无效，不能合并预览")
+        date_from_value = date_to_value - timedelta(days=6)
+        date_from = date_from_value.isoformat()
+        date_to = date_to_value.isoformat()
+
+        scope_params = (customer_id, date_from, date_to)
+        total_rows = self.query(
+            """
+            SELECT COUNT(*) AS total
+            FROM sales_order s
+            WHERE s.customer_id=%s
+              AND s.status NOT IN ('canceled', 'deleted')
+              AND DATE(s.sales_at) BETWEEN %s AND %s
+            """,
+            scope_params,
+        )
+        total = int(total_rows[0].get("total") or 0) if total_rows else 0
+        if total > 200:
+            raise DBError("7天内销售单超过200张，暂不能合并预览")
+
+        order_rows = self.query(
+            """
+            SELECT s.id, s.sales_no, s.customer_id, s.customer_name_snapshot,
+                   s.status, s.pay_status, s.pay_type, s.total_quantity,
+                   s.goods_amount, s.discount_amount, s.receivable_amount,
+                   s.sales_at, s.note,
+                   wu.display_name AS created_by_name,
+                   wu.username AS created_by_username
+            FROM sales_order s
+            LEFT JOIN auth_user wu ON wu.id=s.created_by_user_id
+            WHERE s.customer_id=%s
+              AND s.status NOT IN ('canceled', 'deleted')
+              AND DATE(s.sales_at) BETWEEN %s AND %s
+            ORDER BY s.sales_at ASC, s.id ASC
+            """,
+            scope_params,
+        )
+        order_ids = [int(row.get("id") or 0) for row in order_rows if row.get("id")]
+        items_by_order: dict[int, list[dict]] = {order_id: [] for order_id in order_ids}
+        if order_ids:
+            placeholders = ",".join(["%s"] * len(order_ids))
+            item_rows = self.query(
+                f"""
+                SELECT i.id, i.sales_order_id, i.line_no, i.title_snapshot,
+                       i.color_snapshot, i.quantity, i.unit_price, i.amount
+                FROM sales_order_item i
+                WHERE i.sales_order_id IN ({placeholders})
+                ORDER BY i.sales_order_id ASC, i.line_no ASC, i.id ASC
+                """,
+                order_ids,
+            )
+            for item in item_rows:
+                order_id = int(item.get("sales_order_id") or 0)
+                items_by_order.setdefault(order_id, []).append({
+                    "item_id": item.get("id"),
+                    "line_no": int(item.get("line_no") or 0),
+                    "title": item.get("title_snapshot") or "商品",
+                    "color": item.get("color_snapshot") or "默认颜色",
+                    "quantity": _qty_text(item.get("quantity")),
+                    "unit_price": _money(item.get("unit_price")),
+                    "amount": _money(item.get("amount")),
+                })
+
+        orders = []
+        for row in order_rows:
+            order_id = int(row.get("id") or 0)
+            orders.append({
+                "id": order_id,
+                "sales_no": row.get("sales_no") or str(order_id),
+                "status": row.get("status") or "",
+                "status_text": self._sales_status_text(row.get("status") or ""),
+                "pay_status": row.get("pay_status") or "",
+                "pay_status_text": _pay_status_text(row.get("pay_status")),
+                "pay_type": row.get("pay_type") or "",
+                "pay_type_text": _pay_type_text(row.get("pay_type")),
+                "total_quantity": _qty_text(row.get("total_quantity")),
+                "goods_amount": _money(row.get("goods_amount")),
+                "discount_amount": _money(row.get("discount_amount")),
+                "receivable_amount": _money(row.get("receivable_amount")),
+                "sales_at": str(row.get("sales_at") or ""),
+                "created_by_name": row.get("created_by_name") or row.get("created_by_username") or "",
+                "note": row.get("note") or "",
+                "items": items_by_order.get(order_id, []),
+            })
+
+        return {
+            "code": 0,
+            "data": {
+                "base_sales_id": int(sales_id),
+                "customer": {
+                    "id": customer_id,
+                    "name": base.get("customer_name") or base.get("customer_name_snapshot") or "客户",
+                    "contact_name": base.get("contact_name") or "",
+                    "phone": base.get("phone") or "",
+                    "address": base.get("address") or "",
+                },
+                "date_from": date_from,
+                "date_to": date_to,
+                "orders": orders,
+            },
+        }
+
     def save_sku_number_settings(self, payload: dict, operator_user_id: Any = None) -> dict:
         self._ensure_number_sequence_tables()
         payload = payload or {}
