@@ -106,6 +106,8 @@ class OrderFlowWorkflow(BaseWorkflow):
                 )
             resolved_products.append(resolved)
 
+        resolved_products = self._merge_sales_products(resolved_products)
+
         # ---- B3: 查价格 ----
         logger.info("[OrderFlow] B3: 查价格")
         for p in resolved_products:
@@ -344,7 +346,11 @@ class OrderFlowWorkflow(BaseWorkflow):
             if not self._is_yes(user_input):
                 return self._reply("已取消进货，本次订单未开单。")
             warehouse_id = int(state.get("warehouse_id") or 2)
-            purchase_result = self._execute_purchase(products, warehouse_id)
+            purchase_result = self._execute_purchase(
+                products,
+                warehouse_id,
+                purchase_products=state.get("purchase_products"),
+            )
             if purchase_result.get("error"):
                 return self._reply(f"进货失败：{purchase_result['error']}")
             if state.get("return_to_order"):
@@ -504,6 +510,8 @@ class OrderFlowWorkflow(BaseWorkflow):
                     },
                 )
             resolved_products.append(resolved)
+
+        resolved_products = self._merge_sales_products(resolved_products)
 
         for p in resolved_products:
             self._fill_price(customer_id, p)
@@ -1170,6 +1178,59 @@ class OrderFlowWorkflow(BaseWorkflow):
             f" {product.get('qty') or product.get('quantity') or ''}{product.get('unit', '套')}"
         ).strip()
 
+    def _merge_sales_products(self, products: list[dict]) -> list[dict]:
+        """Merge identical sales rows while preserving their first-seen order."""
+        merged: list[dict] = []
+        positions: dict[tuple, int] = {}
+        for product in products or []:
+            try:
+                product_id = int(product.get("product_id") or 0)
+            except (TypeError, ValueError):
+                product_id = 0
+            if product_id <= 0:
+                merged.append(dict(product))
+                continue
+
+            raw_price = product.get("price")
+            try:
+                price_key = round(float(raw_price), 4) if raw_price not in (None, "") else None
+            except (TypeError, ValueError):
+                price_key = str(raw_price or "").strip()
+            key = (
+                product_id,
+                int(product.get("unit_id") or 0),
+                str(product.get("unit") or "").strip(),
+                int(product.get("warehouse_id") or 0),
+                str(product.get("color") or "").strip(),
+                price_key,
+            )
+            try:
+                quantity = float(product.get("qty") or product.get("quantity") or 1)
+            except (TypeError, ValueError):
+                quantity = 1.0
+
+            if key not in positions:
+                item = dict(product)
+                item["qty"] = int(quantity) if quantity.is_integer() else quantity
+                if "quantity" in item:
+                    item["quantity"] = item["qty"]
+                positions[key] = len(merged)
+                merged.append(item)
+                continue
+
+            item = merged[positions[key]]
+            total = float(item.get("qty") or item.get("quantity") or 0) + quantity
+            item["qty"] = int(total) if total.is_integer() else total
+            if "quantity" in item or "quantity" in product:
+                item["quantity"] = item["qty"]
+            if product.get("need_purchase"):
+                item["need_purchase"] = True
+            if product.get("shortage_qty") not in (None, ""):
+                item["shortage_qty"] = int(item.get("shortage_qty") or 0) + int(product.get("shortage_qty") or 0)
+            for field in ("purchase_qty", "purchase_unit", "purchase_per_piece"):
+                item.pop(field, None)
+        return merged
+
     def _fill_price(self, customer_id: int, product: dict):
         """B3: Apply the shared customer-price policy used by manual sales."""
         try:
@@ -1303,7 +1364,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         return any(w in value for w in ["停止", "取消当前", "整单取消", "不下了", "不用下了", "不开了", "先不弄了"])
 
     def _format_purchase_confirm_question(self, products: list[dict], customer_name: str = "") -> str:
-        need_purchase = [p for p in products if p.get("need_purchase")]
+        need_purchase = self._merge_purchase_products([p for p in products if p.get("need_purchase")])
         warehouse_id = need_purchase[0].get("warehouse_id", 2) if need_purchase else 2
         lines = [f"将先给{customer_name or '客户'}的订单进货到{self._warehouse_name(warehouse_id)}，再继续开销售单。请确认执行："]
         for p in need_purchase:
@@ -1317,6 +1378,67 @@ class OrderFlowWorkflow(BaseWorkflow):
     def _warehouse_stock(self, inventory: dict, warehouse_id: int) -> int:
         return int(inventory.get(self._warehouse_name(warehouse_id), 0) or 0)
 
+    def _merge_purchase_products(self, products: list[dict]) -> list[dict]:
+        """Aggregate purchase demand by SKU, warehouse and unit."""
+        merged: list[dict] = []
+        positions: dict[tuple, int] = {}
+        for product in products or []:
+            target_warehouse_id = int(product.get("purchase_warehouse_id") or product.get("warehouse_id") or 2)
+            key = (
+                int(product.get("product_id") or 0),
+                int(product.get("unit_id") or 0),
+                str(product.get("unit") or "").strip(),
+                target_warehouse_id,
+            )
+            try:
+                quantity = int(float(product.get("qty") or product.get("quantity") or 1))
+            except (TypeError, ValueError):
+                quantity = 1
+            try:
+                shortage = int(float(product.get("shortage_qty") or quantity))
+            except (TypeError, ValueError):
+                shortage = quantity
+
+            if key not in positions:
+                item = dict(product)
+                item["qty"] = quantity
+                item["quantity"] = quantity
+                item["shortage_qty"] = shortage
+                item["warehouse_id"] = target_warehouse_id
+                item["purchase_warehouse_id"] = target_warehouse_id
+                item["need_purchase"] = True
+                for field in ("purchase_qty", "purchase_unit", "purchase_per_piece"):
+                    item.pop(field, None)
+                positions[key] = len(merged)
+                merged.append(item)
+                continue
+
+            item = merged[positions[key]]
+            item["qty"] = int(item.get("qty") or 0) + quantity
+            item["quantity"] = item["qty"]
+            item["shortage_qty"] = int(item.get("shortage_qty") or 0) + shortage
+            for field in ("purchase_qty", "purchase_unit", "purchase_per_piece"):
+                item.pop(field, None)
+        return merged
+
+    def _build_shortage_products(self, products: list[dict], warehouse_id: int) -> list[dict]:
+        tracked = [product for product in products if self._product_tracks_inventory(product)]
+        requirements = self._merge_purchase_products(tracked)
+        shortages = []
+        for requirement in requirements:
+            product_warehouse_id = int(requirement.get("warehouse_id") or warehouse_id or 2)
+            inventory = self._query_inventory(requirement["product_id"])
+            requirement["inventory"] = inventory
+            selected_stock = self._warehouse_stock(inventory, product_warehouse_id)
+            total_quantity = int(requirement.get("qty") or 1)
+            if selected_stock >= total_quantity:
+                continue
+            requirement["shortage_qty"] = total_quantity - selected_stock
+            requirement["need_purchase"] = True
+            requirement["purchase_warehouse_id"] = product_warehouse_id
+            shortages.append(requirement)
+        return shortages
+
     def _purchase_confirmation_for_shortage(
         self,
         customer_id: int,
@@ -1326,31 +1448,12 @@ class OrderFlowWorkflow(BaseWorkflow):
         workflow_order_ids: list[int] | None = None,
     ) -> dict | None:
         warehouse_id = int(warehouse_id or 2)
-        shortage_products = []
-        for p in products:
-            product_warehouse_id = int(p.get("warehouse_id") or warehouse_id or 2)
-            p["warehouse_id"] = product_warehouse_id
-            if not self._product_tracks_inventory(p):
-                p.pop("need_purchase", None)
-                p.pop("purchase_warehouse_id", None)
-                p.pop("shortage_qty", None)
-                continue
-            inventory = self._query_inventory(p["product_id"])
-            p["inventory"] = inventory
-            selected_stock = self._warehouse_stock(inventory, product_warehouse_id)
-            try:
-                qty = int(float(p.get("qty") or 1))
-            except (TypeError, ValueError):
-                qty = 1
-            if selected_stock < qty:
-                p["need_purchase"] = True
-                p["purchase_warehouse_id"] = int(p.get("purchase_warehouse_id") or product_warehouse_id)
-                p["shortage_qty"] = max(1, qty - selected_stock)
-                shortage_products.append(p)
-            else:
-                p.pop("need_purchase", None)
-                p.pop("purchase_warehouse_id", None)
-                p.pop("shortage_qty", None)
+        for product in products:
+            product["warehouse_id"] = int(product.get("warehouse_id") or warehouse_id or 2)
+            product.pop("need_purchase", None)
+            product.pop("purchase_warehouse_id", None)
+            product.pop("shortage_qty", None)
+        shortage_products = self._build_shortage_products(products, warehouse_id)
 
         if not shortage_products:
             return None
@@ -1366,6 +1469,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "customer_id": customer_id,
                 "customer_name": customer_name,
                 "products": products,
+                "purchase_products": shortage_products,
                 "warehouse_id": warehouse_id,
                 "purchase_warehouse_id": int(shortage_products[0].get("purchase_warehouse_id") or warehouse_id or 2),
                 "return_to_order": True,
@@ -1375,7 +1479,7 @@ class OrderFlowWorkflow(BaseWorkflow):
 
     def _need_purchase_confirmation(self, products: list[dict]) -> bool:
         """Only one-piece-order purchases require an explicit confirmation in order flow."""
-        need_purchase = [p for p in products if p.get("need_purchase")]
+        need_purchase = self._merge_purchase_products([p for p in products if p.get("need_purchase")])
         if not need_purchase:
             return False
         return any(self._purchase_requires_confirmation(p) for p in need_purchase)
@@ -1470,14 +1574,20 @@ class OrderFlowWorkflow(BaseWorkflow):
         yes_words = ("确认", "同意", "可以", "是", "好", "好的", "继续", "执行", "创建", "开单", "yes", "y", "ok")
         return any(w in value for w in yes_words)
 
-    def _execute_purchase(self, products: list[dict], warehouse_id: int = 2) -> dict:
+    def _execute_purchase(
+        self,
+        products: list[dict],
+        warehouse_id: int = 2,
+        purchase_products: list[dict] | None = None,
+    ) -> dict:
         """Purchase all products marked as need_purchase into the selected warehouse."""
         warehouse_id = int(warehouse_id or 2)
         purchase_groups: dict[int, list[dict]] = {}
         purchase_results = []
-        for p in products:
-            if not p.get("need_purchase"):
-                continue
+        candidates = purchase_products
+        if candidates is None:
+            candidates = [p for p in products if p.get("need_purchase")]
+        for p in self._merge_purchase_products(candidates):
             target_warehouse_id = int(p.get("purchase_warehouse_id") or p.get("warehouse_id") or warehouse_id or 2)
             plan = self._annotate_purchase_plan(p)
             purchase_groups.setdefault(target_warehouse_id, []).append(self._purchase_payload_item(p, plan))
@@ -1487,9 +1597,6 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "quantity": self._purchase_result_quantity(plan),
                 "note": self._purchase_destination_note(target_warehouse_id),
             })
-            p["warehouse_id"] = target_warehouse_id
-            p["purchase_warehouse_id"] = target_warehouse_id
-            p.pop("need_purchase", None)
 
         if not purchase_groups:
             return {"ok": True}
@@ -1508,6 +1615,10 @@ class OrderFlowWorkflow(BaseWorkflow):
                     return {"error": result["error"]}
         except Exception as e:
             return {"error": str(e)}
+        for product in products:
+            product.pop("need_purchase", None)
+            product.pop("purchase_warehouse_id", None)
+            product.pop("shortage_qty", None)
         return {"ok": True, "result": results, "purchase_results": purchase_results}
 
     def _purchase_destination_note(self, warehouse_id: int) -> str:
@@ -1596,6 +1707,7 @@ class OrderFlowWorkflow(BaseWorkflow):
     ) -> dict:
         """Always pause before mutating ERP state."""
         warehouse_id = int(warehouse_id or 2)
+        products = self._merge_sales_products(products)
         for p in products:
             p["warehouse_id"] = int(p.get("warehouse_id") or warehouse_id or 2)
         lines = ["请确认是否执行开单：", f"客户：{customer_name}"]
@@ -1660,6 +1772,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 p["unit"] = selected_base["unit_name"]
             if not p.get("price") and selected_base.get("price") not in (None, ""):
                 p["price"] = float(selected_base["price"])
+        products = self._merge_sales_products(products)
         blocked = self._validate_before_sales(products)
         if blocked:
             return self._reply(f"[BLOCKED: Missing Critical Info]\n{blocked}")

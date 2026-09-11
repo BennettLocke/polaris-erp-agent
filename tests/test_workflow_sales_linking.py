@@ -48,6 +48,205 @@ class FakePurchaseOrderCaller(FakeOrderCaller):
 
 
 class WorkflowSalesLinkingTest(unittest.TestCase):
+    def test_identical_sales_rows_merge_before_order_creation(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow.caller = FakeOrderCaller()
+        products = [
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "price": 17,
+                "warehouse_id": 2,
+            },
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "price": 17,
+                "warehouse_id": 2,
+            },
+        ]
+
+        workflow._create_order(
+            7,
+            "测试客户",
+            products,
+            2,
+            workflow_order_ids=[456, 457],
+        )
+
+        sales_call = workflow.caller.last_call("sales_add")
+        self.assertEqual(len(sales_call["products"]), 1)
+        self.assertEqual(sales_call["products"][0]["buy_number"], 48)
+        self.assertEqual(sales_call["workflow_order_ids"], [456, 457])
+
+    def test_identical_sales_rows_are_merged_in_confirmation_state(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        products = [
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "price": 17,
+                "warehouse_id": 2,
+            },
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "price": 17,
+                "warehouse_id": 2,
+            },
+        ]
+
+        result = workflow._confirm_create_order(
+            7,
+            "测试客户",
+            products,
+            2,
+            workflow_order_ids=[456, 457],
+        )
+
+        self.assertEqual(len(result["state"]["products"]), 1)
+        self.assertEqual(result["state"]["products"][0]["qty"], 48)
+        self.assertEqual(result["state"]["workflow_order_ids"], [456, 457])
+
+    def test_duplicate_case_shortage_is_confirmed_as_one_case(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow._product_tracks_inventory = lambda _product: True
+        workflow._query_inventory = lambda _product_id: {"百鑫仓库": 0, "自己店里": 0}
+        products = [
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "warehouse_id": 2,
+                "purchase_policy": "one_case",
+                "simple_desc": "1件48套",
+            },
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "warehouse_id": 2,
+                "purchase_policy": "one_case",
+                "simple_desc": "1件48套",
+            },
+        ]
+
+        result = workflow._purchase_confirmation_for_shortage(7, "测试客户", products, 2)
+
+        self.assertEqual(len(result["state"]["purchase_products"]), 1)
+        self.assertIn("订单48套，缺口48套，进货1件（48套/件）", result["question"])
+        self.assertEqual(result["question"].count("进货1件"), 1)
+
+    def test_duplicate_case_rows_create_one_purchase_requirement(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow.caller = FakePurchaseOrderCaller()
+        products = [
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "price": 17,
+                "warehouse_id": 2,
+                "purchase_warehouse_id": 2,
+                "purchase_policy": "one_case",
+                "simple_desc": "1件48套",
+                "shortage_qty": 24,
+                "need_purchase": True,
+            },
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "【开物】一两装",
+                "color": "咖色",
+                "qty": 24,
+                "price": 17,
+                "warehouse_id": 2,
+                "purchase_warehouse_id": 2,
+                "purchase_policy": "one_case",
+                "simple_desc": "1件48套",
+                "shortage_qty": 24,
+                "need_purchase": True,
+            },
+        ]
+
+        result = workflow._execute_purchase(products, 2)
+
+        purchase_call = workflow.caller.last_call("other_enter_add")
+        self.assertEqual(len(purchase_call["products"]), 1)
+        self.assertEqual(purchase_call["products"][0]["buy_number"], 48)
+        self.assertEqual(len(result["purchase_results"]), 1)
+
+    def test_shortage_confirmation_uses_combined_demand_for_duplicate_sku(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow._product_tracks_inventory = lambda _product: True
+        workflow._query_inventory = lambda _product_id: {"百鑫仓库": 30, "自己店里": 0}
+        products = [
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "测试礼盒",
+                "color": "红色",
+                "qty": 20,
+                "warehouse_id": 2,
+            },
+            {
+                "product_id": 88,
+                "unit_id": 1,
+                "unit": "套",
+                "name": "测试礼盒",
+                "color": "红色",
+                "qty": 20,
+                "warehouse_id": 2,
+            },
+        ]
+
+        result = workflow._purchase_confirmation_for_shortage(7, "测试客户", products, 2)
+
+        self.assertIsNotNone(result)
+        purchase_products = result["state"]["purchase_products"]
+        self.assertEqual(len(purchase_products), 1)
+        self.assertEqual(purchase_products[0]["qty"], 40)
+        self.assertEqual(purchase_products[0]["shortage_qty"], 10)
+
+    def test_sales_rows_with_different_price_or_warehouse_remain_separate(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        products = [
+            {"product_id": 88, "unit_id": 1, "color": "红色", "qty": 2, "price": 17, "warehouse_id": 2},
+            {"product_id": 88, "unit_id": 1, "color": "红色", "qty": 3, "price": 18, "warehouse_id": 2},
+            {"product_id": 88, "unit_id": 1, "color": "红色", "qty": 4, "price": 17, "warehouse_id": 1},
+        ]
+
+        merged = workflow._merge_sales_products(products)
+
+        self.assertEqual([item["qty"] for item in merged], [2, 3, 4])
+
     def test_auto_purchase_order_reply_contains_compact_purchase_result(self):
         workflow = object.__new__(OrderFlowWorkflow)
         workflow.caller = FakePurchaseOrderCaller()
