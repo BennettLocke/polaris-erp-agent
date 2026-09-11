@@ -66,6 +66,7 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
             "agentHistory",
             "updateSessionPending",
             "uploadAgentImage",
+            "uploadAgentImages",
             "dashboardSummary",
         ]:
             self.assertIn(api_method, api_source)
@@ -74,6 +75,7 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
             '"/api/agent/chat"',
             '"/api/session/pending"',
             '"/api/images/upload"',
+            '"/api/images/upload-batch"',
             '"/api/agent/history',
         ]:
             self.assertIn(endpoint, api_source)
@@ -140,6 +142,20 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn('if (!clean.startsWith("http://") && !clean.startsWith("https://")) return false;', image_line_section)
         self.assertIn('/\\.(png|jpe?g|webp|gif)(\\?.*)?$/i.test(clean)', image_line_section)
         self.assertNotIn('return clean.startsWith("/api/images/file/") || /\\.(png|jpe?g|webp|gif)(\\?.*)?$/i.test(clean);', image_line_section)
+
+    def test_workbench_shows_ordered_image_attachment_thumbnails(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        styles_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("function WorkbenchAttachmentPreview", workbench_source)
+        self.assertIn("URL.createObjectURL(file)", workbench_source)
+        self.assertIn("URL.revokeObjectURL(objectUrl)", workbench_source)
+        self.assertIn('className="workbench-attachment-index"', workbench_source)
+        self.assertIn("<WorkbenchAttachmentPreview", workbench_source)
+        self.assertIn(".workbench-attachment-preview", styles_source)
+        self.assertIn(".workbench-attachment-index", styles_source)
 
     def test_workbench_uses_dialog_input_and_agent_sections(self):
         workbench_source = (

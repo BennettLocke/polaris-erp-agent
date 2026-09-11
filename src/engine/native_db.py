@@ -7265,17 +7265,16 @@ class NativeDBClient:
             old_workflow_order_id = int(sales_order.get("source_workflow_id") or 0)
             if old_sales_order_id and old_sales_order_id != sales_order_id:
                 return {"code": 409, "msg": "工作流订单已关联其他销售单"}
-            if old_workflow_order_id and old_workflow_order_id != workflow_order_id:
-                return {"code": 409, "msg": "销售单已关联其他工作流订单"}
 
             cursor.execute(
                 "UPDATE workflow_order SET sales_order_id=%s, updated_at=%s WHERE id=%s",
                 (sales_order_id, now, workflow_order_id),
             )
-            cursor.execute(
-                "UPDATE sales_order SET source_workflow_id=%s, updated_at=%s WHERE id=%s",
-                (workflow_order_id, now, sales_order_id),
-            )
+            if not old_workflow_order_id:
+                cursor.execute(
+                    "UPDATE sales_order SET source_workflow_id=%s, updated_at=%s WHERE id=%s",
+                    (workflow_order_id, now, sales_order_id),
+                )
             cursor.execute(
                 """
                 INSERT INTO workflow_order_log

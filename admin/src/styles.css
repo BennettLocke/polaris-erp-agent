@@ -427,10 +427,89 @@
 .workbench-attachment-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+}
+
+.workbench-attachment-preview {
+  position: relative;
+  width: 156px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 28px 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+}
+
+.workbench-attachment-visual {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--muted);
+}
+
+.workbench-attachment-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.workbench-attachment-visual svg {
+  width: 20px;
+  height: 20px;
+  color: var(--muted-foreground);
+}
+
+.workbench-attachment-index {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.workbench-attachment-meta {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.workbench-attachment-meta strong,
+.workbench-attachment-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-attachment-meta strong {
+  font-size: 13px;
+}
+
+.workbench-attachment-meta span {
+  color: var(--muted-foreground);
+  font-size: 12px;
 }
 
 .workbench-attachment-remove {
+  position: absolute;
+  right: 6px;
+  top: 6px;
   width: 18px;
   height: 18px;
   display: inline-grid;

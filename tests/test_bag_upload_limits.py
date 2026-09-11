@@ -96,6 +96,8 @@ class BagUploadLimitTests(unittest.TestCase):
         self.assertEqual(response.get_json()['data'], {
             'image_bytes': 25 * 1024 * 1024,
             'archive_bytes': 100 * 1024 * 1024,
+            'image_batch_bytes': 100 * 1024 * 1024,
+            'image_batch_files': 6,
         })
 
 

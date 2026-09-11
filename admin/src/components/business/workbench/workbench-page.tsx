@@ -5,7 +5,6 @@ import {
   Check,
   Copy,
   History,
-  Image as ImageIcon,
   Loader2,
   MessageSquarePlus,
   Paperclip,
@@ -154,6 +153,7 @@ const WELCOME_MESSAGE: ChatMessage = {
 };
 
 const ZIP_UPLOAD_TYPES = new Set(["application/zip", "application/x-zip-compressed"]);
+const IMAGE_BATCH_IDS = new Map<string, string>();
 
 function isZipUploadFile(file: File) {
   return ZIP_UPLOAD_TYPES.has(file.type) || file.name.toLowerCase().endsWith(".zip");
@@ -169,6 +169,29 @@ function uploadFileLabel(file: File) {
 
 function newSessionId() {
   return `web_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function imageBatchKey(files: File[]) {
+  return files
+    .map((file) => [file.name, file.size, file.lastModified, file.type].map(String).join(":"))
+    .join("|");
+}
+
+function imageBatchId(files: File[]) {
+  const key = imageBatchKey(files);
+  const existing = IMAGE_BATCH_IDS.get(key);
+  const batchId = existing || `images_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+  IMAGE_BATCH_IDS.set(key, batchId);
+  while (IMAGE_BATCH_IDS.size > 20) {
+    const oldestKey = IMAGE_BATCH_IDS.keys().next().value;
+    if (oldestKey === undefined) break;
+    IMAGE_BATCH_IDS.delete(oldestKey);
+  }
+  return batchId;
+}
+
+function releaseImageBatchId(files: File[]) {
+  IMAGE_BATCH_IDS.delete(imageBatchKey(files));
 }
 
 function newMessageId(prefix = "msg") {
@@ -907,6 +930,7 @@ export function WorkbenchPage() {
   const bagUploadTriggerRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const sendLockRef = useRef(false);
   const summaryRequestRef = useRef(0);
   const summaryMountedRef = useRef(true);
 
@@ -1117,22 +1141,67 @@ export function WorkbenchPage() {
     return true;
   }
 
+  async function uploadImageBatch(batchFiles: File[]) {
+    const filenames = batchFiles.map((file) => file.name || "未命名设计稿");
+    const userMessageId = appendMessage("user", `上传 ${batchFiles.length} 张设计稿：${filenames.join("、")}`);
+    const pendingId = appendMessage("assistant", `正在识别 ${batchFiles.length} 张设计稿...`, "sending");
+    let data;
+    try {
+      data = await api.uploadAgentImages(batchFiles, sessionId, imageBatchId(batchFiles));
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "上传失败，请核对处理结果后重试";
+      updateMessage(pendingId, `上传失败：${text}`, "error");
+      setError(text);
+      return false;
+    }
+    releaseImageBatchId(batchFiles);
+
+    const previewUrls = (data.batch?.files || [])
+      .map((item) => item.preview_url || "")
+      .filter(Boolean);
+    if (previewUrls.length) {
+      updateMessage(
+        userMessageId,
+        [`上传 ${batchFiles.length} 张设计稿：${filenames.join("、")}`, ...previewUrls].join("\n")
+      );
+    }
+    const responseText = data.response || `已处理 ${batchFiles.length} 张设计稿`;
+    updateMessage(pendingId, responseText);
+    const nextSession = data.session || null;
+    setSessionSnapshot(nextSession);
+    if (isConfirmablePending(nextSession)) {
+      setConfirmOpen(true);
+    } else {
+      setConfirmOpen(false);
+      const historyItem = pushBusinessHistory(responseText, nextSession, "image");
+      openResultDialog(historyItem);
+    }
+    void refreshSummary(false);
+    return true;
+  }
+
   async function sendMessage(explicitText?: string) {
-    if (isSending) return;
+    if (isSending || sendLockRef.current) return;
     const message = (explicitText ?? input).trim();
     const uploadFiles = [...files];
     if (!message && !uploadFiles.length) return;
+    const zipFiles = uploadFiles.filter(isZipUploadFile);
+    if (zipFiles.length && uploadFiles.length > 1) {
+      setError("设计稿图片与 ZIP 压缩包不能混合发送，请分开处理。");
+      return;
+    }
+    sendLockRef.current = true;
     setError("");
     setInput("");
     setFiles([]);
     setIsSending(true);
     try {
-      for (const [index, file] of uploadFiles.entries()) {
-        if (!await uploadImageFile(file)) {
-          setFiles((current) => [...uploadFiles.slice(index), ...current].slice(0, 6));
-          setInput(message);
-          return;
-        }
+      const uploaded = !uploadFiles.length
+        || (zipFiles.length ? await uploadImageFile(uploadFiles[0]) : await uploadImageBatch(uploadFiles));
+      if (!uploaded) {
+        setFiles((current) => [...uploadFiles, ...current].slice(0, 6));
+        setInput(message);
+        return;
       }
       if (message) {
         appendMessage("user", message);
@@ -1143,6 +1212,7 @@ export function WorkbenchPage() {
       setError(text);
       appendMessage("assistant", `处理失败：${text}`, "error");
     } finally {
+      sendLockRef.current = false;
       setIsSending(false);
     }
   }
@@ -1465,13 +1535,12 @@ function ChatComposer({
       {files.length ? (
         <div className="workbench-attachment-list">
           {files.map((file, index) => (
-            <Badge variant="secondary" key={`${file.name}_${index}`}>
-              {isZipUploadFile(file) ? <Paperclip data-icon="inline-start" /> : <ImageIcon data-icon="inline-start" />}
-              {file.name || uploadFileLabel(file)}
-              <button className="workbench-attachment-remove" type="button" onClick={() => onRemoveFile(index)} aria-label="移除附件">
-                <X />
-              </button>
-            </Badge>
+            <WorkbenchAttachmentPreview
+              file={file}
+              index={index}
+              key={`${file.name}_${file.size}_${file.lastModified}_${index}`}
+              onRemove={() => onRemoveFile(index)}
+            />
           ))}
         </div>
       ) : null}
@@ -1493,6 +1562,37 @@ function ChatComposer({
           发送
         </Button>
       </div>
+    </div>
+  );
+}
+
+function WorkbenchAttachmentPreview({ file, index, onRemove }: { file: File; index: number; onRemove: () => void }) {
+  const isZip = isZipUploadFile(file);
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  useEffect(() => {
+    if (isZip) {
+      setPreviewUrl("");
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file, isZip]);
+
+  return (
+    <div className="workbench-attachment-preview">
+      <div className="workbench-attachment-visual">
+        {previewUrl ? <img src={previewUrl} alt={`设计稿 ${index + 1}`} /> : <Paperclip aria-hidden="true" />}
+        <span className="workbench-attachment-index">{index + 1}</span>
+      </div>
+      <div className="workbench-attachment-meta">
+        <strong title={file.name}>{file.name || uploadFileLabel(file)}</strong>
+        <span>{isZip ? "ZIP 压缩包" : "设计稿图片"}</span>
+      </div>
+      <button className="workbench-attachment-remove" type="button" onClick={onRemove} aria-label={`移除 ${file.name || uploadFileLabel(file)}`}>
+        <X />
+      </button>
     </div>
   );
 }

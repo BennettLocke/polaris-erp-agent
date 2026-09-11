@@ -3,7 +3,7 @@
 严格按 order-flow SKILL.md A 流程实现
 
 流程：
-A1. 检测黑框 → 裁切(1个外框=1张,N个=N张)
+A1. 检测黑框 → 默认整图；仅两个及以上有效外框时按框拆分
 A2. RapidOCR 识别 → 提取备注区域文字
 A3. 上传 OSS → 返回图片 URL
 A4. 解析 OCR 文本 → 提取客户、商品、颜色、数量、工艺、是否含"开单"
@@ -16,6 +16,7 @@ import os
 import json
 import tempfile
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from src.core.state import AgentState
@@ -36,6 +37,14 @@ QUANTITY_UNIT_PATTERN = r"(套|件|个|张|只|盒|捆)"
 OCR_DATE_PATTERN = r"(?:20\d{2}[./-]\d{1,2}[./-]\d{1,2}|20\d{6})"
 OCR_UV_PATTERN = r"(?i:U\s*(?:I|1|l)?\s*V)"
 CRAFT_TOKEN_PATTERN = rf"提袋|丝印|印刷|烫金|烫银|击凸|击凹|{OCR_UV_PATTERN}"
+
+
+def _frame_reading_order(frame) -> tuple[int, int]:
+    if hasattr(frame, "x") and hasattr(frame, "y"):
+        return int(frame.y), int(frame.x)
+    if isinstance(frame, (list, tuple)) and len(frame) >= 2:
+        return int(frame[1]), int(frame[0])
+    return 0, 0
 
 
 def _parse_quantity_number(value: str) -> int | None:
@@ -161,12 +170,12 @@ def process_single_image(image_path: str, caller) -> dict:
     try:
         processor = ImageProcessor()
 
-        # 2. 检测黑框
-        frames = processor.detect_black_frames(local_path)
+        # 2. 默认把一张图片视为一个设计稿；多个有效外框才兼容旧拆分方式。
+        frames = sorted(processor.detect_black_frames(local_path), key=_frame_reading_order)
         logger.info(f"检测到 {len(frames)} 个外框")
 
-        if frames:
-            child_results = []
+        if len(frames) >= 2:
+            candidate_results = []
             for i, frame in enumerate(frames):
                 cropped = processor.crop_frame(local_path, frame)
                 if cropped is None:
@@ -174,28 +183,30 @@ def process_single_image(image_path: str, caller) -> dict:
                 temp_path = save_temp_image(cropped, i)
                 cropped_images.append(temp_path)
                 ocr_texts = recognize_remark_texts(processor, cropped)
-                child_results.append(_process_ocr_order(ocr_texts, temp_path, caller))
+                candidate_results.append(_process_ocr_order(ocr_texts, temp_path, caller))
 
-            result["items"] = child_results
-            propagate_batch_customer_context(child_results)
-            propagate_batch_goods_context(child_results, caller)
-            result["workflow_orders"] = [item["workflow_order"] for item in child_results if item.get("workflow_order")]
-            result["workflow_order_payloads"] = [
-                item["workflow_order_payload"]
-                for item in child_results
-                if item.get("workflow_order_payload")
+            child_results = [
+                item
+                for item in candidate_results
+                if not item.get("error") and bool(item.get("workflow_order_payload"))
             ]
-            result["parsed"] = {
-                "full_text": "\n\n".join((item.get("parsed") or {}).get("full_text", "") for item in child_results).strip()
-            }
-            result["product_warning"] = [
-                warning
-                for item in child_results
-                for warning in (item.get("product_warning") or [])
-            ]
-            errors = [item.get("error") for item in child_results if item.get("error")]
-            if errors and not result["workflow_orders"]:
-                result["error"] = "；".join(errors)
+            if len(child_results) >= 2:
+                result["items"] = child_results
+                propagate_batch_customer_context(child_results)
+                propagate_batch_goods_context(child_results, caller)
+                result["workflow_orders"] = [item["workflow_order"] for item in child_results if item.get("workflow_order")]
+                result["workflow_order_payloads"] = [item["workflow_order_payload"] for item in child_results]
+                result["parsed"] = {
+                    "full_text": "\n\n".join((item.get("parsed") or {}).get("full_text", "") for item in child_results).strip()
+                }
+                result["product_warning"] = [
+                    warning
+                    for item in child_results
+                    for warning in (item.get("product_warning") or [])
+                ]
+            else:
+                ocr_texts = recognize_remark_texts(processor, local_path)
+                result.update(_process_ocr_order(ocr_texts, local_path, caller))
         else:
             ocr_texts = recognize_remark_texts(processor, local_path)
             result.update(_process_ocr_order(ocr_texts, local_path, caller))
@@ -213,6 +224,62 @@ def process_single_image(image_path: str, caller) -> dict:
                 pass
 
     return result
+
+
+def _result_items(result: dict) -> list[dict]:
+    items = result.get("items") or []
+    if items:
+        return [item for item in items if isinstance(item, dict)]
+    return [result]
+
+
+def process_image_batch(image_paths: list[str], caller) -> dict:
+    """Process one user submission as an ordered batch of design images."""
+    file_results: list[dict] = []
+    all_items: list[dict] = []
+    incomplete = False
+
+    for image_index, image_path in enumerate(image_paths):
+        try:
+            image_result = process_single_image(image_path, caller)
+        except Exception as exc:
+            logger.exception(f"批次图片处理异常: {image_path}")
+            image_result = {"error": str(exc), "parsed": {}, "product_warning": []}
+
+        source_items = _result_items(image_result)
+        if not source_items:
+            source_items = [{"error": "图片没有产生可识别的设计稿", "parsed": {}}]
+        for item_index, item in enumerate(source_items):
+            item["source_image_index"] = image_index
+            item["source_item_index"] = item_index
+            item["source_image_path"] = image_path
+            all_items.append(item)
+
+        file_complete = bool(source_items) and all(
+            not item.get("error") and bool(item.get("workflow_order_payload"))
+            for item in source_items
+        )
+        if not file_complete:
+            incomplete = True
+        file_results.append({
+            "image_path": image_path,
+            "status": "success" if file_complete else "failed",
+            "error": image_result.get("error") or next(
+                (str(item.get("error")) for item in source_items if item.get("error")),
+                "未识别到完整的设计稿信息" if not file_complete else "",
+            ),
+            "result": image_result,
+        })
+
+    propagate_batch_customer_context(all_items)
+    return {
+        "items": all_items,
+        "files": file_results,
+        "total_files": len(image_paths),
+        "success_files": sum(1 for item in file_results if item["status"] == "success"),
+        "failed_files": sum(1 for item in file_results if item["status"] == "failed"),
+        "incomplete": incomplete,
+    }
 
 
 def recognize_remark_texts(processor: ImageProcessor, image) -> list[str]:
@@ -512,11 +579,15 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
         "quantity": 1,
         "unit": "件",
         "craft": "",
+        "date": "",
         "has_kaipiao": False,
         "full_text": full_text,
     }
 
     lines = full_text.split("\n")
+    date_match = re.search(OCR_DATE_PATTERN, full_text)
+    if date_match:
+        result["date"] = _normalize_ocr_date(date_match.group())
 
     pending_label = ""
 
@@ -599,6 +670,16 @@ def parse_ocr_text_list(ocr_texts: list[str]) -> dict:
     return result
 
 
+def _normalize_ocr_date(value: str) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) != 8:
+        return ""
+    try:
+        return datetime.strptime(digits, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return ""
+
+
 def repair_ocr_parsed_fields(parsed: dict, caller) -> dict:
     """
     Repair OCR structure with ERP data.
@@ -654,7 +735,7 @@ def repair_ocr_parsed_fields(parsed: dict, caller) -> dict:
 
 
 def propagate_batch_customer_context(items: list[dict]) -> None:
-    """Within one uploaded image, use the reliable customer for OCR-missed frames."""
+    """Use one reliable batch customer and date for images missing shared context."""
     names: list[str] = []
     for item in items or []:
         parsed = item.get("parsed") or {}
@@ -662,19 +743,28 @@ def propagate_batch_customer_context(items: list[dict]) -> None:
         if name and not _is_invalid_customer(name) and not parsed.get("customer_missing") and name not in names:
             names.append(name)
     if len(names) != 1:
-        return
+        batch_customer = ""
+    else:
+        batch_customer = names[0]
 
-    batch_customer = names[0]
+    dates = list(dict.fromkeys(
+        str((item.get("parsed") or {}).get("date") or "").strip()
+        for item in items or []
+        if str((item.get("parsed") or {}).get("date") or "").strip()
+    ))
+    batch_date = dates[0] if len(dates) == 1 else ""
     for item in items or []:
         parsed = item.get("parsed") or {}
         name = _clean_field_value(str(parsed.get("customer_name") or ""))
-        if parsed.get("customer_missing") or _is_invalid_customer(name):
+        if batch_customer and (parsed.get("customer_missing") or _is_invalid_customer(name)):
             parsed["customer_name"] = batch_customer
             parsed["customer_inferred"] = True
             parsed["customer_missing"] = False
             payload = item.get("workflow_order_payload")
             if isinstance(payload, dict):
                 payload["customer"] = batch_customer
+        if batch_date and not parsed.get("date"):
+            parsed["date"] = batch_date
 
 
 BATCH_GOODS_CONTEXT_SPECS = (

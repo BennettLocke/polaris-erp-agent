@@ -1,8 +1,11 @@
 import unittest
+from unittest.mock import ANY, MagicMock, call, patch
 
 from src.core.nodes.image_workflow import (
     _normalize_goods_keyword,
     parse_ocr_text_list,
+    process_image_batch,
+    process_single_image,
     propagate_batch_customer_context,
     propagate_batch_goods_context,
 )
@@ -58,6 +61,105 @@ class FakeGoodsContextCaller:
 
 
 class ImageWorkflowParsingTest(unittest.TestCase):
+    @patch("src.core.nodes.image_workflow._process_ocr_order")
+    @patch("src.core.nodes.image_workflow.recognize_remark_texts", return_value=["测试备注"])
+    @patch("src.core.nodes.image_workflow.ImageProcessor")
+    def test_single_detected_frame_still_processes_the_full_image(
+        self,
+        processor_class,
+        _recognize,
+        process_order,
+    ):
+        processor = processor_class.return_value
+        processor.detect_black_frames.return_value = [(1, 2, 30, 40)]
+        process_order.return_value = {
+            "parsed": {"goods_name": "喜悦半斤"},
+            "workflow_order_payload": {"goods_name": "喜悦半斤"},
+        }
+
+        result = process_single_image("design.png", MagicMock())
+
+        processor.crop_frame.assert_not_called()
+        process_order.assert_called_once_with(["测试备注"], "design.png", ANY)
+        self.assertEqual(result["parsed"]["goods_name"], "喜悦半斤")
+
+    @patch("src.core.nodes.image_workflow.save_temp_image", side_effect=["crop-1.jpg", "crop-2.jpg"])
+    @patch("src.core.nodes.image_workflow._process_ocr_order")
+    @patch("src.core.nodes.image_workflow.recognize_remark_texts", return_value=["测试备注"])
+    @patch("src.core.nodes.image_workflow.os.path.exists", return_value=False)
+    @patch("src.core.nodes.image_workflow.ImageProcessor")
+    def test_two_detected_frames_keep_the_legacy_split_flow(
+        self,
+        processor_class,
+        _exists,
+        _recognize,
+        process_order,
+        _save_temp,
+    ):
+        processor = processor_class.return_value
+        frames = [(0, 0, 10, 10), (20, 0, 10, 10)]
+        processor.detect_black_frames.return_value = list(reversed(frames))
+        processor.crop_frame.side_effect = [object(), object()]
+        process_order.side_effect = [
+            {"parsed": {"goods_name": "商品一"}, "workflow_order_payload": {"goods_name": "商品一"}},
+            {"parsed": {"goods_name": "商品二"}, "workflow_order_payload": {"goods_name": "商品二"}},
+        ]
+
+        result = process_single_image("legacy.png", MagicMock())
+
+        self.assertEqual(processor.crop_frame.call_args_list, [call("legacy.png", frames[0]), call("legacy.png", frames[1])])
+        self.assertEqual([item["parsed"]["goods_name"] for item in result["items"]], ["商品一", "商品二"])
+
+    @patch("src.core.nodes.image_workflow.save_temp_image", side_effect=["crop-1.jpg", "crop-2.jpg"])
+    @patch("src.core.nodes.image_workflow._process_ocr_order")
+    @patch("src.core.nodes.image_workflow.recognize_remark_texts", return_value=["测试备注"])
+    @patch("src.core.nodes.image_workflow.os.path.exists", return_value=False)
+    @patch("src.core.nodes.image_workflow.ImageProcessor")
+    def test_two_detected_frames_fall_back_to_one_full_design_when_only_one_is_valid(
+        self,
+        processor_class,
+        _exists,
+        _recognize,
+        process_order,
+        _save_temp,
+    ):
+        processor = processor_class.return_value
+        processor.detect_black_frames.return_value = [(0, 0, 10, 10), (20, 0, 10, 10)]
+        processor.crop_frame.side_effect = [object(), object()]
+        process_order.side_effect = [
+            {"parsed": {"goods_name": "商品一"}, "workflow_order_payload": {"goods_name": "商品一"}},
+            {"parsed": {}, "workflow_order_payload": None, "error": "未识别到礼盒名称"},
+            {"parsed": {"goods_name": "整张设计稿"}, "workflow_order_payload": {"goods_name": "整张设计稿"}},
+        ]
+
+        result = process_single_image("design.png", MagicMock())
+
+        self.assertNotIn("items", result)
+        self.assertEqual(result["parsed"]["goods_name"], "整张设计稿")
+        self.assertEqual(process_order.call_count, 3)
+
+    @patch("src.core.nodes.image_workflow.process_single_image")
+    def test_image_batch_propagates_only_the_reliable_customer_across_files(self, process_one):
+        process_one.side_effect = [
+            {
+                "parsed": {"customer_name": "齐唯茶业", "goods_name": "喜悦半斤", "customer_missing": False, "date": "2026-09-11"},
+                "workflow_order_payload": {"customer": "齐唯茶业", "goods_name": "喜悦半斤"},
+            },
+            {
+                "parsed": {"customer_name": "散客", "goods_name": "岩味三两", "customer_missing": True},
+                "workflow_order_payload": {"customer": "散客", "goods_name": "岩味三两"},
+            },
+        ]
+
+        result = process_image_batch(["first.png", "second.png"], MagicMock())
+
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(result["items"][1]["parsed"]["customer_name"], "齐唯茶业")
+        self.assertEqual(result["items"][1]["parsed"]["date"], "2026-09-11")
+        self.assertEqual(result["items"][1]["workflow_order_payload"]["customer"], "齐唯茶业")
+        self.assertEqual(result["items"][0]["source_image_index"], 0)
+        self.assertEqual(result["items"][1]["source_image_index"], 1)
+
     def test_short_product_line_without_spec_keeps_product_name(self):
         parsed = parse_ocr_text_list(["七彩黑色20个"])
 
@@ -84,6 +186,7 @@ class ImageWorkflowParsingTest(unittest.TestCase):
         ])
 
         self.assertEqual(parsed["customer_name"], "和言")
+        self.assertEqual(parsed["date"], "2026-06-18")
         self.assertEqual(parsed["goods_name"], "云岭三小盒")
         self.assertEqual(parsed["color"], "香槟金")
         self.assertEqual(parsed["quantity"], 20)

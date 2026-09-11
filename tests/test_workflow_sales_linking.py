@@ -140,6 +140,51 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
         sales_call = workflow.caller.last_call("sales_add")
         self.assertEqual(sales_call["workflow_order_id"], 456)
 
+    def test_order_flow_passes_all_workflow_order_ids_to_sales_add_after_confirm(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow.caller = FakeOrderCaller()
+        state = {
+            "pending_action": "confirm_create_order",
+            "customer_id": 7,
+            "customer_name": "测试客户",
+            "warehouse_id": 2,
+            "skip_inventory": True,
+            "workflow_order_id": 456,
+            "workflow_order_ids": [456, 457],
+            "products": [
+                {
+                    "product_id": 88,
+                    "unit_id": 1,
+                    "unit": "套",
+                    "name": "测试礼盒",
+                    "qty": 2,
+                    "price": 10,
+                    "warehouse_id": 2,
+                }
+            ],
+        }
+
+        workflow.resume("确认", state)
+
+        sales_call = workflow.caller.last_call("sales_add")
+        self.assertEqual(sales_call["workflow_order_ids"], [456, 457])
+
+    def test_shortage_confirmation_keeps_all_workflow_order_ids(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow._product_tracks_inventory = lambda _product: True
+        workflow._query_inventory = lambda _product_id: {"百鑫仓库": 0, "自己店里": 0}
+        product = {"product_id": 88, "name": "测试礼盒", "qty": 2, "warehouse_id": 2}
+
+        result = workflow._purchase_confirmation_for_shortage(
+            7,
+            "测试客户",
+            [product],
+            2,
+            workflow_order_ids=[456, 457],
+        )
+
+        self.assertEqual(result["state"]["workflow_order_ids"], [456, 457])
+
     def test_image_workflow_passes_created_workflow_id_to_order_flow(self):
         captured_params = []
 

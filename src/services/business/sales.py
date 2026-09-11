@@ -280,6 +280,7 @@ class SalesService(BusinessService):
         pay_type: str | None = None,
         operator_user_id: Any = None,
         workflow_order_id: int | None = None,
+        workflow_order_ids: list[int] | None = None,
         allow_negative_stock: Any | None = None,
     ) -> dict:
         normalized_products = self.normalize_products(products, customer_id=customer_id)
@@ -293,24 +294,44 @@ class SalesService(BusinessService):
             operator_user_id=operator_user_id,
             allow_negative_stock=allow_negative_stock,
         )
-        if not workflow_order_id or not isinstance(result, dict) or result.get("code") not in (None, 0):
+        link_ids: list[int] = []
+        for raw_id in [*(workflow_order_ids or []), workflow_order_id]:
+            try:
+                clean_id = int(raw_id or 0)
+            except (TypeError, ValueError):
+                continue
+            if clean_id > 0 and clean_id not in link_ids:
+                link_ids.append(clean_id)
+        if not link_ids or not isinstance(result, dict) or result.get("code") not in (None, 0):
             return result
 
         sales_id = _extract_sales_id(result)
         if not sales_id:
             return result
 
-        link_result = self.db.link_workflow_sales_order(
-            workflow_order_id=int(workflow_order_id),
-            sales_order_id=sales_id,
-            operator_user_id=operator_user_id,
-        )
         data = result.setdefault("data", {})
-        if isinstance(data, dict):
+        links = []
+        link_errors = []
+        for link_id in link_ids:
+            link_result = self.db.link_workflow_sales_order(
+                workflow_order_id=link_id,
+                sales_order_id=sales_id,
+                operator_user_id=operator_user_id,
+            )
             if isinstance(link_result, dict) and link_result.get("code") in (None, 0):
-                data["workflow_link"] = link_result.get("data") or {}
+                links.append(link_result.get("data") or {})
             else:
-                data["workflow_link_error"] = (link_result or {}).get("msg") if isinstance(link_result, dict) else str(link_result)
+                link_errors.append({
+                    "workflow_order_id": link_id,
+                    "message": (link_result or {}).get("msg") if isinstance(link_result, dict) else str(link_result),
+                })
+        if isinstance(data, dict):
+            if links:
+                data["workflow_link"] = links[0]
+                data["workflow_links"] = links
+            if link_errors:
+                data["workflow_link_error"] = link_errors[0]["message"]
+                data["workflow_link_errors"] = link_errors
         return result
 
     def delete_order(self, sales_id: int, *, operator_user_id: Any = None) -> dict:

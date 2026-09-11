@@ -91,6 +91,13 @@ class NativeDBClientSmokeTest(unittest.TestCase):
         self.assertIn("INSERT INTO workflow_order_log", link_source)
         self.assertIn("'link_sales'", link_source)
 
+    def test_multiple_workflows_can_point_to_one_sales_order(self):
+        source = (Path(__file__).parent.parent / "src" / "engine" / "native_db.py").read_text(encoding="utf-8")
+        link_source = source.split("def link_workflow_sales_order", 1)[1].split("def create_sales_order", 1)[0]
+
+        self.assertNotIn("销售单已关联其他工作流订单", link_source)
+        self.assertIn("if not old_workflow_order_id", link_source)
+
     def test_delete_pending_product_media_only_scopes_unbound_pending_assets(self):
         client = object.__new__(NativeDBClient)
         calls = []

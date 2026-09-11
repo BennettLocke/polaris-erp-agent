@@ -2,6 +2,7 @@ import type {
   ApiResult,
   AgentChatResponse,
   AgentHistoryResult,
+  AgentImageBatchUploadResult,
   AgentImageUploadResult,
   AgentSessionSnapshot,
   AnalyticsHotProductsResult,
@@ -301,7 +302,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId, state })
     }),
-  agentUploadLimits: () => request<{ image_bytes: number; archive_bytes: number }>("/api/images/upload-limits"),
+  agentUploadLimits: () => request<{
+    image_bytes: number;
+    archive_bytes: number;
+    image_batch_bytes?: number;
+    image_batch_files?: number;
+  }>("/api/images/upload-limits"),
   uploadBags: (archive: File, options: BagUploadOptions) => {
     const form = new FormData();
     form.append("archive", archive, archive.name);
@@ -324,6 +330,32 @@ export const api = {
     form.append("image", file, file.name || `agent_${Date.now()}.jpg`);
     form.append("session_id", sessionId);
     return requestForm<AgentImageUploadResult>("/api/images/upload", form);
+  },
+  uploadAgentImages: async (files: File[], sessionId: string, batchId: string) => {
+    if (!files.length) throw new ApiError("请至少选择一张设计稿图片", 400);
+    if (files.length > 6) throw new ApiError("一次最多上传 6 张设计稿图片", 400);
+    if (files.some((file) => file.name.toLowerCase().endsWith(".zip") || ["application/zip", "application/x-zip-compressed"].includes(file.type))) {
+      throw new ApiError("设计稿图片不能与 ZIP 混合上传", 400);
+    }
+    const limits = await api.agentUploadLimits();
+    for (const file of files) {
+      if (file.size > limits.image_bytes) {
+        throw new ApiError(
+          `${file.name} 为 ${(file.size / 1048576).toFixed(1)}MB，单张图片最多允许 ${limits.image_bytes / 1048576}MB。`,
+          413
+        );
+      }
+    }
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    const batchByteLimit = limits.image_batch_bytes || limits.archive_bytes;
+    if (totalBytes > batchByteLimit) {
+      throw new ApiError(`本批图片超过 ${batchByteLimit / 1048576}MB，请减少图片后重试。`, 413);
+    }
+    const form = new FormData();
+    files.forEach((file) => form.append("images", file, file.name || `design_${Date.now()}.jpg`));
+    form.append("session_id", sessionId);
+    form.append("batch_id", batchId);
+    return requestForm<AgentImageBatchUploadResult>("/api/images/upload-batch", form);
   },
   recentOrders: (limit = 6) =>
     request<{ sales: RecentSale[]; workflows: RecentWorkflow[] }>(`/api/orders/recent?limit=${limit}`),

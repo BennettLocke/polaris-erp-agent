@@ -854,6 +854,26 @@ class BusinessServiceTests(unittest.TestCase):
             {"workflow_order_id": 456, "sales_order_id": 123, "operator_user_id": 5},
         ))
 
+    def test_sales_service_links_all_workflow_orders_after_successful_create(self):
+        db = FakeDB()
+        service = SalesService(db=db)
+
+        result = service.create_order(
+            customer_id=7,
+            warehouse_id=2,
+            products=[{"product_id": 88, "buy_number": 3, "price": 28}],
+            workflow_order_ids=[456, 457, 456],
+            operator_user_id=5,
+        )
+
+        self.assertEqual(result["code"], 0)
+        link_calls = [call for call in db.calls if call[0] == "link_workflow_sales_order"]
+        self.assertEqual(link_calls, [
+            ("link_workflow_sales_order", {"workflow_order_id": 456, "sales_order_id": 123, "operator_user_id": 5}),
+            ("link_workflow_sales_order", {"workflow_order_id": 457, "sales_order_id": 123, "operator_user_id": 5}),
+        ])
+        self.assertNotIn("workflow_link_errors", result["data"])
+
     def test_sales_service_updates_prices_through_the_business_boundary(self):
         db = FakeDB()
         service = SalesService(db=db)

@@ -9,6 +9,7 @@ import io
 import os
 import re
 import secrets
+import threading
 import uuid
 import time
 from decimal import Decimal, InvalidOperation
@@ -94,17 +95,23 @@ ALLOWED_BAG_ARCHIVE_EXTENSIONS = {"zip"}
 MINIAPP_EXCLUDED_CATEGORY_NAMES = ("纯色泡袋", "品种茶泡袋", "2泡礼盒")
 MAX_IMAGE_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_IMAGE_UPLOAD_BYTES") or 25 * 1024 * 1024)
 MAX_BAG_ARCHIVE_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_BAG_ARCHIVE_UPLOAD_BYTES") or 100 * 1024 * 1024)
+MAX_IMAGE_BATCH_FILES = int(os.environ.get("SJAGENT_MAX_IMAGE_BATCH_FILES") or 6)
+MAX_IMAGE_BATCH_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_IMAGE_BATCH_UPLOAD_BYTES") or 100 * 1024 * 1024)
 MAX_IMAGE_PIXELS = int(os.environ.get("SJAGENT_MAX_IMAGE_PIXELS") or 24_000_000)
 DEFAULT_CROP_IMAGE_HOSTS = {"img.513sjbz.com"}
 DEFAULT_CROP_IMAGE_HOST_SUFFIXES = (".aliyuncs.com",)
 app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_UPLOAD_BYTES
+_IMAGE_BATCH_LOCK = threading.Lock()
+_IMAGE_BATCH_INFLIGHT: set[tuple[str, str]] = set()
 
 
 class WorkbenchUploadRequest(Request):
     @property
     def max_content_length(self):
         # Flask 3.0 has no per-request limit setter. Leave other routes unchanged.
-        if self.path in {"/api/images/upload", "/api/product/bag-upload"}:
+        if self.path in {"/api/images/upload", "/api/product/bag-upload", "/api/images/upload-batch"}:
+            if self.path == "/api/images/upload-batch":
+                return MAX_IMAGE_BATCH_UPLOAD_BYTES + 1024 * 1024
             return max(MAX_IMAGE_UPLOAD_BYTES, MAX_BAG_ARCHIVE_UPLOAD_BYTES) + 1024 * 1024
         return super().max_content_length
 
@@ -122,7 +129,9 @@ def _request_size_guard():
 @app.errorhandler(413)
 def _upload_too_large(error):
     image_mb = MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024)
-    if request.path in {"/api/images/upload", "/api/product/bag-upload"}:
+    if request.path == "/api/images/upload-batch":
+        message = f"本批图片过大，最多 {MAX_IMAGE_BATCH_UPLOAD_BYTES / (1024 * 1024):g}MB；单张图片最多 {image_mb:g}MB。"
+    elif request.path in {"/api/images/upload", "/api/product/bag-upload"}:
         archive_mb = MAX_BAG_ARCHIVE_UPLOAD_BYTES / (1024 * 1024)
         message = f"上传文件过大：ZIP 压缩包最多 {archive_mb:g}MB，单张图片最多 {image_mb:g}MB。请拆分压缩包后重试。"
     else:
@@ -1967,6 +1976,8 @@ def _format_image_result(result: dict) -> str:
                 (parsed.get("goods_name") or "礼盒未识别") + (f" {parsed.get('color')}" if parsed.get("color") else ""),
                 f"{parsed.get('quantity') or 1}{parsed.get('unit') or '套'}",
             ]
+            if parsed.get("date"):
+                summary.append(parsed.get("date"))
             if parsed.get("craft"):
                 summary.append(parsed.get("craft"))
             if order_id:
@@ -2000,6 +2011,8 @@ def _format_image_result(result: dict) -> str:
         extracted.append(f"颜色：{parsed.get('color')}")
     if parsed.get("quantity"):
         extracted.append(f"数量：{parsed.get('quantity')}{parsed.get('unit') or ''}")
+    if parsed.get("date"):
+        extracted.append(f"日期：{parsed.get('date')}")
     if parsed.get("craft"):
         extracted.append(f"工艺：{parsed.get('craft')}")
     if extracted:
@@ -2073,7 +2086,13 @@ def _image_has_open_order_marker(result: dict) -> bool:
     return any((item.get("parsed") or {}).get("has_kaipiao") for item in _image_items(result))
 
 
-def _handle_image_auto_workflow_sales_flow(result: dict, session, response_text: str) -> str:
+def _handle_image_auto_workflow_sales_flow(
+    result: dict,
+    session,
+    response_text: str,
+    *,
+    allow_sales: bool = True,
+) -> str:
     """Create workflow orders immediately, then pause only for sales confirmation."""
     parsed_list = _workflow_params_from_image_result(result)
     created_ids = []
@@ -2091,6 +2110,10 @@ def _handle_image_auto_workflow_sales_flow(result: dict, session, response_text:
         if len(created_ids) != len(parsed_list):
             lines.extend(["", "工作流订单没有全部创建成功，未进入销售单确认。请先检查识别结果。"])
             return "\n".join(lines)
+
+    if not allow_sales:
+        lines.extend(["", "本批有设计稿未完整识别，成功项目的工作流订单已保留；为避免漏开商品，本次未生成销售单确认。"])
+        return "\n".join(lines)
 
     params = _order_params_from_image_result(result)
     products = params.get("products") or []
@@ -2639,6 +2662,8 @@ def image_upload_limits():
     return jsonify({"code": 0, "data": {
         "image_bytes": MAX_IMAGE_UPLOAD_BYTES,
         "archive_bytes": MAX_BAG_ARCHIVE_UPLOAD_BYTES,
+        "image_batch_bytes": MAX_IMAGE_BATCH_UPLOAD_BYTES,
+        "image_batch_files": MAX_IMAGE_BATCH_FILES,
     }})
 
 
@@ -2703,6 +2728,153 @@ def product_bag_upload_api():
         return jsonify({"code": 500, "msg": "处理结果未能完整返回，请先核对商品库，勿直接重复上传整包"}), 500
     finally:
         _delete_local_upload(save_path, "泡袋上传压缩包")
+
+
+@app.route("/api/images/upload-batch", methods=["POST"])
+def image_upload_batch():
+    """Process one user submission of design images as one order candidate."""
+    files = [item for item in request.files.getlist("images") if item and item.filename]
+    session_id = request.form.get("session_id") or f"http_{int(time.time())}"
+    batch_id = str(request.form.get("batch_id") or "").strip()
+    if not batch_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", batch_id):
+        return jsonify({"code": 400, "msg": "batch_id is required"}), 400
+    if not files:
+        return jsonify({"code": 400, "msg": "请至少选择一张设计稿图片"}), 400
+    if len(files) > MAX_IMAGE_BATCH_FILES:
+        return jsonify({"code": 400, "msg": f"一次最多上传 {MAX_IMAGE_BATCH_FILES} 张设计稿图片"}), 400
+    if any(not _allowed_image(item.filename) for item in files):
+        return jsonify({"code": 400, "msg": "设计稿批次只支持 png/jpg/jpeg/webp/bmp 图片，不能与 ZIP 混合上传"}), 400
+
+    from src.core.session import SessionManager
+
+    session = SessionManager(session_id)
+    cached_batches = session.get_meta("image_upload_batches", {}) or {}
+    cached = cached_batches.get(batch_id) if isinstance(cached_batches, dict) else None
+    if isinstance(cached, dict):
+        data = dict(_safe_json(cached))
+        data["session"] = _session_snapshot(session_id)
+        data.setdefault("batch", {})["replayed"] = True
+        return jsonify({"code": 0, "data": data})
+
+    inflight_key = (session_id, batch_id)
+    with _IMAGE_BATCH_LOCK:
+        if inflight_key in _IMAGE_BATCH_INFLIGHT:
+            return jsonify({"code": 409, "msg": "这批设计稿正在处理中，请勿重复提交"}), 409
+        _IMAGE_BATCH_INFLIGHT.add(inflight_key)
+
+    saved_paths: list[Path] = []
+    try:
+        total_bytes = 0
+        for item in files:
+            item.stream.seek(0, io.SEEK_END)
+            file_bytes = item.stream.tell()
+            item.stream.seek(0)
+            if file_bytes > MAX_IMAGE_UPLOAD_BYTES:
+                return jsonify({
+                    "code": 413,
+                    "msg": f"{item.filename} 为 {file_bytes / (1024 * 1024):.1f}MB，单张图片最多允许 {MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024):g}MB。",
+                }), 413
+            total_bytes += file_bytes
+        if total_bytes > MAX_IMAGE_BATCH_UPLOAD_BYTES:
+            return jsonify({
+                "code": 413,
+                "msg": f"本批图片共 {total_bytes / (1024 * 1024):.1f}MB，最多允许 {MAX_IMAGE_BATCH_UPLOAD_BYTES / (1024 * 1024):g}MB。",
+            }), 413
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        for item in files:
+            suffix = _safe_upload_suffix(item.filename, ALLOWED_IMAGE_EXTENSIONS, ".jpg")
+            save_name = f"batch_{int(time.time())}_{uuid.uuid4().hex[:10]}{suffix}"
+            save_path = UPLOAD_DIR / save_name
+            item.save(save_path)
+            saved_paths.append(save_path)
+            _validate_saved_image(save_path)
+
+        from src.core.nodes.image_workflow import process_image_batch
+        from src.core.tools.caller import get_tool_caller
+
+        result = process_image_batch([str(path) for path in saved_paths], get_tool_caller())
+        result_files = result.get("files") or []
+        for index, file_result in enumerate(result_files):
+            if index >= len(saved_paths):
+                break
+            file_result["filename"] = files[index].filename
+            file_result["preview_url"] = f"/api/images/file/{saved_paths[index].name}"
+        for item in result.get("items") or []:
+            source_index = int(item.get("source_image_index") or 0)
+            if 0 <= source_index < len(saved_paths):
+                item["preview_url"] = f"/api/images/file/{saved_paths[source_index].name}"
+
+        response_text = _format_image_result(result)
+        failed_files = [row for row in result_files if row.get("status") == "failed"]
+        if failed_files:
+            failure_lines = ["以下设计稿未完整识别："]
+            failure_lines.extend(
+                f"- {row.get('filename') or '未命名图片'}：{row.get('error') or '识别失败'}"
+                for row in failed_files
+            )
+            response_text = f"{response_text}\n\n" + "\n".join(failure_lines)
+
+        session.clear_pending()
+        response_text = _handle_image_auto_workflow_sales_flow(
+            result,
+            session,
+            response_text,
+            allow_sales=not bool(result.get("incomplete")),
+        )
+        session.set_meta("last_extraction", {
+            "user_input": f"批量上传 {len(files)} 张设计稿",
+            "intent": "workflow",
+            "params": {
+                "action": "image_upload_batch",
+                "batch_id": batch_id,
+                "image_paths": [str(path) for path in saved_paths],
+            },
+        })
+        session.save_turn(
+            f"上传 {len(files)} 张设计稿：" + "、".join(item.filename for item in files),
+            response_text,
+        )
+
+        batch_payload = {
+            "id": batch_id,
+            "total_files": int(result.get("total_files") or len(files)),
+            "success_files": int(result.get("success_files") or 0),
+            "failed_files": int(result.get("failed_files") or 0),
+            "incomplete": bool(result.get("incomplete")),
+            "replayed": False,
+            "files": result_files,
+        }
+        response_data = {
+            "response": response_text,
+            "session_id": session_id,
+            "session": _session_snapshot(session_id),
+            "batch": _safe_json(batch_payload),
+            "result": _safe_json(result),
+        }
+        cached_batches = session.get_meta("image_upload_batches", {}) or {}
+        if not isinstance(cached_batches, dict):
+            cached_batches = {}
+        cached_batches[batch_id] = {
+            "response": response_text,
+            "session_id": session_id,
+            "batch": response_data["batch"],
+            "result": response_data["result"],
+        }
+        while len(cached_batches) > 10:
+            cached_batches.pop(next(iter(cached_batches)))
+        session.set_meta("image_upload_batches", cached_batches)
+        return jsonify({"code": 0, "data": response_data})
+    except ValueError as exc:
+        for path in saved_paths:
+            _delete_local_upload(path, "非法批次图片")
+        return jsonify({"code": 400, "msg": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("批量图片上传识别异常")
+        return jsonify({"code": 500, "msg": str(exc)}), 500
+    finally:
+        with _IMAGE_BATCH_LOCK:
+            _IMAGE_BATCH_INFLIGHT.discard(inflight_key)
 
 
 @app.route("/api/images/upload", methods=["POST"])

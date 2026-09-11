@@ -57,6 +57,7 @@ class OrderFlowWorkflow(BaseWorkflow):
 
         params = params or {}
         workflow_order_id = params.get("workflow_order_id") or params.get("workflow_id") or params.get("source_workflow_id")
+        workflow_order_ids = self._normalize_workflow_order_ids(params.get("workflow_order_ids"), workflow_order_id)
         inline_products = self._extract_inline_products(user_input)
         if len(inline_products) > len(params.get("products", []) or []):
             params["products"] = inline_products
@@ -99,6 +100,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                         "product_index": index,
                         "warehouse_hint": warehouse_hint,
                         "workflow_order_id": workflow_order_id,
+                        "workflow_order_ids": workflow_order_ids,
                         "pending_action": "confirm_product_name",
                     },
                 )
@@ -128,6 +130,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "products": resolved_products,
                 "warehouse_hint": warehouse_hint,
                 "workflow_order_id": workflow_order_id,
+                "workflow_order_ids": workflow_order_ids,
                 "pending_action": inventory_result.get("pending_action", "choose_warehouse"),
                 "pending_warehouse": inventory_result.get("pending_warehouse"),
             }
@@ -145,6 +148,7 @@ class OrderFlowWorkflow(BaseWorkflow):
             skip_inventory=inventory_result.get("skip_inventory", False),
             customer_defaulted=customer_defaulted,
             workflow_order_id=workflow_order_id,
+            workflow_order_ids=workflow_order_ids,
         )
 
     def resume(self, user_input: str, state: dict) -> dict:
@@ -156,6 +160,7 @@ class OrderFlowWorkflow(BaseWorkflow):
             products = state.get("products", [])
             warehouse_hint = state.get("warehouse_hint")
             workflow_order_id = state.get("workflow_order_id") or state.get("workflow_id") or state.get("source_workflow_id")
+            workflow_order_ids = self._normalize_workflow_order_ids(state.get("workflow_order_ids"), workflow_order_id)
             text = user_input.strip()
             if self._is_stop_order(text):
                 return self._reply("已取消本次开单。")
@@ -169,6 +174,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                     products,
                     warehouse_hint,
                     workflow_order_id=workflow_order_id,
+                    workflow_order_ids=workflow_order_ids,
                 )
 
             corrected_name = text
@@ -181,6 +187,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                         "products": products,
                         "warehouse_hint": warehouse_hint,
                         "workflow_order_id": workflow_order_id,
+                        "workflow_order_ids": workflow_order_ids,
                         "pending_action": "customer_missing",
                     },
                 )
@@ -190,6 +197,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 products,
                 warehouse_hint,
                 workflow_order_id=workflow_order_id,
+                workflow_order_ids=workflow_order_ids,
             )
 
         if state.get("pending_action") == "confirm_image_sales":
@@ -205,6 +213,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         products = state["products"]
         pending_action = state.get("pending_action", "choose_warehouse")
         workflow_order_id = state.get("workflow_order_id") or state.get("workflow_id") or state.get("source_workflow_id")
+        workflow_order_ids = self._normalize_workflow_order_ids(state.get("workflow_order_ids"), workflow_order_id)
 
         if pending_action == "confirm_create_order":
             if any(word in user_input for word in ["修改", "改成", "改为", "换成"]):
@@ -226,7 +235,13 @@ class OrderFlowWorkflow(BaseWorkflow):
                     return self._reply(f"进货失败：{purchase_result['error']}")
                 purchase_results = purchase_result.get("purchase_results", [])
             elif not state.get("skip_inventory"):
-                shortage = self._purchase_confirmation_for_shortage(customer_id, customer_name, products, int(state.get("warehouse_id") or 2))
+                shortage = self._purchase_confirmation_for_shortage(
+                    customer_id,
+                    customer_name,
+                    products,
+                    int(state.get("warehouse_id") or 2),
+                    workflow_order_ids=workflow_order_ids,
+                )
                 if shortage:
                     return shortage
             return self._create_order(
@@ -235,6 +250,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 products,
                 state.get("warehouse_id", 2),
                 workflow_order_id=workflow_order_id,
+                workflow_order_ids=workflow_order_ids,
                 purchase_results=purchase_results,
             )
 
@@ -256,6 +272,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 products=products,
                 warehouse_hint=state.get("warehouse_hint"),
                 workflow_order_id=workflow_order_id,
+                workflow_order_ids=workflow_order_ids,
             )
 
         if pending_action == "confirm_self_ship":
@@ -268,7 +285,15 @@ class OrderFlowWorkflow(BaseWorkflow):
                         p["need_purchase"] = True
                         p.pop("pending_self_ship", None)
                 if not self._need_purchase_confirmation(products):
-                    return self._confirm_create_order(customer_id, customer_name, products, 2, auto_purchase=True, workflow_order_id=workflow_order_id)
+                    return self._confirm_create_order(
+                        customer_id,
+                        customer_name,
+                        products,
+                        2,
+                        auto_purchase=True,
+                        workflow_order_id=workflow_order_id,
+                        workflow_order_ids=workflow_order_ids,
+                    )
                 return self._ask(
                     self._format_purchase_confirm_question(products, customer_name),
                     {
@@ -276,6 +301,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                         "customer_name": customer_name,
                         "products": products,
                         "workflow_order_id": workflow_order_id,
+                        "workflow_order_ids": workflow_order_ids,
                         "pending_action": "confirm_purchase",
                     },
                 )
@@ -285,7 +311,15 @@ class OrderFlowWorkflow(BaseWorkflow):
                     p.pop("pending_self_ship", None)
             if any(p.get("need_purchase") for p in products):
                 if not self._need_purchase_confirmation(products):
-                    return self._confirm_create_order(customer_id, customer_name, products, 2, auto_purchase=True, workflow_order_id=workflow_order_id)
+                    return self._confirm_create_order(
+                        customer_id,
+                        customer_name,
+                        products,
+                        2,
+                        auto_purchase=True,
+                        workflow_order_id=workflow_order_id,
+                        workflow_order_ids=workflow_order_ids,
+                    )
                 return self._ask(
                     "还有商品百鑫和自己店里都无货，需要先进货到百鑫仓库。请回复「确认」进货并继续开单，或回复「取消」停止。",
                     {
@@ -293,10 +327,18 @@ class OrderFlowWorkflow(BaseWorkflow):
                         "customer_name": customer_name,
                         "products": products,
                         "workflow_order_id": workflow_order_id,
+                        "workflow_order_ids": workflow_order_ids,
                         "pending_action": "confirm_purchase",
                     },
                 )
-            return self._confirm_create_order(customer_id, customer_name, products, 1, workflow_order_id=workflow_order_id)
+            return self._confirm_create_order(
+                customer_id,
+                customer_name,
+                products,
+                1,
+                workflow_order_id=workflow_order_id,
+                workflow_order_ids=workflow_order_ids,
+            )
 
         if pending_action == "confirm_purchase":
             if not self._is_yes(user_input):
@@ -313,6 +355,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                     products,
                     warehouse_id,
                     workflow_order_id=workflow_order_id,
+                    workflow_order_ids=workflow_order_ids,
                     purchase_results=purchase_result.get("purchase_results", []),
                 )
             return self._reply("进货成功。")
@@ -329,6 +372,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                     "customer_name": customer_name,
                     "products": products,
                     "workflow_order_id": workflow_order_id,
+                    "workflow_order_ids": workflow_order_ids,
                     "pending_action": "confirm_self_ship",
                 },
             )
@@ -339,7 +383,15 @@ class OrderFlowWorkflow(BaseWorkflow):
                 p.pop("pending_warehouse_choice", None)
         if any(p.get("need_purchase") for p in products):
             if not self._need_purchase_confirmation(products):
-                return self._confirm_create_order(customer_id, customer_name, products, 2, auto_purchase=True, workflow_order_id=workflow_order_id)
+                return self._confirm_create_order(
+                    customer_id,
+                    customer_name,
+                    products,
+                    2,
+                    auto_purchase=True,
+                    workflow_order_id=workflow_order_id,
+                    workflow_order_ids=workflow_order_ids,
+                )
             return self._ask(
                 "还有商品百鑫和自己店里都无货，需要先进货到百鑫仓库。请回复「确认」进货并继续开单，或回复「取消」停止。",
                 {
@@ -347,11 +399,19 @@ class OrderFlowWorkflow(BaseWorkflow):
                     "customer_name": customer_name,
                     "products": products,
                     "workflow_order_id": workflow_order_id,
+                    "workflow_order_ids": workflow_order_ids,
                     "pending_action": "confirm_purchase",
                 },
             )
         logger.info(f"[OrderFlow] resume warehouse={warehouse['warehouse_name']}(id={warehouse_id})")
-        return self._confirm_create_order(customer_id, customer_name, products, warehouse_id, workflow_order_id=workflow_order_id)
+        return self._confirm_create_order(
+            customer_id,
+            customer_name,
+            products,
+            warehouse_id,
+            workflow_order_id=workflow_order_id,
+            workflow_order_ids=workflow_order_ids,
+        )
 
     # ---- 内部方法 ----
 
@@ -362,6 +422,19 @@ class OrderFlowWorkflow(BaseWorkflow):
         # the customer/product boundary.
         value = re.sub(r"^(开单|下单|销售单|帮我开单|帮我下单)(?=\S)", r"\1 ", value)
         return re.sub(r"\s+", " ", value).strip()
+
+    @staticmethod
+    def _normalize_workflow_order_ids(values, primary_id=None) -> list[int]:
+        raw_values = values if isinstance(values, (list, tuple, set)) else [values]
+        normalized: list[int] = []
+        for raw_value in [*raw_values, primary_id]:
+            try:
+                workflow_id = int(raw_value or 0)
+            except (TypeError, ValueError):
+                continue
+            if workflow_id > 0 and workflow_id not in normalized:
+                normalized.append(workflow_id)
+        return normalized
 
     def _extract_inline_products(self, text: str) -> list[dict]:
         products = []
@@ -409,6 +482,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         products: list[dict],
         warehouse_hint: str | None,
         workflow_order_id: int | None = None,
+        workflow_order_ids: list[int] | None = None,
     ) -> dict:
         """Continue order flow after the user corrected a product name."""
         products = self._enrich_order_products(products)
@@ -425,6 +499,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                         "product_index": index,
                         "warehouse_hint": warehouse_hint,
                         "workflow_order_id": workflow_order_id,
+                        "workflow_order_ids": workflow_order_ids or [],
                         "pending_action": "confirm_product_name",
                     },
                 )
@@ -443,6 +518,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                     "products": resolved_products,
                     "warehouse_hint": warehouse_hint,
                     "workflow_order_id": workflow_order_id,
+                    "workflow_order_ids": workflow_order_ids or [],
                     "pending_action": inventory_result.get("pending_action", "choose_warehouse"),
                     "pending_warehouse": inventory_result.get("pending_warehouse"),
                 },
@@ -454,6 +530,7 @@ class OrderFlowWorkflow(BaseWorkflow):
             inventory_result.get("warehouse_id", 2),
             inventory_result["status"] == "auto_purchase",
             workflow_order_id=workflow_order_id,
+            workflow_order_ids=workflow_order_ids,
         )
 
     def _search_customer(self, name: str) -> int | None:
@@ -1246,6 +1323,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         customer_name: str,
         products: list[dict],
         warehouse_id: int,
+        workflow_order_ids: list[int] | None = None,
     ) -> dict | None:
         warehouse_id = int(warehouse_id or 2)
         shortage_products = []
@@ -1291,6 +1369,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "warehouse_id": warehouse_id,
                 "purchase_warehouse_id": int(shortage_products[0].get("purchase_warehouse_id") or warehouse_id or 2),
                 "return_to_order": True,
+                "workflow_order_ids": workflow_order_ids or [],
             },
         )
 
@@ -1513,6 +1592,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         skip_inventory: bool = False,
         customer_defaulted: bool = False,
         workflow_order_id: int | None = None,
+        workflow_order_ids: list[int] | None = None,
     ) -> dict:
         """Always pause before mutating ERP state."""
         warehouse_id = int(warehouse_id or 2)
@@ -1542,6 +1622,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 "skip_inventory": skip_inventory,
                 "customer_defaulted": customer_defaulted,
                 "workflow_order_id": workflow_order_id,
+                "workflow_order_ids": self._normalize_workflow_order_ids(workflow_order_ids, workflow_order_id),
             },
         )
 
@@ -1552,6 +1633,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         products: list[dict],
         warehouse_id: int,
         workflow_order_id: int | None = None,
+        workflow_order_ids: list[int] | None = None,
         purchase_results: list[dict] | None = None,
     ) -> dict:
         """B5: 开销售单"""
@@ -1607,6 +1689,7 @@ class OrderFlowWorkflow(BaseWorkflow):
                 warehouse_id=warehouse_id,
                 products=api_products,
                 workflow_order_id=workflow_order_id,
+                workflow_order_ids=self._normalize_workflow_order_ids(workflow_order_ids, workflow_order_id),
             )
 
             # 解析结果

@@ -49,6 +49,37 @@ test('proxy HTML 413 is translated into a readable error', async () => {
   await assert.rejects(api.uploadAgentImage(new File(['x'], 'batch.zip'), 'test'), /文件过大|大小限制/);
 });
 
+test('multiple design images are sent in one batch request', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return Response.json({
+      code: 0,
+      data: url.endsWith('upload-limits') ? limits : { response: 'done', batch: { total_files: 2, files: [] } },
+    });
+  };
+  const files = [new File(['a'], 'first.png'), new File(['b'], 'second.jpg')];
+
+  await api.uploadAgentImages(files, 'test-session', 'batch-123');
+
+  assert.equal(calls[1].url, '/api/images/upload-batch');
+  assert.deepEqual(calls[1].init.body.getAll('images').map(file => file.name), ['first.png', 'second.jpg']);
+  assert.equal(calls[1].init.body.get('session_id'), 'test-session');
+  assert.equal(calls[1].init.body.get('batch_id'), 'batch-123');
+});
+
+test('design image batch rejects ZIP files and totals above 100MB', async () => {
+  globalThis.fetch = async () => Response.json({ code: 0, data: limits });
+  await assert.rejects(api.uploadAgentImages([new File(['x'], 'bags.zip')], 'test', 'zip-batch'), /ZIP/);
+
+  const largeBatch = Array.from({ length: 5 }, (_, index) => {
+    const file = new File(['x'], `design-${index}.png`);
+    Object.defineProperty(file, 'size', { value: 21 * 1024 * 1024 });
+    return file;
+  });
+  await assert.rejects(api.uploadAgentImages(largeBatch, 'test', 'large-batch'), /100MB/);
+});
+
 function workbenchFunction(name, context) {
   const source = ts.createSourceFile('page.tsx', readFileSync(
     new URL('../admin/src/components/business/workbench/workbench-page.tsx', import.meta.url), 'utf8'
@@ -82,24 +113,116 @@ test('failed upload replaces the pending message instead of leaving it spinning'
   assert.equal(error, 'too large');
 });
 
-test('a failed batch keeps only failed and unsent files and releases sending state', async () => {
-  const original = ['first.zip', 'failed.zip', 'unsent.zip'];
+test('a failed image batch restores the whole batch and releases sending state', async () => {
+  const original = ['first.png', 'second.png'];
   let files = original;
   let input = 'next message';
   let sending = false;
-  const sent = [];
+  let sent;
   const send = workbenchFunction('sendMessage', {
-    isSending: false, input, files,
+    isSending: false, sendLockRef: { current: false }, input, files,
     setError: () => {}, setInput: (value) => { input = value; },
     setFiles: (value) => { files = typeof value === 'function' ? value(files) : value; },
     setIsSending: (value) => { sending = value; },
-    uploadImageFile: async (file) => { sent.push(file); return file !== 'failed.zip'; },
+    isZipUploadFile: () => false,
+    uploadImageBatch: async (batch) => { sent = batch; return false; },
+    uploadImageFile: () => { throw new Error('image files must use the batch endpoint'); },
     sendTextMessage: () => { throw new Error('must not send text after failed upload'); },
     appendMessage: () => {}, Error,
   });
   await send();
-  assert.deepEqual(sent, ['first.zip', 'failed.zip']);
-  assert.deepEqual(Array.from(files), ['failed.zip', 'unsent.zip']);
+  assert.deepEqual(Array.from(sent), original);
+  assert.deepEqual(Array.from(files), original);
   assert.equal(input, 'next message');
   assert.equal(sending, false);
+});
+
+test('sendMessage submits selected images as one batch', async () => {
+  const original = ['first.png', 'second.png', 'third.png'];
+  let calls = 0;
+  const send = workbenchFunction('sendMessage', {
+    isSending: false, sendLockRef: { current: false }, input: '', files: original,
+    setError: () => {}, setInput: () => {}, setFiles: () => {}, setIsSending: () => {},
+    isZipUploadFile: () => false,
+    uploadImageBatch: async (batch) => { calls += 1; assert.deepEqual(Array.from(batch), original); return true; },
+    uploadImageFile: () => { throw new Error('must not upload images one by one'); },
+    sendTextMessage: () => {}, appendMessage: () => {}, Error,
+  });
+
+  await send();
+
+  assert.equal(calls, 1);
+});
+
+test('sendMessage rejects mixed ZIP and image attachments before upload', async () => {
+  const original = [
+    { name: 'design.png', type: 'image/png' },
+    { name: 'bags.zip', type: 'application/zip' },
+  ];
+  let files = original;
+  let error = '';
+  let uploads = 0;
+  const send = workbenchFunction('sendMessage', {
+    isSending: false, sendLockRef: { current: false }, input: '', files,
+    setError: (value) => { error = value; }, setInput: () => {},
+    setFiles: (value) => { files = typeof value === 'function' ? value(files) : value; },
+    setIsSending: () => {},
+    isZipUploadFile: (file) => file.name.endsWith('.zip'),
+    uploadImageBatch: async () => { uploads += 1; return true; },
+    uploadImageFile: async () => { uploads += 1; return true; },
+    sendTextMessage: () => {}, appendMessage: () => {}, Error,
+  });
+
+  await send();
+
+  assert.equal(uploads, 0);
+  assert.match(error, /不能.*混合/);
+  assert.deepEqual(Array.from(files), original);
+});
+
+test('rapid duplicate send clicks only submit one image batch', async () => {
+  let releaseUpload;
+  const waitingUpload = new Promise((resolve) => { releaseUpload = resolve; });
+  let uploads = 0;
+  const sendLockRef = { current: false };
+  const send = workbenchFunction('sendMessage', {
+    isSending: false, sendLockRef, input: '', files: [{ name: 'design.png' }],
+    setError: () => {}, setInput: () => {}, setFiles: () => {}, setIsSending: () => {},
+    isZipUploadFile: () => false,
+    uploadImageBatch: async () => { uploads += 1; return waitingUpload; },
+    uploadImageFile: async () => true,
+    sendTextMessage: () => {}, appendMessage: () => {}, Error,
+  });
+
+  const first = send();
+  const second = send();
+  assert.equal(uploads, 1);
+  releaseUpload(true);
+  await Promise.all([first, second]);
+  assert.equal(uploads, 1);
+  assert.equal(sendLockRef.current, false);
+});
+
+test('image batch ids belong to the exact file group and are released after success', () => {
+  const imageBatchKey = workbenchFunction('imageBatchKey', {});
+  const ids = new Map();
+  let now = 123456;
+  const context = {
+    IMAGE_BATCH_IDS: ids,
+    imageBatchKey,
+    Date: { now: () => now++ },
+    Math: { ...Math, random: () => 0.25 },
+  };
+  const imageBatchId = workbenchFunction('imageBatchId', context);
+  const releaseImageBatchId = workbenchFunction('releaseImageBatchId', { IMAGE_BATCH_IDS: ids, imageBatchKey });
+  const first = { name: 'a.png', size: 10, lastModified: 1, type: 'image/png' };
+  const second = { name: 'b.png', size: 20, lastModified: 2, type: 'image/png' };
+  const third = { name: 'c.png', size: 30, lastModified: 3, type: 'image/png' };
+
+  const firstBatch = imageBatchId([first, second]);
+  assert.equal(imageBatchId([first, second]), firstBatch);
+  assert.notEqual(imageBatchId([first, third]), firstBatch);
+
+  releaseImageBatchId([first, second]);
+  assert.notEqual(imageBatchId([first, second]), firstBatch);
 });

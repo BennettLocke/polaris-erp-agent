@@ -679,6 +679,27 @@ export type SalesDetail = SalesCard & {
   items?: SalesProduct[];
 };
 
+export type AgentImageBatchFile = {
+  filename?: string;
+  preview_url?: string;
+  status: "success" | "failed";
+  error?: string;
+  result?: Record<string, unknown>;
+};
+
+export type AgentImageBatchUploadResult = AgentChatResponse & {
+  batch: {
+    id: string;
+    total_files: number;
+    success_files: number;
+    failed_files: number;
+    incomplete: boolean;
+    replayed?: boolean;
+    files: AgentImageBatchFile[];
+  };
+  result?: Record<string, unknown>;
+};
+
 export type SalesMergeItem = {
   item_id: number;
   line_no: number;
