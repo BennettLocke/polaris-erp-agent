@@ -154,6 +154,28 @@ test('sendMessage submits selected images as one batch', async () => {
   assert.equal(calls, 1);
 });
 
+test('sendMessage keeps attachments visible while uploading and clears them after success', async () => {
+  const original = [{ name: 'first.png' }, { name: 'second.png' }];
+  let files = original;
+  let releaseUpload;
+  const waitingUpload = new Promise((resolve) => { releaseUpload = resolve; });
+  const send = workbenchFunction('sendMessage', {
+    isSending: false, sendLockRef: { current: false }, input: '', files,
+    setError: () => {}, setInput: () => {},
+    setFiles: (value) => { files = typeof value === 'function' ? value(files) : value; },
+    setIsSending: () => {}, isZipUploadFile: () => false,
+    uploadImageBatch: async () => waitingUpload,
+    uploadImageFile: async () => true,
+    sendTextMessage: () => {}, appendMessage: () => {}, Error,
+  });
+
+  const sending = send();
+  assert.deepEqual(Array.from(files), original);
+  releaseUpload(true);
+  await sending;
+  assert.deepEqual(Array.from(files), []);
+});
+
 test('sendMessage rejects mixed ZIP and image attachments before upload', async () => {
   const original = [
     { name: 'design.png', type: 'image/png' },

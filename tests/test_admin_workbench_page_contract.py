@@ -157,6 +157,23 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn(".workbench-attachment-preview", styles_source)
         self.assertIn(".workbench-attachment-index", styles_source)
 
+    def test_workbench_attachment_thumbnails_open_a_centered_image_dialog(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        styles_source = (ROOT / "admin" / "src" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("function WorkbenchAttachmentImageDialog", workbench_source)
+        self.assertIn('className="workbench-attachment-image-dialog"', workbench_source)
+        self.assertIn('aria-label="上一张图片"', workbench_source)
+        self.assertIn('aria-label="下一张图片"', workbench_source)
+        self.assertIn("onPreview", workbench_source)
+        self.assertIn("disabled={isSending}", workbench_source)
+        self.assertIn("URL.revokeObjectURL(url)", workbench_source)
+        self.assertIn(".workbench-attachment-image-dialog", styles_source)
+        self.assertIn("width: 72px;", styles_source)
+        self.assertIn("height: 72px;", styles_source)
+
     def test_workbench_uses_dialog_input_and_agent_sections(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

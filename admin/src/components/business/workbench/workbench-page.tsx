@@ -3,9 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   History,
   Loader2,
+  Maximize2,
   MessageSquarePlus,
   Paperclip,
   RefreshCw,
@@ -1193,16 +1196,15 @@ export function WorkbenchPage() {
     sendLockRef.current = true;
     setError("");
     setInput("");
-    setFiles([]);
     setIsSending(true);
     try {
       const uploaded = !uploadFiles.length
         || (zipFiles.length ? await uploadImageFile(uploadFiles[0]) : await uploadImageBatch(uploadFiles));
       if (!uploaded) {
-        setFiles((current) => [...uploadFiles, ...current].slice(0, 6));
         setInput(message);
         return;
       }
+      setFiles([]);
       if (message) {
         appendMessage("user", message);
         await sendTextMessage(message);
@@ -1530,6 +1532,14 @@ function ChatComposer({
   onChooseFiles: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemoveFile: (index: number) => void;
 }) {
+  const imageFiles = useMemo(() => files.filter((file) => !isZipUploadFile(file)), [files]);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isSending || previewIndex === null) return;
+    if (previewIndex >= imageFiles.length) setPreviewIndex(imageFiles.length ? imageFiles.length - 1 : null);
+  }, [imageFiles.length, isSending, previewIndex]);
+
   return (
     <div className="workbench-composer">
       {files.length ? (
@@ -1539,6 +1549,8 @@ function ChatComposer({
               file={file}
               index={index}
               key={`${file.name}_${file.size}_${file.lastModified}_${index}`}
+              disabled={isSending}
+              onPreview={isZipUploadFile(file) ? undefined : () => setPreviewIndex(imageFiles.indexOf(file))}
               onRemove={() => onRemoveFile(index)}
             />
           ))}
@@ -1562,11 +1574,29 @@ function ChatComposer({
           发送
         </Button>
       </div>
+      <WorkbenchAttachmentImageDialog
+        files={imageFiles}
+        index={previewIndex}
+        onIndexChange={setPreviewIndex}
+        onClose={() => setPreviewIndex(null)}
+      />
     </div>
   );
 }
 
-function WorkbenchAttachmentPreview({ file, index, onRemove }: { file: File; index: number; onRemove: () => void }) {
+function WorkbenchAttachmentPreview({
+  file,
+  index,
+  disabled,
+  onPreview,
+  onRemove
+}: {
+  file: File;
+  index: number;
+  disabled: boolean;
+  onPreview?: () => void;
+  onRemove: () => void;
+}) {
   const isZip = isZipUploadFile(file);
   const [previewUrl, setPreviewUrl] = useState("");
 
@@ -1582,18 +1612,108 @@ function WorkbenchAttachmentPreview({ file, index, onRemove }: { file: File; ind
 
   return (
     <div className="workbench-attachment-preview">
-      <div className="workbench-attachment-visual">
-        {previewUrl ? <img src={previewUrl} alt={`设计稿 ${index + 1}`} /> : <Paperclip aria-hidden="true" />}
-        <span className="workbench-attachment-index">{index + 1}</span>
-      </div>
+      {previewUrl && onPreview ? (
+        <button
+          className="workbench-attachment-visual workbench-attachment-image-button"
+          type="button"
+          disabled={disabled}
+          onClick={onPreview}
+          aria-label={`放大预览第 ${index + 1} 张设计稿`}
+          title="放大预览"
+        >
+          <img src={previewUrl} alt={`设计稿 ${index + 1}`} />
+          <Maximize2 className="workbench-attachment-expand" aria-hidden="true" />
+          <span className="workbench-attachment-index">{index + 1}</span>
+        </button>
+      ) : (
+        <div className="workbench-attachment-visual">
+          <Paperclip aria-hidden="true" />
+          <span className="workbench-attachment-index">{index + 1}</span>
+        </div>
+      )}
       <div className="workbench-attachment-meta">
         <strong title={file.name}>{file.name || uploadFileLabel(file)}</strong>
         <span>{isZip ? "ZIP 压缩包" : "设计稿图片"}</span>
       </div>
-      <button className="workbench-attachment-remove" type="button" onClick={onRemove} aria-label={`移除 ${file.name || uploadFileLabel(file)}`}>
+      <button className="workbench-attachment-remove" type="button" disabled={disabled} onClick={onRemove} aria-label={`移除 ${file.name || uploadFileLabel(file)}`}>
         <X />
       </button>
     </div>
+  );
+}
+
+function WorkbenchAttachmentImageDialog({
+  files,
+  index,
+  onIndexChange,
+  onClose
+}: {
+  files: File[];
+  index: number | null;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+}) {
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const open = index !== null && files.length > 0;
+  const activeIndex = Math.min(Math.max(index ?? 0, 0), Math.max(files.length - 1, 0));
+  const activeUrl = previewUrls[activeIndex] || "";
+
+  useEffect(() => {
+    const urls = files.map((file) => URL.createObjectURL(file));
+    setPreviewUrls(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [files]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "ArrowLeft" && activeIndex > 0) onIndexChange(activeIndex - 1);
+      if (event.key === "ArrowRight" && activeIndex < files.length - 1) onIndexChange(activeIndex + 1);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeIndex, files.length, onIndexChange, open]);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="workbench-attachment-image-dialog">
+        <DialogHeader>
+          <DialogTitle>设计稿预览</DialogTitle>
+          <DialogDescription>
+            {files.length ? `第 ${activeIndex + 1} / ${files.length} 张 · ${files[activeIndex]?.name || "未命名设计稿"}` : "查看设计稿"}
+          </DialogDescription>
+        </DialogHeader>
+        {activeUrl ? (
+          <div className="workbench-attachment-image-preview">
+            {files.length > 1 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="上一张图片"
+                disabled={activeIndex <= 0}
+                onClick={() => onIndexChange(activeIndex - 1)}
+              >
+                <ChevronLeft data-icon="icon" />
+              </Button>
+            ) : null}
+            <img src={activeUrl} alt={`设计稿 ${activeIndex + 1}`} />
+            {files.length > 1 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="下一张图片"
+                disabled={activeIndex >= files.length - 1}
+                onClick={() => onIndexChange(activeIndex + 1)}
+              >
+                <ChevronRight data-icon="icon" />
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

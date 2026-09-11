@@ -432,10 +432,10 @@
 
 .workbench-attachment-preview {
   position: relative;
-  width: 156px;
+  width: 188px;
   min-width: 0;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 6px 28px 6px 6px;
@@ -446,8 +446,8 @@
 
 .workbench-attachment-visual {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 72px;
+  height: 72px;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -460,6 +460,29 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.workbench-attachment-image-button {
+  padding: 0;
+  color: inherit;
+  cursor: zoom-in;
+}
+
+.workbench-attachment-image-button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.workbench-attachment-visual .workbench-attachment-expand {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  padding: 3px;
+  border-radius: 3px;
+  color: var(--background);
+  background: color-mix(in srgb, var(--foreground) 82%, transparent);
 }
 
 .workbench-attachment-visual svg {
@@ -1254,6 +1277,38 @@ button {
 
 .print-feedback-toast--printed {
   border-left-color: #166534;
+}
+
+.sj-dialog-content.workbench-attachment-image-dialog {
+  width: min(920px, calc(100vw - 32px));
+  max-width: 920px;
+  max-height: calc(100vh - 32px);
+}
+
+.workbench-attachment-image-preview {
+  min-height: 280px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.workbench-attachment-image-preview img {
+  width: 100%;
+  max-height: calc(100vh - 190px);
+  display: block;
+  object-fit: contain;
+}
+
+@media (max-width: 760px) {
+  .workbench-attachment-preview {
+    width: 160px;
+  }
+
+  .workbench-attachment-image-preview {
+    grid-template-columns: 36px minmax(0, 1fr) 36px;
+    gap: 6px;
+  }
 }
 
 .print-feedback-toast--failed,
