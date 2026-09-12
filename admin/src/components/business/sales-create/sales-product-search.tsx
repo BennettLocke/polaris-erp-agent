@@ -6,8 +6,8 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { ProductSearchProps } from "./types";
+import { SalesNumberInput } from "./sales-number-input";
 import {
-  inputNoWheel,
   money,
   productColorCount,
   productDisplaySpec,
@@ -39,13 +39,10 @@ function SalesProductSearch({
             if (event.key === "Enter") onSearchProducts();
           }}
         />
-        <Input
-          aria-label="加入数量"
-          type="number"
-          min="1"
+        <SalesNumberInput
+          ariaLabel="加入数量"
           value={lineQty}
-          onWheel={inputNoWheel}
-          onChange={(event) => onQtyChange(Math.max(1, Number(event.target.value || 1)))}
+          onValueChange={onQtyChange}
         />
         <Button variant="outline" type="button" onClick={onSearchProducts}>
           <Search data-icon="inline-start" /> 搜索商品

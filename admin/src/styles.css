@@ -7505,15 +7505,23 @@ textarea,
 }
 
 .sales-create-price-field {
-  display: grid;
-  gap: 4px;
-  min-width: 132px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 190px;
 }
 
-.sales-create-price-field > span {
+.sales-create-price-hint {
+  display: block;
+  max-width: 118px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--sj-muted);
   font-size: 11px;
-  line-height: 16px;
+  line-height: 1.2;
+  cursor: help;
+  opacity: 0.78;
 }
 
 .customer-price-memory-dialog {

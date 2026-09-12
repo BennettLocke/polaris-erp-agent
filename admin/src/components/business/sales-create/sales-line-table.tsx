@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -21,12 +22,37 @@ import {
   TableRow
 } from "@/components/ui/table";
 import type { LineTableProps } from "./types";
+import { SalesNumberInput } from "./sales-number-input";
 import { inputNoWheel, money, warehouseName } from "./utils";
 
 function priceSourceText(source?: string) {
-  if (source === "customer_history") return "已用客户历史价";
-  if (source === "manual_override") return "人工修改";
-  return "商品零售价";
+  if (source === "customer_history") return "历史价";
+  if (source === "manual_override") return "手动";
+  return "零售价";
+}
+
+function priceHint(line: LineTableProps["lines"][number]) {
+  const shortParts = [priceSourceText(line.price_source)];
+  const detailParts = [
+    line.price_source === "customer_history"
+      ? "已使用客户历史价格"
+      : line.price_source === "manual_override"
+        ? "当前单价已手工修改"
+        : "当前使用商品零售价"
+  ];
+  if (line.price_policy === "suggest" && line.suggested_history_price) {
+    shortParts.push(`建议 ${money(line.suggested_history_price)}`);
+    detailParts.push(`建议历史价 ${money(line.suggested_history_price)}`);
+  }
+  if (line.price_policy !== "off") {
+    shortParts.push("自动记忆");
+    detailParts.push("成交后自动记忆整款商品价格");
+  }
+  if (line.price_warning) {
+    shortParts.push("提醒");
+    detailParts.push(line.price_warning);
+  }
+  return { short: shortParts.join(" · "), detail: detailParts.join("；") };
 }
 
 function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineTableProps) {
@@ -42,7 +68,8 @@ function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineT
   }
 
   return (
-    <Table className="sales-create-line-table">
+    <TooltipProvider>
+      <Table className="sales-create-line-table">
       <TableHeader>
         <TableRow>
           <TableHead>商品</TableHead>
@@ -57,6 +84,7 @@ function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineT
       <TableBody>
         {lines.map((line, index) => {
           const stockItem = Number(line.is_stock_item ?? 1) === 1;
+          const hint = priceHint(line);
           return (
             <TableRow key={`${line.product_id}-${line.warehouse_id}-${index}`}>
               <TableCell>
@@ -67,12 +95,10 @@ function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineT
               </TableCell>
               <TableCell>{line.spec || "默认颜色"}</TableCell>
               <TableCell>
-                <Input
-                  type="number"
-                  min="1"
+                <SalesNumberInput
+                  ariaLabel={`${line.title}数量`}
                   value={line.buy_number}
-                  onWheel={inputNoWheel}
-                  onChange={(event) => onUpdateLine(index, "buy_number", event.target.value)}
+                  onValueChange={(value) => onUpdateLine(index, "buy_number", String(value))}
                 />
               </TableCell>
               <TableCell>
@@ -103,12 +129,12 @@ function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineT
                     onWheel={inputNoWheel}
                     onChange={(event) => onUpdateLine(index, "price", event.target.value)}
                   />
-                  <span>{priceSourceText(line.price_source)}</span>
-                  {line.price_policy === "suggest" && line.suggested_history_price ? (
-                    <span>历史价 {money(line.suggested_history_price)}</span>
-                  ) : null}
-                  {line.price_warning ? <span>{line.price_warning}</span> : null}
-                  {line.price_policy !== "off" ? <span>成交后自动记忆整款价格</span> : null}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="sales-create-price-hint">{hint.short}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>{hint.detail}</TooltipContent>
+                  </Tooltip>
                 </div>
               </TableCell>
               <TableCell><strong>{money(line.buy_number * line.price)}</strong></TableCell>
@@ -121,7 +147,8 @@ function SalesLineTable({ lines, warehouses, onUpdateLine, onRemoveLine }: LineT
           );
         })}
       </TableBody>
-    </Table>
+      </Table>
+    </TooltipProvider>
   );
 }
 

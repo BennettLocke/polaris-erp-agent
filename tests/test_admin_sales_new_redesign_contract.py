@@ -81,6 +81,22 @@ class AdminSalesNewRedesignContractTest(unittest.TestCase):
         self.assertIn(".sales-create-product-piece", styles)
         self.assertIn("white-space: nowrap", styles.split(".sales-create-product-piece", 1)[1].split("}", 1)[0])
 
+    def test_price_hint_is_compact_and_quantity_inputs_share_draft_behavior(self):
+        line_table = (SALES_CREATE / "sales-line-table.tsx").read_text(encoding="utf-8")
+        product_search = (SALES_CREATE / "sales-product-search.tsx").read_text(encoding="utf-8")
+        styles = (ADMIN / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("SalesNumberInput", line_table)
+        self.assertIn("SalesNumberInput", product_search)
+        self.assertIn('className="sales-create-price-hint"', line_table)
+        self.assertIn("TooltipContent", line_table)
+
+        price_field = styles.split(".sales-create-price-field", 1)[1].split("}", 1)[0]
+        price_hint = styles.split(".sales-create-price-hint", 1)[1].split("}", 1)[0]
+        self.assertIn("display: flex", price_field)
+        self.assertIn("align-items: center", price_field)
+        self.assertIn("white-space: nowrap", price_hint)
+
 
 if __name__ == "__main__":
     unittest.main()
