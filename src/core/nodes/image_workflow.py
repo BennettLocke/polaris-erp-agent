@@ -16,6 +16,8 @@ import os
 import json
 import tempfile
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -31,6 +33,9 @@ from scripts.common.unit_converter import calculate_order_quantity, parse_unit_f
 
 logger = get_logger("sjagent.nodes.image_workflow")
 REMARK_OCR_TOP_RATIO = 0.22
+LEGACY_FRAME_MIN_AREA_RATIO = 0.10
+LEGACY_FRAME_MIN_ASPECT_RATIO = 0.18
+LEGACY_FRAME_MAX_ASPECT_RATIO = 5.5
 CHINESE_NUMBER_PATTERN = r"[零〇一二两三四五六七八九十百千万]+"
 QUANTITY_NUMBER_PATTERN = rf"(?:\d+|{CHINESE_NUMBER_PATTERN})"
 QUANTITY_UNIT_PATTERN = r"(套|件|个|张|只|盒|捆)"
@@ -39,12 +44,65 @@ OCR_UV_PATTERN = r"(?i:U\s*(?:I|1|l)?\s*V)"
 CRAFT_TOKEN_PATTERN = rf"提袋|丝印|印刷|烫金|烫银|击凸|击凹|{OCR_UV_PATTERN}"
 
 
+def _batch_worker_count() -> int:
+    try:
+        configured = int(os.getenv("SJAGENT_IMAGE_BATCH_WORKERS", "2"))
+    except (TypeError, ValueError):
+        configured = 2
+    return max(1, min(configured, 2))
+
+
+IMAGE_BATCH_WORKERS = _batch_worker_count()
+_IMAGE_BATCH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=IMAGE_BATCH_WORKERS,
+    thread_name_prefix="sjagent-image-ocr",
+)
+
+
 def _frame_reading_order(frame) -> tuple[int, int]:
     if hasattr(frame, "x") and hasattr(frame, "y"):
         return int(frame.y), int(frame.x)
     if isinstance(frame, (list, tuple)) and len(frame) >= 2:
         return int(frame[1]), int(frame[0])
     return 0, 0
+
+
+def _frame_geometry(frame) -> tuple[int, int, int, int] | None:
+    if all(hasattr(frame, key) for key in ("x", "y", "w", "h")):
+        return int(frame.x), int(frame.y), int(frame.w), int(frame.h)
+    if isinstance(frame, (list, tuple)) and len(frame) >= 4:
+        return tuple(int(value) for value in frame[:4])
+    return None
+
+
+def _filter_legacy_design_frames(frames: list, image_shape) -> list:
+    """Keep only large, plausible design panels from legacy composite images."""
+    if image_shape is None or len(image_shape) < 2:
+        return []
+    image_height, image_width = int(image_shape[0]), int(image_shape[1])
+    image_area = image_width * image_height
+    if image_area <= 0:
+        return []
+
+    selected = []
+    for frame in frames:
+        geometry = _frame_geometry(frame)
+        if geometry is None:
+            continue
+        _, _, width, height = geometry
+        if width <= 0 or height <= 0:
+            continue
+        area_ratio = (width * height) / image_area
+        aspect_ratio = width / height
+        is_near_full_image = width >= image_width * 0.95 and height >= image_height * 0.95
+        if is_near_full_image:
+            continue
+        if area_ratio < LEGACY_FRAME_MIN_AREA_RATIO:
+            continue
+        if not LEGACY_FRAME_MIN_ASPECT_RATIO <= aspect_ratio <= LEGACY_FRAME_MAX_ASPECT_RATIO:
+            continue
+        selected.append(frame)
+    return sorted(selected, key=_frame_reading_order)
 
 
 def _parse_quantity_number(value: str) -> int | None:
@@ -142,7 +200,7 @@ def image_workflow_node(state: AgentState) -> AgentState:
     return state
 
 
-def process_single_image(image_path: str, caller) -> dict:
+def process_single_image(image_path: str, caller, *, allow_legacy_split: bool = True) -> dict:
     """
     处理单张图片的全流程
 
@@ -160,6 +218,8 @@ def process_single_image(image_path: str, caller) -> dict:
         "workflow_order": None,
     }
 
+    started_at = time.perf_counter()
+
     # 1. 下载图片（如果是URL）
     local_path = download_image_if_needed(image_path)
     if local_path is None:
@@ -170,9 +230,17 @@ def process_single_image(image_path: str, caller) -> dict:
     try:
         processor = ImageProcessor()
 
-        # 2. 默认把一张图片视为一个设计稿；多个有效外框才兼容旧拆分方式。
-        frames = sorted(processor.detect_black_frames(local_path), key=_frame_reading_order)
-        logger.info(f"检测到 {len(frames)} 个外框")
+        # 多图批次严格按一图一稿处理；单图才兼容旧版多外框拼图。
+        raw_frames = []
+        frames = []
+        if allow_legacy_split:
+            raw_frames = processor.detect_black_frames(local_path)
+            source_image = processor._load_image(local_path)
+            frames = _filter_legacy_design_frames(raw_frames, getattr(source_image, "shape", None))
+        logger.info(
+            f"图片识别外框: path={image_path} legacy_split={allow_legacy_split} "
+            f"raw_frames={len(raw_frames)} valid_frames={len(frames)}"
+        )
 
         if len(frames) >= 2:
             candidate_results = []
@@ -183,7 +251,9 @@ def process_single_image(image_path: str, caller) -> dict:
                 temp_path = save_temp_image(cropped, i)
                 cropped_images.append(temp_path)
                 ocr_texts = recognize_remark_texts(processor, cropped)
-                candidate_results.append(_process_ocr_order(ocr_texts, temp_path, caller))
+                candidate_results.append(
+                    _process_ocr_order(ocr_texts, temp_path, caller, upload_image=False)
+                )
 
             child_results = [
                 item
@@ -191,6 +261,8 @@ def process_single_image(image_path: str, caller) -> dict:
                 if not item.get("error") and bool(item.get("workflow_order_payload"))
             ]
             if len(child_results) >= 2:
+                for item in child_results:
+                    _attach_order_image(item, item.get("image_source_path") or "", caller)
                 result["items"] = child_results
                 propagate_batch_customer_context(child_results)
                 propagate_batch_goods_context(child_results, caller)
@@ -223,6 +295,11 @@ def process_single_image(image_path: str, caller) -> dict:
             except OSError:
                 pass
 
+        logger.info(
+            f"单图识别完成: path={image_path} legacy_split={allow_legacy_split} "
+            f"elapsed={time.perf_counter() - started_at:.3f}s"
+        )
+
     return result
 
 
@@ -235,13 +312,24 @@ def _result_items(result: dict) -> list[dict]:
 
 def process_image_batch(image_paths: list[str], caller) -> dict:
     """Process one user submission as an ordered batch of design images."""
+    started_at = time.perf_counter()
     file_results: list[dict] = []
     all_items: list[dict] = []
     incomplete = False
 
-    for image_index, image_path in enumerate(image_paths):
+    futures = [
+        _IMAGE_BATCH_EXECUTOR.submit(
+            process_single_image,
+            image_path,
+            caller,
+            allow_legacy_split=len(image_paths) == 1,
+        )
+        for image_path in image_paths
+    ]
+
+    for image_index, (image_path, future) in enumerate(zip(image_paths, futures)):
         try:
-            image_result = process_single_image(image_path, caller)
+            image_result = future.result()
         except Exception as exc:
             logger.exception(f"批次图片处理异常: {image_path}")
             image_result = {"error": str(exc), "parsed": {}, "product_warning": []}
@@ -272,7 +360,7 @@ def process_image_batch(image_paths: list[str], caller) -> dict:
         })
 
     propagate_batch_customer_context(all_items)
-    return {
+    batch_result = {
         "items": all_items,
         "files": file_results,
         "total_files": len(image_paths),
@@ -280,6 +368,12 @@ def process_image_batch(image_paths: list[str], caller) -> dict:
         "failed_files": sum(1 for item in file_results if item["status"] == "failed"),
         "incomplete": incomplete,
     }
+    logger.info(
+        f"批次图片识别完成: files={len(image_paths)} "
+        f"success={batch_result['success_files']} failed={batch_result['failed_files']} "
+        f"workers={IMAGE_BATCH_WORKERS} elapsed={time.perf_counter() - started_at:.3f}s"
+    )
+    return batch_result
 
 
 def recognize_remark_texts(processor: ImageProcessor, image) -> list[str]:
@@ -298,22 +392,39 @@ def recognize_remark_texts(processor: ImageProcessor, image) -> list[str]:
     return texts or [""]
 
 
-def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
+def _attach_order_image(item: dict, image_path: str, caller) -> None:
+    oss_url = upload_to_oss(image_path, caller) if image_path else ""
+    item["image_url"] = oss_url
+    payload = item.get("workflow_order_payload")
+    if isinstance(payload, dict):
+        payload["order_images"] = [oss_url] if oss_url else []
+
+
+def _process_ocr_order(
+    ocr_texts: list[str],
+    image_path: str,
+    caller,
+    *,
+    upload_image: bool = True,
+) -> dict:
     item = {
         "parsed": {},
         "product_warning": [],
         "workflow_order": None,
         "workflow_order_payload": None,
+        "image_url": "",
+        "image_source_path": image_path,
     }
-    oss_url = upload_to_oss(image_path, caller)
-    item["image_url"] = oss_url
-    item["image_source_path"] = image_path
 
     parsed = parse_ocr_text_list(ocr_texts)
     parsed = repair_ocr_parsed_fields(parsed, caller)
     item["parsed"] = parsed
 
     goods_name = parsed.get("goods_name", "")
+    if not goods_name:
+        item["error"] = "未识别到礼盒名称，未创建工作流订单"
+        return item
+
     color = parsed.get("color", "")
     product_info = find_product_by_goods_name(goods_name, caller, color)
     case_pack_info = product_info
@@ -342,19 +453,18 @@ def _process_ocr_order(ocr_texts: list[str], image_path: str, caller) -> dict:
             parsed["unit"] = "套"
             parsed["per_piece"] = per_piece
 
-    if not goods_name:
-        item["error"] = "未识别到礼盒名称，未创建工作流订单"
-    else:
-        craft = parsed.get("craft", "")
-        item["workflow_order_payload"] = {
-            "customer": parsed.get("customer_name") or "散客",
-            "goods_name": goods_name,
-            "quantity": parsed.get("quantity", 1),
-            "color": parsed.get("color", ""),
-            "order_images": [oss_url] if oss_url else [],
-            "is_screen_print": any(kw in craft for kw in ["丝印", "印刷"]),
-            "remark": craft,
-        }
+    craft = parsed.get("craft", "")
+    item["workflow_order_payload"] = {
+        "customer": parsed.get("customer_name") or "散客",
+        "goods_name": goods_name,
+        "quantity": parsed.get("quantity", 1),
+        "color": parsed.get("color", ""),
+        "order_images": [],
+        "is_screen_print": any(kw in craft for kw in ["丝印", "印刷"]),
+        "remark": craft,
+    }
+    if upload_image:
+        _attach_order_image(item, image_path, caller)
     return item
 
 
