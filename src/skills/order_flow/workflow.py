@@ -261,12 +261,7 @@ class OrderFlowWorkflow(BaseWorkflow):
             if self._is_yes(user_input):
                 products = self._enrich_order_products(products)
             elif 0 <= index < len(products):
-                corrected = user_input.strip()
-                corrected_color = self._extract_color(corrected)
-                if corrected_color and corrected_color == corrected:
-                    products[index]["color"] = corrected_color
-                else:
-                    products[index]["name"] = corrected
+                products[index] = self._apply_product_correction(products[index], user_input)
                 products = self._enrich_order_products(products)
             return self._continue_after_product_resolution(
                 customer_id=customer_id,
@@ -823,6 +818,22 @@ class OrderFlowWorkflow(BaseWorkflow):
             enriched.append(p)
         return enriched
 
+    def _apply_product_correction(self, product: dict, correction: str) -> dict:
+        """Apply one compact product correction without changing order quantities."""
+        corrected_text = str(correction or "").strip()
+        corrected = dict(product)
+        corrected.pop("_match_candidates", None)
+        if not corrected_text:
+            return corrected
+
+        corrected_color = self._extract_color(corrected_text)
+        corrected_name = self._normalize_product_name(corrected_text)
+        if corrected_name:
+            corrected["name"] = corrected_name
+        if corrected_color:
+            corrected["color"] = corrected_color
+        return corrected
+
     def _parse_price(self, value) -> float | None:
         if value in (None, ""):
             return None
@@ -976,6 +987,7 @@ class OrderFlowWorkflow(BaseWorkflow):
         desc = self._product_desc(product)
         prefix = "仍然没有唯一匹配到" if retry else "没有唯一匹配到"
         lines = [f"商品「{desc}」{prefix}数据库商品，请补充更准确的商品名称、规格或颜色。"]
+        lines.append("可以直接回复简写，例如：墨香3两黄色。商品、规格和颜色前后顺序都可以。")
         candidates = self._preview_product_candidates(product)
         if candidates:
             lines.append("")

@@ -107,6 +107,90 @@ class FakeOneJinRelatedCandidateCaller:
 
 
 class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
+    def test_product_correction_parses_compact_name_spec_and_color_in_any_order(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+
+        for correction in ("墨香3两黄色", "墨香黄色3两", "墨香二三两黄色"):
+            with self.subTest(correction=correction):
+                corrected = workflow._apply_product_correction(
+                    {
+                        "name": "墨香半斤",
+                        "color": "咖色",
+                        "qty": 6,
+                        "unit": "套",
+                        "_match_candidates": [{"id": 1}],
+                    },
+                    correction,
+                )
+
+                self.assertEqual(corrected["name"], "墨香 二三两")
+                self.assertEqual(corrected["color"], "黄色")
+                self.assertEqual(corrected["qty"], 6)
+                self.assertEqual(corrected["unit"], "套")
+                self.assertNotIn("_match_candidates", corrected)
+
+    def test_product_correction_accepts_color_alias_without_replacing_name(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+
+        corrected = workflow._apply_product_correction(
+            {"name": "墨香 二三两", "color": "咖色", "qty": 2, "unit": "套"},
+            "黄",
+        )
+
+        self.assertEqual(corrected["name"], "墨香 二三两")
+        self.assertEqual(corrected["color"], "黄色")
+
+    def test_product_correction_without_color_preserves_existing_color(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+
+        corrected = workflow._apply_product_correction(
+            {"name": "墨香半斤", "color": "红色", "qty": 2, "unit": "套"},
+            "墨香3两",
+        )
+
+        self.assertEqual(corrected["name"], "墨香 二三两")
+        self.assertEqual(corrected["color"], "红色")
+
+    def test_product_clarification_question_shows_compact_reply_example(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        workflow.product_matcher = ProductMatcher(FakeProductIdCaller())
+
+        question = workflow._format_product_clarification_question(
+            {"name": "墨香 二三两", "color": ""}
+        )
+
+        self.assertIn("墨香3两黄色", question)
+
+    def test_product_name_pending_uses_compact_correction_before_continuing(self):
+        workflow = object.__new__(OrderFlowWorkflow)
+        captured = {}
+
+        def capture_continue(**kwargs):
+            captured.update(kwargs)
+            return {"status": "captured"}
+
+        workflow._continue_after_product_resolution = capture_continue
+        result = workflow.resume(
+            "墨香黄色3两",
+            {
+                "customer_id": 7,
+                "customer_name": "测试客户",
+                "products": [
+                    {"name": "墨香半斤", "color": "咖色", "qty": 6, "unit": "套"}
+                ],
+                "product_index": 0,
+                "warehouse_hint": "百鑫仓库",
+                "workflow_order_ids": [456],
+                "pending_action": "confirm_product_name",
+            },
+        )
+
+        self.assertEqual(result, {"status": "captured"})
+        self.assertEqual(captured["products"][0]["name"], "墨香 二三两")
+        self.assertEqual(captured["products"][0]["color"], "黄色")
+        self.assertEqual(captured["products"][0]["qty"], 6)
+        self.assertEqual(captured["workflow_order_ids"], [456])
+
     def test_order_params_preserve_confirmed_image_product_id(self):
         item = _image_item(goods="【艺】三两", color="绿色", qty=6)
         item["parsed"]["product_id"] = 1096
