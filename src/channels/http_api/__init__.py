@@ -1481,6 +1481,7 @@ def _workflow_card(row: dict) -> dict:
         "order_time_text": order_time,
         "complete_time_text": row.get("complete_time_text") or "",
         "order_images": images,
+        "remark": row.get("remark") or "",
     }
 
 
@@ -3942,7 +3943,7 @@ def workflow_orders():
         is_delivered = body.get("is_delivered") if "is_delivered" in body else None
 
         result = get_workflow_service().save_order(
-            order_id=body.get("id"),
+            order_id=body.get("id") or body.get("order_id"),
             customer_name=customer_name,
             customer_phone=(body.get("customer_phone") or "").strip(),
             goods_name=goods_name,

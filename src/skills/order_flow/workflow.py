@@ -262,6 +262,11 @@ class OrderFlowWorkflow(BaseWorkflow):
                 products = self._enrich_order_products(products)
             elif 0 <= index < len(products):
                 products[index] = self._apply_product_correction(products[index], user_input)
+                self._sync_product_correction_to_workflow(
+                    index,
+                    products[index],
+                    workflow_order_ids,
+                )
                 products = self._enrich_order_products(products)
             return self._continue_after_product_resolution(
                 customer_id=customer_id,
@@ -833,6 +838,30 @@ class OrderFlowWorkflow(BaseWorkflow):
         if corrected_color:
             corrected["color"] = corrected_color
         return corrected
+
+    def _sync_product_correction_to_workflow(
+        self,
+        product_index: int,
+        product: dict,
+        workflow_order_ids: list[int],
+    ) -> None:
+        if product_index < 0 or product_index >= len(workflow_order_ids):
+            return
+        order_id = int(workflow_order_ids[product_index] or 0)
+        goods_name = str(product.get("name") or "").strip()
+        if not order_id or not goods_name:
+            return
+        try:
+            result = self.caller.call(
+                "workflow_order_correct_product",
+                order_id=order_id,
+                goods_name=goods_name,
+                color=str(product.get("color") or "").strip(),
+            )
+            if isinstance(result, dict) and (result.get("error") or result.get("code") not in (None, 0)):
+                logger.warning(f"[OrderFlow] 工作流订单商品校准同步失败: id={order_id}, result={result}")
+        except Exception as e:
+            logger.warning(f"[OrderFlow] 工作流订单商品校准同步异常: id={order_id}, error={e}")
 
     def _parse_price(self, value) -> float | None:
         if value in (None, ""):

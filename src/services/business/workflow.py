@@ -63,6 +63,13 @@ class WorkflowService(BusinessService):
     def update_status(self, *, order_id: int, field: str, value: int) -> dict:
         return self.db.update_workflow_status(order_id=order_id, field=field, value=value)
 
+    def correct_product(self, order_id: int, *, goods_name: str, color: str) -> dict:
+        return self.db.correct_workflow_order_product(
+            order_id=order_id,
+            goods_name=goods_name,
+            color=color,
+        )
+
     def link_sales_order(self, workflow_order_id: int, sales_order_id: int, *, operator_user_id=None) -> dict:
         return self.db.link_workflow_sales_order(
             workflow_order_id=workflow_order_id,

@@ -184,6 +184,10 @@ class AdminOrderPageContractTest(unittest.TestCase):
         self.assertIn("order_images: form.imageUrls", payload_source)
         self.assertIn("is_made: form.made ? 1 : 0", payload_source)
         self.assertIn("is_delivered: form.delivered ? 1 : 0", payload_source)
+        self.assertIn("id: order?.id || undefined", payload_source)
+        self.assertIn('order_id=body.get("id") or body.get("order_id")', http_source)
+        self.assertIn('"remark": row.get("remark") or ""', http_source)
+        self.assertIn('"remark": row.get("remark") or ""', db_source)
 
         self.assertIn('is_made = body.get("is_made") if "is_made" in body else None', http_source)
         self.assertIn('is_delivered = body.get("is_delivered") if "is_delivered" in body else None', http_source)

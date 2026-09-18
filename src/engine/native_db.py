@@ -7070,10 +7070,69 @@ class NativeDBClient:
                 "order_time_text": _date_text(row.get("created_at")),
                 "complete_time_text": _date_text(row.get("updated_at")) if row.get("status") == "completed" else "",
                 "order_images": images if isinstance(images, list) else [],
+                "remark": row.get("remark") or "",
                 "created_by_user_id": row.get("created_by_user_id"),
                 "created_by_name": row.get("created_by_name") or row.get("created_by_username") or "",
             })
         return cards, int(total_rows[0].get("total") or 0) if total_rows else 0
+
+    def correct_workflow_order_product(self, order_id: int, *, goods_name: str, color: str) -> dict:
+        goods_name = str(goods_name or "").strip()
+        color = str(color or "").strip()
+        if not goods_name:
+            return {"code": 400, "msg": "商品名称不能为空"}
+
+        now = _now()
+        operator_user_id = self._operator_user_id()
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                SELECT goods_name_snapshot, color_snapshot, remark
+                FROM workflow_order
+                WHERE id=%s AND deleted_at IS NULL
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (int(order_id),),
+            )
+            current = cursor.fetchone()
+            if not current:
+                return {"code": 404, "msg": "工作流订单不存在"}
+
+            old_goods_name = str(current.get("goods_name_snapshot") or "")
+            old_color = str(current.get("color_snapshot") or "")
+            if old_goods_name != goods_name or old_color != color:
+                cursor.execute(
+                    """
+                    UPDATE workflow_order
+                    SET goods_name_snapshot=%s, color_snapshot=%s, updated_at=%s
+                    WHERE id=%s AND deleted_at IS NULL
+                    """,
+                    (goods_name, color, now, int(order_id)),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO workflow_order_log
+                        (workflow_order_id, action, operator_user_id, note, created_at)
+                    VALUES (%s, 'product_correction', %s, %s, %s)
+                    """,
+                    (
+                        int(order_id),
+                        operator_user_id,
+                        f"商品校准：{old_goods_name} {old_color} -> {goods_name} {color}".strip(),
+                        now,
+                    ),
+                )
+
+        return {
+            "code": 0,
+            "data": {
+                "id": int(order_id),
+                "goods_name": goods_name,
+                "color": color,
+                "remark": current.get("remark") or "",
+            },
+        }
 
     def save_workflow_order(
         self,

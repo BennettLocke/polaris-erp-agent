@@ -316,6 +316,21 @@ class FakeDB:
         self.calls.append(("workflow_orders", kwargs))
         return ([{"id": 456, "customer_name": "齐唯茶业"}], 1)
 
+    def correct_workflow_order_product(self, order_id: int, *, goods_name: str, color: str) -> dict:
+        self.calls.append((
+            "correct_workflow_order_product",
+            {"order_id": order_id, "goods_name": goods_name, "color": color},
+        ))
+        return {
+            "code": 0,
+            "data": {
+                "id": order_id,
+                "goods_name": goods_name,
+                "color": color,
+                "remark": "丝印",
+            },
+        }
+
     def dashboard_summary(self) -> dict:
         self.calls.append(("dashboard_summary", {}))
         return {"today_sales_count": 2, "today_sales_amount": "18.00", "pending_workflow_count": 3}
@@ -906,6 +921,19 @@ class BusinessServiceTests(unittest.TestCase):
         self.assertEqual(db.calls[-1], (
             "link_workflow_sales_order",
             {"workflow_order_id": 456, "sales_order_id": 123, "operator_user_id": 5},
+        ))
+
+    def test_workflow_service_corrects_product_without_replacing_remark(self):
+        db = FakeDB()
+        service = WorkflowService(db=db)
+
+        result = service.correct_product(456, goods_name="【墨香】二三两", color="黄色")
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["data"]["remark"], "丝印")
+        self.assertEqual(db.calls[-1], (
+            "correct_workflow_order_product",
+            {"order_id": 456, "goods_name": "【墨香】二三两", "color": "黄色"},
         ))
 
     def test_inventory_service_transfer_delegates_operator(self):

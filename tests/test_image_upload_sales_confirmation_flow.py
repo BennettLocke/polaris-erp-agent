@@ -165,6 +165,18 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
         workflow = object.__new__(OrderFlowWorkflow)
         captured = {}
 
+        class CorrectionCaller:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, tool_name, **kwargs):
+                self.calls.append((tool_name, kwargs))
+                if tool_name == "workflow_order_correct_product":
+                    return {"code": 0, "data": {"id": kwargs["order_id"], "remark": "丝印"}}
+                raise AssertionError(f"unexpected tool call: {tool_name}")
+
+        workflow.caller = CorrectionCaller()
+
         def capture_continue(**kwargs):
             captured.update(kwargs)
             return {"status": "captured"}
@@ -190,6 +202,14 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
         self.assertEqual(captured["products"][0]["color"], "黄色")
         self.assertEqual(captured["products"][0]["qty"], 6)
         self.assertEqual(captured["workflow_order_ids"], [456])
+        self.assertEqual(workflow.caller.calls, [(
+            "workflow_order_correct_product",
+            {
+                "order_id": 456,
+                "goods_name": "墨香 二三两",
+                "color": "黄色",
+            },
+        )])
 
     def test_order_params_preserve_confirmed_image_product_id(self):
         item = _image_item(goods="【艺】三两", color="绿色", qty=6)

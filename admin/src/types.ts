@@ -307,6 +307,7 @@ export type ProcessOrderListResult = ListResult<ProcessOrderRaw> & {
 };
 
 export type ProcessOrderPayload = {
+  id?: number;
   order_id?: number;
   customer_name: string;
   customer_phone?: string;

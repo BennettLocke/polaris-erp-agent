@@ -261,7 +261,7 @@ function formFromOrder(order: ProcessOrder | null): OrderFormState {
 
 function payloadFromForm(form: OrderFormState, order?: ProcessOrder | null): ProcessOrderPayload {
   return {
-    order_id: order?.id || undefined,
+    id: order?.id || undefined,
     customer_name: form.customerName.trim(),
     customer_phone: form.customerPhone.trim(),
     goods_name: form.goodsName.trim(),

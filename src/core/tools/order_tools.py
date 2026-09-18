@@ -111,6 +111,21 @@ def workflow_order_status_update(order_id: int, field: str, value: int) -> dict:
         return {"error": str(e)}
 
 
+@tool("workflow_order_correct_product", "校准工作流订单商品")
+def workflow_order_correct_product(order_id: int, goods_name: str, color: str = "") -> dict:
+    try:
+        result = _workflow_service().correct_product(
+            order_id=order_id,
+            goods_name=goods_name,
+            color=color,
+        )
+        logger.info(f"native workflow product corrected: id={order_id}, goods_name={goods_name}, color={color}")
+        return result
+    except Exception as e:
+        logger.error(f"native workflow product correction failed: {e}")
+        return {"error": str(e)}
+
+
 @tool("sales_print_task", "创建销售单打印任务")
 def sales_print_task(sales_id: int) -> dict:
     try:
