@@ -444,6 +444,23 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertIn("return workflowRowSections;", confirm_sections)
         self.assertIn('pendingAction === "confirm_image_workflow_orders"', confirm_sections)
 
+    def test_workbench_failed_image_correction_shows_global_customer_and_each_preview(self):
+        workbench_source = (
+            ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"
+        ).read_text(encoding="utf-8")
+        confirm_sections = extract_function_section(workbench_source, "buildConfirmSections")
+        confirm_dialog = extract_function_section(workbench_source, "AgentConfirmDialog")
+        section_editor = extract_function_section(workbench_source, "ConfirmSectionEditor")
+
+        self.assertIn('pendingAction === "confirm_image_workflow_correction"', confirm_sections)
+        self.assertIn('"设计稿识别校准"', workbench_source)
+        self.assertIn('firstConfirmField(state, ["customer_name", "customer"], "客户")', confirm_sections)
+        self.assertIn("previewUrl", workbench_source)
+        self.assertIn("recognitionError", workbench_source)
+        self.assertIn("section.previewUrl", section_editor)
+        self.assertIn("error={error}", workbench_source)
+        self.assertIn("workbench-confirm-error", confirm_dialog)
+
     def test_workbench_image_sales_confirm_reads_nested_order_params_customer(self):
         workbench_source = (
             ROOT / "admin" / "src" / "components" / "business" / "workbench" / "workbench-page.tsx"

@@ -795,6 +795,16 @@
   max-height: min(58vh, 460px);
 }
 
+.workbench-confirm-error {
+  border: 1px solid var(--sj-danger-border);
+  border-radius: 6px;
+  background: var(--sj-danger-soft);
+  color: var(--sj-danger-foreground);
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
 .confirm-section-list {
   display: grid;
   gap: 12px;
@@ -804,18 +814,45 @@
   display: grid;
   gap: 10px;
   border: 1px solid var(--sj-border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--sj-background);
   padding: 12px;
 }
 
-.confirm-section-title {
+.confirm-section-summary {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: 12px;
   border-bottom: 1px solid var(--sj-border);
   padding-bottom: 8px;
+}
+
+.confirm-section-summary.has-preview {
+  min-height: 88px;
+}
+
+.confirm-section-preview {
+  width: 76px;
+  height: 76px;
+  flex: 0 0 76px;
+  border: 1px solid var(--sj-border);
+  border-radius: 6px;
+  background: var(--sj-surface-subtle);
+  object-fit: contain;
+}
+
+.confirm-section-title {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.confirm-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .confirm-section-title strong {
@@ -828,7 +865,23 @@
   color: var(--sj-muted);
   font-size: 12px;
   line-height: 18px;
-  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.confirm-section-title .confirm-recognition-status {
+  flex: none;
+  color: var(--sj-muted);
+}
+
+.confirm-section-title .confirm-recognition-status.is-failed {
+  color: var(--sj-danger-foreground);
+}
+
+.confirm-recognition-error {
+  margin: 0;
+  color: var(--sj-danger-foreground);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .confirm-field-grid {
@@ -839,6 +892,18 @@
 
 .confirm-field-grid .sj-field {
   min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .confirm-field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .confirm-section-preview {
+    width: 64px;
+    height: 64px;
+    flex-basis: 64px;
+  }
 }
 
 .sj-dialog-content.workbench-result-dialog {

@@ -444,6 +444,47 @@ class ImageWorkflowParsingTest(unittest.TestCase):
         self.assertEqual(cleaned["parsed_list"][0]["customer"], "齐唯茶业")
         self.assertEqual(cleaned["parsed_list"][0]["goods_name"], "岩味3小盒")
 
+    def test_image_workflow_correction_rejects_any_unfinished_design(self):
+        with self.assertRaisesRegex(ValueError, "第 2 张.*design-2.png.*商品"):
+            _sanitize_pending_state(
+                "workflow",
+                {
+                    "pending_action": "confirm_image_workflow_correction",
+                    "customer_name": "齐唯茶业",
+                    "parsed_list": [
+                        {"goods_name": "喜悦半斤", "color": "红色", "quantity": 2, "source_filename": "design-1.png"},
+                        {"goods_name": "", "color": "黄色", "quantity": 1, "source_filename": "design-2.png"},
+                    ],
+                },
+                None,
+            )
+
+    def test_image_workflow_correction_applies_global_customer_to_every_design(self):
+        cleaned = _sanitize_pending_state(
+            "workflow",
+            {
+                "pending_action": "confirm_image_workflow_correction",
+                "customer_name": "新客户",
+                "parsed_list": [
+                    {"goods_name": "喜悦半斤", "color": "红色", "quantity": 2},
+                    {"goods_name": "岩味三两", "color": "蓝色", "quantity": 3},
+                ],
+            },
+            {
+                "pending_action": "confirm_image_workflow_correction",
+                "customer_name": "旧客户",
+                "parsed_list": [
+                    {"goods_name": "喜悦半斤", "source_image_path": "one.png"},
+                    {"goods_name": "岩味三两", "source_image_path": "two.png"},
+                ],
+            },
+        )
+
+        self.assertEqual([row["customer"] for row in cleaned["parsed_list"]], ["新客户", "新客户"])
+        self.assertEqual(cleaned["order_params"]["customer"], "新客户")
+        self.assertEqual(len(cleaned["order_params"]["products"]), 2)
+        self.assertEqual(cleaned["parsed_list"][1]["source_image_path"], "two.png")
+
     def test_workflow_create_many_skips_rows_without_goods_name(self):
         workflow = WorkflowOrderWorkflow()
         fake_caller = FakeWorkflowCaller()

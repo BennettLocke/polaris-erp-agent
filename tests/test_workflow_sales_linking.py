@@ -30,8 +30,10 @@ class FakeOrderCaller:
 class FakeWorkflowCaller:
     def __init__(self):
         self.next_id = 456
+        self.calls = []
 
     def call(self, tool_name, **kwargs):
+        self.calls.append((tool_name, kwargs))
         if tool_name != "workflow_order_save":
             raise AssertionError(f"unexpected tool call: {tool_name}")
         result = {"code": 0, "data": {"id": self.next_id}}
@@ -410,6 +412,164 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
         self.assertEqual(result["status"], "ask")
         self.assertEqual(captured_params[0]["workflow_order_id"], 456)
         self.assertEqual(captured_params[0]["customer"], "测试客户")
+
+    def test_image_workflow_correction_cancel_creates_nothing(self):
+        workflow = WorkflowOrderWorkflow()
+        workflow.caller = FakeWorkflowCaller()
+
+        result = workflow.resume(
+            "取消",
+            {
+                "pending_action": "confirm_image_workflow_correction",
+                "customer_name": "测试客户",
+                "parsed_list": [
+                    {"customer": "测试客户", "goods_name": "测试礼盒", "quantity": 2}
+                ],
+            },
+        )
+
+        self.assertEqual(workflow.caller.calls, [])
+        self.assertIn("没有写入系统", result["reply"])
+
+    def test_image_workflow_correction_cannot_be_confirmed_from_chat_while_a_row_is_incomplete(self):
+        workflow = WorkflowOrderWorkflow()
+        workflow.caller = FakeWorkflowCaller()
+
+        result = workflow.resume(
+            "确认",
+            {
+                "pending_action": "confirm_image_workflow_correction",
+                "customer_name": "测试客户",
+                "parsed_list": [
+                    {"customer": "测试客户", "goods_name": "礼盒A", "color": "红色", "quantity": 2},
+                    {
+                        "customer": "测试客户",
+                        "goods_name": "",
+                        "color": "黄色",
+                        "quantity": 1,
+                        "source_filename": "design-2.png",
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(result["status"], "ask")
+        self.assertIn("第 2 张", result["question"])
+        self.assertIn("商品", result["question"])
+        self.assertEqual(workflow.caller.calls, [])
+
+    def test_image_workflow_correction_links_every_created_workflow_to_sales(self):
+        captured_params = []
+
+        class FakeOrderFlow:
+            def execute(self, user_input, params=None):
+                captured_params.append(dict(params or {}))
+                return {"status": "ask", "question": "confirm", "state": {}}
+
+        workflow = WorkflowOrderWorkflow()
+        workflow.caller = FakeWorkflowCaller()
+        state = {
+            "pending_action": "confirm_image_workflow_correction",
+            "customer_name": "测试客户",
+            "parsed_list": [
+                {"customer": "测试客户", "goods_name": "礼盒A", "quantity": 2, "color": "红色"},
+                {"customer": "测试客户", "goods_name": "礼盒B", "quantity": 3, "color": "蓝色"},
+            ],
+            "order_params": {
+                "customer": "测试客户",
+                "products": [
+                    {"name": "礼盒A", "qty": 2, "color": "红色"},
+                    {"name": "礼盒B", "qty": 3, "color": "蓝色"},
+                ],
+            },
+        }
+
+        with patch("src.skills.order_flow.workflow.OrderFlowWorkflow", FakeOrderFlow):
+            result = workflow.resume("确认", state)
+
+        self.assertEqual(result["status"], "ask")
+        self.assertEqual(captured_params[0]["workflow_order_id"], 456)
+        self.assertEqual(captured_params[0]["workflow_order_ids"], [456, 457])
+
+    def test_image_workflow_correction_uploads_failed_design_before_creating(self):
+        class CorrectionCaller(FakeWorkflowCaller):
+            def call(self, tool_name, **kwargs):
+                self.calls.append((tool_name, kwargs))
+                if tool_name == "script_call":
+                    return {"url": "https://example.test/corrected.png"}
+                if tool_name == "workflow_order_save":
+                    result = {"code": 0, "data": {"id": self.next_id}}
+                    self.next_id += 1
+                    return result
+                raise AssertionError(f"unexpected tool call: {tool_name}")
+
+        class FakeOrderFlow:
+            def execute(self, user_input, params=None):
+                return {"status": "ask", "question": "confirm", "state": {}}
+
+        workflow = WorkflowOrderWorkflow()
+        workflow.caller = CorrectionCaller()
+        state = {
+            "pending_action": "confirm_image_workflow_correction",
+            "customer_name": "测试客户",
+            "parsed_list": [{
+                "customer": "测试客户",
+                "goods_name": "礼盒A",
+                "color": "红色",
+                "quantity": 2,
+                "source_filename": "design-1.png",
+                "source_image_path": "C:/temp/design-1.png",
+                "order_images": [],
+            }],
+            "order_params": {
+                "customer": "测试客户",
+                "products": [{"name": "礼盒A", "qty": 2, "color": "红色"}],
+            },
+        }
+
+        with patch("src.skills.order_flow.workflow.OrderFlowWorkflow", FakeOrderFlow):
+            workflow.resume("确认", state)
+
+        self.assertEqual(workflow.caller.calls[0][0], "script_call")
+        self.assertEqual(workflow.caller.calls[1][0], "workflow_order_save")
+        self.assertEqual(
+            workflow.caller.calls[1][1]["order_images"],
+            ["https://example.test/corrected.png"],
+        )
+
+    def test_image_workflow_correction_stops_before_database_when_image_upload_fails(self):
+        class FailedUploadCaller(FakeWorkflowCaller):
+            def call(self, tool_name, **kwargs):
+                self.calls.append((tool_name, kwargs))
+                if tool_name == "script_call":
+                    return {"error": "upload failed"}
+                raise AssertionError(f"unexpected tool call: {tool_name}")
+
+        workflow = WorkflowOrderWorkflow()
+        workflow.caller = FailedUploadCaller()
+        state = {
+            "pending_action": "confirm_image_workflow_correction",
+            "customer_name": "测试客户",
+            "parsed_list": [{
+                "customer": "测试客户",
+                "goods_name": "礼盒A",
+                "color": "红色",
+                "quantity": 2,
+                "source_filename": "design-1.png",
+                "source_image_path": "C:/temp/design-1.png",
+                "order_images": [],
+            }],
+            "order_params": {
+                "customer": "测试客户",
+                "products": [{"name": "礼盒A", "qty": 2, "color": "红色"}],
+            },
+        }
+
+        result = workflow.resume("确认", state)
+
+        self.assertEqual(result["status"], "ask")
+        self.assertIn("图片上传失败", result["question"])
+        self.assertEqual([name for name, _ in workflow.caller.calls], ["script_call"])
 
     def test_order_flow_confirm_state_includes_warehouse_name_for_ui(self):
         source = (ROOT / "src" / "skills" / "order_flow" / "workflow.py").read_text(encoding="utf-8")

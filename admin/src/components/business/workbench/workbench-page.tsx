@@ -134,6 +134,10 @@ type ConfirmSection = {
   title: string;
   description?: string;
   fields: ConfirmField[];
+  previewUrl?: string;
+  sourceFilename?: string;
+  recognitionStatus?: "success" | "failed" | "corrected";
+  recognitionError?: string;
 };
 
 type ConfirmFieldOptions = Pick<ConfirmField, "control" | "inputMode" | "readOnly">;
@@ -267,6 +271,7 @@ function pendingTitle(session?: AgentSessionSnapshot | null) {
   const action = String(session?.pending_action || "");
   const intent = String(session?.pending_intent || "");
   if (intent.includes("bag_upload") || action.includes("bag_")) return "泡袋上传确认";
+  if (action.includes("confirm_image_workflow_correction")) return "设计稿识别校准";
   if (action.includes("confirm_image_workflow_orders")) return "OCR 识别结果";
   if (action.includes("confirm_image_sales")) return "是否继续开销售单";
   if (action.includes("confirm_product_name")) return "商品匹配确认";
@@ -535,6 +540,34 @@ function buildConfirmSections(session: AgentSessionSnapshot | null): ConfirmSect
   }
 
   if (kind === "workflow") {
+    if (pendingAction === "confirm_image_workflow_correction") {
+      const customerSection = confirmSection("本批客户", "修改后会统一应用到本批全部设计稿。", [
+        firstConfirmField(state, ["customer_name", "customer"], "客户")
+      ]);
+      const correctionRows = Array.isArray(state.parsed_list) ? state.parsed_list : [];
+      const correctionSections = correctionRows.flatMap((row, index) => {
+        if (!isPlainRecord(row)) return [];
+        const prefix = `parsed_list.${index}`;
+        const fields = confirmFieldsForPrefix(state, prefix, [
+          { paths: ["goods_name", "product_name", "name"], label: "商品" },
+          { paths: ["color", "goods_color", "spec"], label: "颜色/规格" },
+          { paths: ["quantity", "order_quantity", "qty"], label: "数量", options: { inputMode: "decimal" as const } },
+          { paths: ["unit", "unit_name"], label: "单位", required: false },
+          { paths: ["remark", "note"], label: "备注", required: false }
+        ]);
+        return [{
+          title: `设计稿 ${index + 1}`,
+          description: String(row.source_filename || ""),
+          fields,
+          previewUrl: String(row.preview_url || ""),
+          sourceFilename: String(row.source_filename || ""),
+          recognitionStatus: String(row.recognition_status || "failed") as ConfirmSection["recognitionStatus"],
+          recognitionError: String(row.recognition_error || "")
+        }];
+      });
+      return [customerSection, ...correctionSections].filter(Boolean) as ConfirmSection[];
+    }
+
     const workflowRowSections = arrayConfirmSections(state, ["parsed_list", "orders", "workflow_orders"], "工作流订单", [
       { paths: ["customer_name", "customer"], label: "客户" },
       { paths: ["goods_name", "product_name", "name"], label: "商品" },
@@ -1220,6 +1253,7 @@ export function WorkbenchPage() {
   }
 
   async function confirmPending(nextState: Record<string, unknown>) {
+    setError("");
     setConfirming(true);
     try {
       const data = await api.updateSessionPending(sessionId, nextState);
@@ -1340,6 +1374,7 @@ export function WorkbenchPage() {
         open={confirmOpen && !bagUploadOpen}
         session={sessionSnapshot}
         confirming={confirming || isSending}
+        error={error}
         onOpenChange={setConfirmOpen}
         onConfirm={(state) => void confirmPending(state)}
         onCancel={() => void cancelPending()}
@@ -2215,6 +2250,7 @@ function AgentConfirmDialog({
   open,
   session,
   confirming,
+  error,
   onOpenChange,
   onConfirm,
   onCancel
@@ -2222,6 +2258,7 @@ function AgentConfirmDialog({
   open: boolean;
   session: AgentSessionSnapshot | null;
   confirming: boolean;
+  error: string;
   onOpenChange: (open: boolean) => void;
   onConfirm: (state: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -2280,8 +2317,13 @@ function AgentConfirmDialog({
       <DialogContent className="workbench-confirm-dialog">
         <DialogHeader>
           <DialogTitle>{pendingTitle(session)}</DialogTitle>
-          <DialogDescription>结构化确认：可以先改字段，再点确认执行。关闭弹窗不会取消当前 pending。</DialogDescription>
+          <DialogDescription>
+            {String(session?.pending_action || "") === "confirm_image_workflow_correction"
+              ? "本批尚未创建订单。请逐张核对，全部补全后统一创建；取消则本批不写入系统。"
+              : "结构化确认：可以先改字段，再点确认执行。关闭弹窗不会取消当前 pending。"}
+          </DialogDescription>
         </DialogHeader>
+        {error ? <div className="workbench-confirm-error" role="alert">{error}</div> : null}
         {fields.length ? (
           <ScrollArea className="workbench-confirm-scroll">
             <div className="confirm-section-list">
@@ -2328,9 +2370,26 @@ function ConfirmSectionEditor({
 }) {
   return (
     <section className="confirm-section-card">
-      <div className="confirm-section-title">
-        <strong>{section.title}</strong>
-        {section.description ? <span>{section.description}</span> : null}
+      <div className={section.previewUrl ? "confirm-section-summary has-preview" : "confirm-section-summary"}>
+        {section.previewUrl ? (
+          <img
+            className="confirm-section-preview"
+            src={section.previewUrl}
+            alt={section.sourceFilename || section.title}
+          />
+        ) : null}
+        <div className="confirm-section-title">
+          <div className="confirm-section-title-row">
+            <strong>{section.title}</strong>
+            {section.recognitionStatus ? (
+              <span className={`confirm-recognition-status is-${section.recognitionStatus}`}>
+                {section.recognitionStatus === "success" ? "已识别" : section.recognitionStatus === "corrected" ? "已校准" : "需校准"}
+              </span>
+            ) : null}
+          </div>
+          {section.description ? <span>{section.description}</span> : null}
+          {section.recognitionError ? <p className="confirm-recognition-error">{section.recognitionError}</p> : null}
+        </div>
       </div>
       <FieldGroup className="confirm-field-grid">
         {section.fields.map((field) => (

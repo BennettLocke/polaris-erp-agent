@@ -89,14 +89,28 @@ class ImageUploadBatchTest(unittest.TestCase):
         self.assertTrue(handle_flow.call_args.kwargs["allow_sales"])
 
     @patch("src.core.nodes.image_workflow.process_image_batch")
-    @patch.object(http_api, "_handle_image_auto_workflow_sales_flow", return_value="部分识别失败")
-    def test_incomplete_batch_keeps_workflows_but_disables_sales_confirmation(self, handle_flow, process_batch):
+    @patch.object(http_api, "_handle_image_auto_workflow_sales_flow", return_value="不应执行")
+    def test_incomplete_batch_waits_for_atomic_correction_before_creating_orders(self, handle_flow, process_batch):
         item = _recognized_item("喜悦半斤")
+        item["source_image_index"] = 0
+        failed_item = {
+            "parsed": {
+                "customer_name": "齐唯茶业",
+                "goods_name": "",
+                "color": "黄色",
+                "quantity": 3,
+                "unit": "套",
+                "craft": "烫金",
+            },
+            "error": "未识别到礼盒名称",
+            "source_image_index": 1,
+            "source_image_path": "two",
+        }
         process_batch.return_value = {
-            "items": [item, {"parsed": {}, "error": "未识别到礼盒名称"}],
+            "items": [item, failed_item],
             "files": [
                 {"image_path": "one", "status": "success", "error": "", "result": item},
-                {"image_path": "two", "status": "failed", "error": "未识别到礼盒名称", "result": {"error": "未识别到礼盒名称"}},
+                {"image_path": "two", "status": "failed", "error": "未识别到礼盒名称", "result": failed_item},
             ],
             "total_files": 2,
             "success_files": 1,
@@ -107,8 +121,20 @@ class ImageUploadBatchTest(unittest.TestCase):
         response = self._post(batch_id="batch-incomplete")
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(handle_flow.call_args.kwargs["allow_sales"])
-        self.assertEqual(response.get_json()["data"]["batch"]["failed_files"], 1)
+        data = response.get_json()["data"]
+        self.assertEqual(data["batch"]["failed_files"], 1)
+        handle_flow.assert_not_called()
+        self.assertTrue(data["session"]["has_pending"])
+        self.assertEqual(data["session"]["pending_action"], "confirm_image_workflow_correction")
+        state = data["session"]["state"]
+        self.assertEqual(state["customer_name"], "齐唯茶业")
+        self.assertEqual(len(state["parsed_list"]), 2)
+        self.assertEqual(state["parsed_list"][1]["source_filename"], "design-1.png")
+        self.assertEqual(state["parsed_list"][1]["recognition_status"], "failed")
+        self.assertEqual(state["parsed_list"][1]["recognition_error"], "未识别到礼盒名称")
+        self.assertEqual(state["parsed_list"][1]["color"], "黄色")
+        self.assertIn("第 2 张", data["response"])
+        self.assertIn("校准", data["response"])
 
     @patch("src.core.nodes.image_workflow.process_image_batch")
     @patch.object(http_api, "_handle_image_auto_workflow_sales_flow", return_value="批次处理完成")

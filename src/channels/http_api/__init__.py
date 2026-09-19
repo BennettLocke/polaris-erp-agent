@@ -635,6 +635,85 @@ def _sanitize_pending_state(intent: str | None, new_state: dict, old_state: dict
     """Keep edited confirmation forms from corrupting resolved ERP ids."""
     pending_action = new_state.get("pending_action") or (old_state or {}).get("pending_action")
 
+    if intent == "workflow" and pending_action == "confirm_image_workflow_correction":
+        from src.core.customer_name import normalize_customer_name
+
+        old_state = old_state or {}
+        customer = normalize_customer_name(
+            new_state.get("customer_name")
+            or new_state.get("customer")
+            or old_state.get("customer_name")
+            or old_state.get("customer")
+            or ""
+        )
+        if not customer:
+            raise ValueError("请先填写客户名称")
+
+        submitted_rows = new_state.get("parsed_list") or []
+        old_rows = old_state.get("parsed_list") or []
+        if not isinstance(submitted_rows, list) or not submitted_rows:
+            raise ValueError("没有可校准的设计稿，请重新上传")
+        if old_rows and len(submitted_rows) != len(old_rows):
+            raise ValueError("设计稿数量发生变化，请重新打开校准弹窗")
+
+        cleaned_rows = []
+        products = []
+        for index, row in enumerate(submitted_rows):
+            old_row = old_rows[index] if index < len(old_rows) and isinstance(old_rows[index], dict) else {}
+            row = row if isinstance(row, dict) else {}
+            cleaned = dict(old_row)
+            old_name = str(old_row.get("goods_name") or "").strip()
+            goods_name = str(row.get("goods_name") or row.get("product_name") or row.get("name") or "").strip()
+            color = str(row.get("color") or row.get("goods_color") or row.get("spec") or "").strip()
+            quantity = _pending_number(row.get("quantity", row.get("order_quantity", row.get("qty"))), 0)
+            filename = str(old_row.get("source_filename") or row.get("source_filename") or f"设计稿 {index + 1}").strip()
+            label = f"第 {index + 1} 张设计稿（{filename}）"
+            if not goods_name:
+                raise ValueError(f"{label}还没有填写商品")
+            if not color:
+                raise ValueError(f"{label}还没有填写颜色/规格")
+            if quantity <= 0:
+                raise ValueError(f"{label}的数量必须大于 0")
+
+            remark = str(row.get("remark") or row.get("note") or "").strip()
+            cleaned.update({
+                "customer": customer,
+                "customer_name": customer,
+                "goods_name": goods_name,
+                "color": color,
+                "quantity": quantity,
+                "unit": str(row.get("unit") or old_row.get("unit") or "套").strip() or "套",
+                "remark": remark,
+                "is_screen_print": any(keyword in remark for keyword in ("丝印", "印刷")),
+                "recognition_status": "corrected",
+                "recognition_error": str(old_row.get("recognition_error") or "").strip(),
+            })
+            if old_name and goods_name != old_name:
+                cleaned.pop("product_id", None)
+            cleaned_rows.append(cleaned)
+
+            product = {
+                "name": goods_name,
+                "qty": quantity,
+                "quantity": quantity,
+                "unit": cleaned["unit"],
+                "color": color,
+            }
+            if cleaned.get("product_id"):
+                product["product_id"] = cleaned["product_id"]
+            products.append(product)
+
+        new_state["customer_name"] = customer
+        new_state["customer"] = customer
+        new_state["parsed_list"] = cleaned_rows
+        new_state["order_params"] = {
+            "customer": customer,
+            "customer_name": customer,
+            "customers": [customer],
+            "products": products,
+        }
+        return new_state
+
     if intent == "workflow" and pending_action == "confirm_image_workflow_orders":
         from src.core.customer_name import normalize_customer_name
 
@@ -2083,6 +2162,75 @@ def _workflow_params_from_image_result(result: dict) -> list[dict]:
     return rows
 
 
+def _build_image_workflow_correction_state(result: dict) -> dict:
+    """Build an all-or-nothing correction form for an incomplete image batch."""
+    result_files = result.get("files") or []
+    files_by_index = {
+        index: row for index, row in enumerate(result_files) if isinstance(row, dict)
+    }
+    rows = []
+    customers = []
+
+    for index, item in enumerate(_image_items(result)):
+        parsed = item.get("parsed") or {}
+        payload = item.get("workflow_order_payload") or {}
+        source_index = int(item.get("source_image_index") or 0)
+        file_result = files_by_index.get(source_index, {})
+        customer = _pending_text(parsed.get("customer_name"), payload.get("customer"))
+        if customer and customer not in customers:
+            customers.append(customer)
+        status = "success" if payload.get("goods_name") and not item.get("error") else "failed"
+        error = _pending_text(
+            item.get("error"),
+            file_result.get("error") if status == "failed" else "",
+        )
+        filename = str(file_result.get("filename") or f"设计稿-{source_index + 1}").strip()
+        if sum(1 for row in rows if row.get("source_filename") == filename):
+            filename = f"{filename} · 设计稿 {index + 1}"
+        product_id = parsed.get("product_id") or (parsed.get("product_info") or {}).get("id")
+        row = {
+            "customer": customer,
+            "customer_name": customer,
+            "goods_name": _pending_text(parsed.get("goods_name"), payload.get("goods_name")),
+            "color": _pending_text(parsed.get("color"), payload.get("color")),
+            "quantity": max(1, _pending_number(parsed.get("quantity", payload.get("quantity")), 1)),
+            "unit": _pending_text(parsed.get("unit"), "套"),
+            "remark": _pending_text(parsed.get("craft"), payload.get("remark")),
+            "is_screen_print": bool(payload.get("is_screen_print")),
+            "order_images": list(payload.get("order_images") or []),
+            "source_filename": filename,
+            "preview_url": _pending_text(item.get("preview_url"), file_result.get("preview_url")),
+            "source_image_path": _pending_text(item.get("source_image_path"), file_result.get("image_path")),
+            "recognition_status": status,
+            "recognition_error": error,
+        }
+        if product_id:
+            row["product_id"] = product_id
+        rows.append(row)
+
+    return {
+        "pending_action": "confirm_image_workflow_correction",
+        "customer_name": customers[0] if len(customers) == 1 else "",
+        "customer_candidates": customers,
+        "parsed_list": rows,
+        "correction_required": True,
+    }
+
+
+def _image_correction_prompt(state: dict) -> str:
+    rows = state.get("parsed_list") or []
+    lines = ["本批设计稿尚未全部识别完整，暂未创建任何订单。"]
+    for index, row in enumerate(rows, 1):
+        if row.get("recognition_status") != "failed":
+            continue
+        filename = row.get("source_filename") or f"设计稿 {index}"
+        error = row.get("recognition_error") or "信息不完整"
+        lines.append(f"第 {index} 张（{filename}）：{error}")
+    lines.append("请在校准弹窗中核对客户，并补全失败设计稿的商品、颜色、数量和备注；全部确认后才会统一创建订单。")
+    lines.append("取消校准则本批工作流订单和销售单都不会创建。")
+    return "\n".join(lines)
+
+
 def _image_has_open_order_marker(result: dict) -> bool:
     return any((item.get("parsed") or {}).get("has_kaipiao") for item in _image_items(result))
 
@@ -2805,6 +2953,7 @@ def image_upload_batch():
             source_index = int(item.get("source_image_index") or 0)
             if 0 <= source_index < len(saved_paths):
                 item["preview_url"] = f"/api/images/file/{saved_paths[source_index].name}"
+                item.setdefault("source_image_path", str(saved_paths[source_index]))
 
         response_text = _format_image_result(result)
         failed_files = [row for row in result_files if row.get("status") == "failed"]
@@ -2817,12 +2966,17 @@ def image_upload_batch():
             response_text = f"{response_text}\n\n" + "\n".join(failure_lines)
 
         session.clear_pending()
-        response_text = _handle_image_auto_workflow_sales_flow(
-            result,
-            session,
-            response_text,
-            allow_sales=not bool(result.get("incomplete")),
-        )
+        if result.get("incomplete"):
+            correction_state = _build_image_workflow_correction_state(result)
+            session.save_pending("workflow", correction_state)
+            response_text = f"{response_text}\n\n{_image_correction_prompt(correction_state)}"
+        else:
+            response_text = _handle_image_auto_workflow_sales_flow(
+                result,
+                session,
+                response_text,
+                allow_sales=True,
+            )
         session.set_meta("last_extraction", {
             "user_input": f"批量上传 {len(files)} 张设计稿",
             "intent": "workflow",

@@ -44,28 +44,46 @@ class WorkflowOrderWorkflow(BaseWorkflow):
                 return self._reply("已取消创建工作流订单。")
             return self._create(state.get("parsed") or {})
 
-        if state.get("pending_action") == "confirm_image_workflow_orders":
+        if state.get("pending_action") in {"confirm_image_workflow_orders", "confirm_image_workflow_correction"}:
             if not self._is_confirmation(user_input):
+                if state.get("pending_action") == "confirm_image_workflow_correction":
+                    return self._reply("已取消本批设计稿校准，没有写入系统。")
                 return self._reply("已取消创建工作流订单，没有写入系统。")
-            create_result = self._create_many(state.get("parsed_list") or [])
             parsed_list = state.get("parsed_list") or []
+            if state.get("pending_action") == "confirm_image_workflow_correction":
+                correction_error = self._correction_validation_error(state, parsed_list)
+                if correction_error:
+                    return self._ask(correction_error, state)
+                parsed_list, image_error = self._prepare_corrected_image_rows(parsed_list)
+                if image_error:
+                    retry_state = dict(state)
+                    retry_state["parsed_list"] = parsed_list
+                    return self._ask(image_error, retry_state)
+            create_result = self._create_many(parsed_list)
             order_params = self._ensure_order_customer(state.get("order_params") or {}, parsed_list)
             created_ids = create_result.get("workflow_order_ids") or []
             if created_ids:
                 order_params = dict(order_params)
                 order_params.setdefault("workflow_order_id", created_ids[0])
+                order_params["workflow_order_ids"] = created_ids
             if order_params.get("products"):
                 from src.skills.order_flow.workflow import OrderFlowWorkflow
                 order_result = OrderFlowWorkflow().execute("图片识别结果确认开单", params=order_params)
                 if order_result.get("status") == "ask":
                     order_result["intent"] = "order"
                     order_result["question"] = create_result.get("reply", "") + "\n\n" + order_result["question"]
+                    order_state = dict(order_result.get("state") or {})
+                    if created_ids:
+                        order_state.setdefault("workflow_order_id", created_ids[0])
+                        order_state["workflow_order_ids"] = created_ids
+                    order_result["state"] = order_state
                     return order_result
                 return self._reply(create_result.get("reply", "") + "\n\n" + order_result.get("reply", "开单流程已处理。"))
             optional_order_params = self._ensure_order_customer(state.get("optional_order_params") or {}, parsed_list)
             if created_ids:
                 optional_order_params = dict(optional_order_params)
                 optional_order_params.setdefault("workflow_order_id", created_ids[0])
+                optional_order_params["workflow_order_ids"] = created_ids
             if optional_order_params.get("products"):
                 return {
                     "status": "ask",
@@ -117,6 +135,46 @@ class WorkflowOrderWorkflow(BaseWorkflow):
             )
 
         return self._confirm_create(merged)
+
+    def _correction_validation_error(self, state: dict, parsed_list: list[dict]) -> str:
+        customer = str(state.get("customer_name") or state.get("customer") or "").strip()
+        if not customer:
+            return "请先在校准弹窗填写客户名称；本批订单尚未创建。"
+        if not parsed_list:
+            return "没有可校准的设计稿，请重新上传。"
+        for index, row in enumerate(parsed_list, 1):
+            row = row if isinstance(row, dict) else {}
+            filename = str(row.get("source_filename") or f"设计稿 {index}").strip()
+            label = f"第 {index} 张设计稿（{filename}）"
+            if not str(row.get("goods_name") or "").strip():
+                return f"{label}还没有填写商品；本批订单尚未创建。"
+            if not str(row.get("color") or "").strip():
+                return f"{label}还没有填写颜色/规格；本批订单尚未创建。"
+            try:
+                quantity = int(float(row.get("quantity") or 0))
+            except (TypeError, ValueError):
+                quantity = 0
+            if quantity <= 0:
+                return f"{label}的数量必须大于 0；本批订单尚未创建。"
+        return ""
+
+    def _prepare_corrected_image_rows(self, parsed_list: list[dict]) -> tuple[list[dict], str]:
+        """Upload images that could not be attached before manual correction."""
+        from src.core.nodes.image_workflow import upload_to_oss
+
+        prepared = []
+        for index, source in enumerate(parsed_list or [], 1):
+            row = dict(source or {})
+            if not row.get("order_images") and row.get("source_image_path"):
+                image_url = upload_to_oss(str(row["source_image_path"]), self.caller)
+                if not image_url:
+                    filename = row.get("source_filename") or f"第 {index} 张设计稿"
+                    prepared.append(row)
+                    prepared.extend(dict(item or {}) for item in (parsed_list or [])[index:])
+                    return prepared, f"{filename} 的图片上传失败，本批订单尚未创建，请稍后重新确认。"
+                row["order_images"] = [image_url]
+            prepared.append(row)
+        return prepared, ""
 
     def _ensure_order_customer(self, order_params: dict, parsed_list: list[dict]) -> dict:
         params = dict(order_params or {})
