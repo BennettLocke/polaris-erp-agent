@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def extract_function_section(source: str, name: str) -> str:
     signature_index = source.index(f"function {name}(")
-    body_start = source.index("{", signature_index)
+    body_start = source.index(") {", signature_index) + 2
     depth = 0
     for index in range(body_start, len(source)):
         char = source[index]

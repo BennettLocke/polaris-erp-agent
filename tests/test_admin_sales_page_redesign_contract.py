@@ -24,7 +24,7 @@ class AdminSalesPageRedesignContractTest(unittest.TestCase):
 
     def test_sales_page_uses_sales_list_business_components(self):
         app_source = (ADMIN / "App.tsx").read_text(encoding="utf-8")
-        sales_page = app_source.split("function SalesPage()", 1)[1].split("function productImageUrl", 1)[0]
+        sales_page = app_source.split("function SalesPage(", 1)[1].split("function PlaceholderPage", 1)[0]
 
         self.assertIn("./components/business/sales-list", app_source)
         for component_name in [
@@ -85,7 +85,7 @@ class AdminSalesPageRedesignContractTest(unittest.TestCase):
 
     def test_sales_page_header_is_compact(self):
         app_source = (ADMIN / "App.tsx").read_text(encoding="utf-8")
-        sales_page = app_source.split("function SalesPage()", 1)[1].split("function productImageUrl", 1)[0]
+        sales_page = app_source.split("function SalesPage(", 1)[1].split("function PlaceholderPage", 1)[0]
         sales_header = sales_page.split('<CardContent className="sales-page-content">', 1)[0]
 
         self.assertIn("sales-page-header", sales_page)

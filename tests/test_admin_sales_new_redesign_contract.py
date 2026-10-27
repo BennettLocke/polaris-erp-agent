@@ -26,7 +26,7 @@ class AdminSalesNewRedesignContractTest(unittest.TestCase):
 
     def test_sales_new_page_uses_business_components(self):
         app_source = (ADMIN / "App.tsx").read_text(encoding="utf-8")
-        section = app_source.split("function SalesNewPage()", 1)[1].split("function SalesDetailDialog", 1)[0]
+        section = app_source.split("function SalesNewPage(", 1)[1].split("const defaultSalesFilters", 1)[0]
 
         self.assertIn("./components/business/sales-create", app_source)
         for component_name in [

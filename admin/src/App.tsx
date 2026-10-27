@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import {
@@ -34,6 +34,7 @@ import {
   SalesSummaryCard,
   type SalesFormLine
 } from "./components/business/sales-create";
+import { createSalesDraftSession, type SalesDraft, type SalesDraftSession } from "./components/business/sales-create/sales-draft-state";
 import {
   SalesDeleteDialog,
   SalesListEmpty,
@@ -329,25 +330,38 @@ type SalesStockShortage = {
   lines: SalesStockShortageLine[];
 } | null;
 
-function SalesNewPage() {
+function defaultSalesDraft(): SalesDraft {
+  return {
+    selectedCustomer: null, customerKeyword: "", productKeyword: "", lines: [],
+    defaultWarehouseId: 2, lineQty: 1, createTime: defaultDateTimeValue(),
+    payStatus: "paid", payType: "wechat"
+  };
+}
+
+function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: SalesDraftSession; active: boolean; onReviewSales: () => void }) {
   const queryClient = useQueryClient();
-  const [customerKeyword, setCustomerKeyword] = useState("");
+  const { draft, storageAvailable, submitting, needsSubmissionReview } = useSyncExternalStore(draftSession.subscribe, draftSession.getSnapshot);
+  const { customerKeyword, selectedCustomer, productKeyword, defaultWarehouseId, lines, lineQty, createTime, payStatus, payType } = draft;
+  const setCustomerKeyword = (value: string) => draftSession.setField("customerKeyword", value);
+  const setSelectedCustomer = (value: CustomerItem | null) => draftSession.setField("selectedCustomer", value);
+  const setProductKeyword = (value: string) => draftSession.setField("productKeyword", value);
+  const setDefaultWarehouseId = (value: number) => draftSession.setField("defaultWarehouseId", value);
+  const setLines = (value: React.SetStateAction<SalesFormLine[]>) => draftSession.setField("lines", value);
+  const setLineQty = (value: number) => draftSession.setField("lineQty", value);
+  const setCreateTime = (value: string) => draftSession.setField("createTime", value);
+  const setPayStatus = (value: SalesOrderPayload["pay_status"]) => draftSession.setField("payStatus", value);
+  const setPayType = (value: string) => draftSession.setField("payType", value);
   const [customerResults, setCustomerResults] = useState<CustomerItem[]>([]);
   const [customerSearched, setCustomerSearched] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<CustomerItem | null>(null);
   const [createCustomerOpen, setCreateCustomerOpen] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerContact, setNewCustomerContact] = useState("");
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
-  const [productKeyword, setProductKeyword] = useState("");
   const [productResults, setProductResults] = useState<SalesProduct[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [defaultWarehouseId, setDefaultWarehouseId] = useState(2);
-  const [lines, setLines] = useState<SalesFormLine[]>([]);
-  const [lineQty, setLineQty] = useState(1);
-  const [createTime, setCreateTime] = useState(defaultDateTimeValue);
-  const [payStatus, setPayStatus] = useState<SalesOrderPayload["pay_status"]>("paid");
-  const [payType, setPayType] = useState("wechat");
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const pendingAdditions = useRef(0);
+  const [addingProduct, setAddingProduct] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState("");
@@ -359,7 +373,7 @@ function SalesNewPage() {
   const totalQty = lines.reduce((sum, line) => sum + toNumber(line.buy_number), 0);
   const totalAmount = lines.reduce((sum, line) => sum + toNumber(line.buy_number) * toNumber(line.price), 0);
   const selectedCustomerName = customerDisplayName(selectedCustomer);
-  const canSubmit = Boolean(selectedCustomer?.id && lines.length && createTime);
+  const canSubmit = Boolean(selectedCustomer?.id && lines.length && createTime && !submitting && !addingProduct && !needsSubmissionReview);
   const disabledReason = !selectedCustomer?.id
     ? "请先选择客户"
     : !lines.length
@@ -369,27 +383,47 @@ function SalesNewPage() {
         : "";
 
   useEffect(() => {
+    const revision = draftSession.getRevision();
+    let cancelled = false;
     api.warehouses()
       .then((data) => {
+        if (cancelled) return;
         const list = data.list || [];
         setWarehouses(list);
         const defaultWarehouse = list.find((item) => Number(item.is_default_sales || 0) === 1) || list[0];
-        if (defaultWarehouse?.id) setDefaultWarehouseId(Number(defaultWarehouse.id));
+        if (defaultWarehouse?.id) draftSession.initialize({ defaultWarehouseId: Number(defaultWarehouse.id) }, revision);
       })
       .catch(() => undefined);
-  }, []);
+    return () => { cancelled = true; };
+  }, [draftSession]);
 
   // 默认选中"散客"
   useEffect(() => {
+    const revision = draftSession.getRevision();
+    let cancelled = false;
     api.quickCustomers("散客")
       .then((list) => {
+        if (cancelled) return;
         const defaultCustomer = (list || []).find((c) => c.name === "散客" || c.company_name === "散客");
-        if (defaultCustomer && !selectedCustomer) {
-          selectCustomer(defaultCustomer);
+        if (defaultCustomer) {
+          const monthly = Boolean(Number(defaultCustomer.is_monthly_customer || 0));
+          draftSession.initialize({
+            selectedCustomer: defaultCustomer, customerKeyword: customerDisplayName(defaultCustomer),
+            payStatus: monthly ? "monthly" : "paid", payType: monthly ? "monthly" : "wechat"
+          }, revision);
         }
       })
       .catch(() => undefined);
-  }, []);
+    return () => { cancelled = true; };
+  }, [draftSession]);
+
+  useEffect(() => {
+    if (active) return;
+    setCreateCustomerOpen(false);
+    setClearConfirmOpen(false);
+    setDetailOrder(null);
+    if (!draftSession.getSnapshot().submitting) setStockShortage(null);
+  }, [active, draftSession, submitting]);
 
   function selectCustomer(customer: CustomerItem) {
     setSelectedCustomer(customer);
@@ -407,6 +441,7 @@ function SalesNewPage() {
 
   async function searchCustomers() {
     const keyword = customerKeyword.trim();
+    const generation = draftSession.getGeneration();
     if (!keyword) {
       setCustomerResults([]);
       setCustomerSearched(false);
@@ -416,6 +451,7 @@ function SalesNewPage() {
     setError("");
     try {
       const list = await api.quickCustomers(keyword);
+      if (!draftSession.isCurrent(generation) || draftSession.getSnapshot().draft.customerKeyword.trim() !== keyword) return;
       const nextList = (list || []).slice(0, 12);
       setCustomerResults(nextList);
       setCustomerSearched(true);
@@ -428,6 +464,7 @@ function SalesNewPage() {
   }
 
   async function createCustomer() {
+    const generation = draftSession.getGeneration();
     const name = (newCustomerName || customerKeyword).trim();
     if (!name) {
       setError("请输入客户名称");
@@ -441,6 +478,7 @@ function SalesNewPage() {
         contacts_name: newCustomerContact.trim(),
         contacts_tel: newCustomerPhone.trim()
       });
+      if (!draftSession.isCurrent(generation)) return;
       selectCustomer(customer);
       setCreateCustomerOpen(false);
       setNewCustomerName("");
@@ -456,6 +494,7 @@ function SalesNewPage() {
 
   async function searchProducts() {
     const keyword = productKeyword.trim();
+    const generation = draftSession.getGeneration();
     if (!keyword) {
       setProductResults([]);
       return;
@@ -464,6 +503,7 @@ function SalesNewPage() {
     setError("");
     try {
       const data = await api.searchProductsForSales(keyword, 24);
+      if (!draftSession.isCurrent(generation) || draftSession.getSnapshot().draft.productKeyword.trim() !== keyword) return;
       setProductResults(data.list || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "商品搜索失败");
@@ -473,11 +513,15 @@ function SalesNewPage() {
   }
 
   async function addSalesLine(product: SalesProduct, variant: SalesProduct = product) {
+    if (draftSession.getSnapshot().submitting || draftSession.getSnapshot().needsSubmissionReview) return;
+    const generation = draftSession.getGeneration();
     const productId = Number(variant.id || variant.product_id || product.id || product.product_id || 0);
     if (!productId) {
       setError("没有取到商品编号，不能加入明细");
       return;
     }
+    pendingAdditions.current++;
+    setAddingProduct(true);
     setLoading(`line-${productId}`);
     setError("");
     try {
@@ -504,12 +548,14 @@ function SalesNewPage() {
           priceSpuId = Number(preview.sku?.spu_id || priceSpuId || 0);
           priceReferenceItemId = preview.price_reference_item_id || null;
         } catch {
+          if (!draftSession.isCurrent(generation)) return;
           const retail = await api.retailPrice(productId).catch(() => null);
           if (retail?.price !== null && retail?.price !== undefined && retail?.price !== "") {
             price = toNumber(retail.price, price);
           }
         }
       }
+      if (!draftSession.isCurrent(generation) || draftSession.getSnapshot().draft.selectedCustomer?.id !== selectedCustomer?.id) return;
       const warehouseId = defaultWarehouseId || Number(warehouses[0]?.id || 2);
       const nextLine: SalesFormLine = {
         product_id: productId,
@@ -568,6 +614,8 @@ function SalesNewPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "加入商品失败");
     } finally {
+      pendingAdditions.current--;
+      setAddingProduct(pendingAdditions.current > 0);
       setLoading("");
     }
   }
@@ -625,6 +673,14 @@ function SalesNewPage() {
   }
 
   async function ensureSalesStockBeforeSubmit(payload: SalesOrderPayload) {
+    const generation = draftSession.getGeneration();
+    const latestWarehouses = await api.warehouses();
+    if (!draftSession.isCurrent(generation)) return false;
+    const warehouseList = latestWarehouses.list || [];
+    setWarehouses(warehouseList);
+    const missingWarehouseLine = lines.find((line) => Number(line.is_stock_item ?? 1) !== 0
+      && !warehouseList.some((warehouse) => Number(warehouse.id) === Number(line.warehouse_id || payload.warehouse_id)));
+    if (missingWarehouseLine) throw new Error(`${missingWarehouseLine.title}的仓库已停用或不存在，请重新选择仓库`);
     const shortages: SalesStockShortageLine[] = [];
     for (const line of lines) {
       if (Number(line.is_stock_item ?? 1) === 0) continue;
@@ -636,6 +692,7 @@ function SalesNewPage() {
         page: 1,
         pageSize: 20
       });
+      if (!draftSession.isCurrent(generation)) return false;
       const row = (data.list || []).find((item) => (
         Number(item.product_id || item.sku_id || item.id || 0) === Number(line.product_id)
         && Number(item.warehouse_id || 0) === warehouseId
@@ -666,11 +723,12 @@ function SalesNewPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
     setLastResult(result);
     setNotice(`开单成功${result.sales_no ? `：${result.sales_no}` : ""}`);
-    setLines([]);
+    draftSession.reset({ ...draftSession.getSnapshot().draft, lines: [], productKeyword: "", lineQty: 1 });
     setProductResults([]);
   }
 
   async function submitSalesOrder() {
+    if (draftSession.getSnapshot().submitting || pendingAdditions.current || draftSession.getSnapshot().needsSubmissionReview) return;
     if (!selectedCustomer?.id) {
       setError("请先选择客户");
       return;
@@ -683,6 +741,7 @@ function SalesNewPage() {
       setError("请选择开单时间");
       return;
     }
+    draftSession.setSubmitting(true);
     setLoading("submit");
     setError("");
     setNotice("");
@@ -694,18 +753,22 @@ function SalesNewPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "开单失败");
     } finally {
+      draftSession.setSubmitting(false);
       setLoading("");
     }
   }
 
   async function purchaseShortageAndCreateOrder() {
-    if (!stockShortage) return;
+    if (!stockShortage || draftSession.getSnapshot().submitting) return;
+    const generation = draftSession.getGeneration();
     const current = stockShortage;
+    draftSession.setSubmitting(true);
     setLoading("stock-purchase-submit");
     setError("");
     setNotice("");
     try {
       for (const item of current.lines) {
+        if (!draftSession.isCurrent(generation)) return;
         await api.createInventoryPurchase({
           product_id: item.line.product_id,
           unit_id: item.line.unit_id || 1,
@@ -717,11 +780,13 @@ function SalesNewPage() {
           ].filter(Boolean).join("；")
         });
       }
+      if (!draftSession.isCurrent(generation)) return;
       await submitSalesOrderAfterStockReady(current.payload);
       setStockShortage(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "补货后开单失败");
     } finally {
+      draftSession.setSubmitting(false);
       setLoading("");
     }
   }
@@ -782,32 +847,33 @@ function SalesNewPage() {
   }
 
   function continueSameCustomer() {
-    setProductKeyword("");
+    if (draftSession.getSnapshot().submitting) return;
+    draftSession.reset({ ...draftSession.getSnapshot().draft, productKeyword: "", lines: [], lineQty: 1, createTime: defaultDateTimeValue() });
     setProductResults([]);
-    setLines([]);
-    setLineQty(1);
-    setCreateTime(defaultDateTimeValue());
     setLastResult(null);
     setNotice("");
     setError("");
   }
 
   function startNewCustomerOrder() {
-    clearForm();
+    requestClearForm();
+  }
+
+  function requestClearForm() {
+    if (draftSession.getSnapshot().submitting) return;
+    if (lines.length) setClearConfirmOpen(true);
+    else clearForm();
   }
 
   function clearForm() {
-    setSelectedCustomer(null);
-    setCustomerKeyword("");
+    if (draftSession.getSnapshot().submitting) return;
+    const defaultWarehouse = warehouses.find((item) => Number(item.is_default_sales || 0) === 1) || warehouses[0];
+    draftSession.reset({ ...defaultSalesDraft(), defaultWarehouseId: Number(defaultWarehouse?.id || 2) });
+    setClearConfirmOpen(false);
     setCustomerResults([]);
     setCustomerSearched(false);
-    setProductKeyword("");
     setProductResults([]);
-    setLines([]);
-    setLineQty(1);
-    setPayStatus("paid");
-    setPayType("wechat");
-    setCreateTime(defaultDateTimeValue());
+    setStockShortage(null);
     setLastResult(null);
     setNotice("");
     setError("");
@@ -827,13 +893,24 @@ function SalesNewPage() {
                   <CardTitle>开单</CardTitle>
                 </div>
               )}
-              actions={<Button variant="outline" size="sm" onClick={clearForm}>清空</Button>}
+              actions={<Button variant="outline" size="sm" disabled={submitting} onClick={requestClearForm}>清空</Button>}
             />
           </CardHeader>
           {notice ? <div className="form-success">{notice}</div> : null}
           {error ? <div className="form-error">{error}</div> : null}
+          {!storageAvailable ? <div className="form-error" role="status">当前浏览器无法暂存草稿，切换页面仍可保留，刷新后可能丢失。</div> : null}
+          {needsSubmissionReview ? (
+            <div className="form-error" role="status">
+              上次提交被中断，销售单可能已创建，请先核对再继续。
+              <div className="sales-draft-review-actions">
+                <Button variant="outline" size="sm" onClick={onReviewSales}>核对销售单</Button>
+                <Button variant="outline" size="sm" onClick={() => draftSession.acknowledgeSubmissionReview()}>已核对，继续编辑</Button>
+              </div>
+            </div>
+          ) : null}
 
           <CardContent className="sales-create-content">
+            <fieldset className="sales-create-fields" disabled={submitting || needsSubmissionReview}>
             <section className="sales-create-section">
               <div className="section-title">
                 <h3>基础信息</h3>
@@ -900,6 +977,7 @@ function SalesNewPage() {
                 onRemoveLine={(index) => setLines((prev) => prev.filter((_, lineIndex) => lineIndex !== index))}
               />
             </section>
+            </fieldset>
           </CardContent>
         </Card>
       </div>
@@ -931,7 +1009,7 @@ function SalesNewPage() {
       </aside>
 
       <CreateCustomerDialog
-        open={createCustomerOpen}
+        open={active && createCustomerOpen}
         name={newCustomerName}
         contact={newCustomerContact}
         phone={newCustomerPhone}
@@ -943,7 +1021,7 @@ function SalesNewPage() {
         onSubmit={() => void createCustomer()}
       />
       <SalesOrderDetailSheet
-        order={detailOrder}
+        order={active ? detailOrder : null}
         busy={
           loading.startsWith("delete-")
           || Boolean(printFeedback.busySalesId && printFeedback.busySalesId === Number(detailOrder?.id || detailOrder?.sales_id || 0))
@@ -952,7 +1030,7 @@ function SalesNewPage() {
         onPrint={(id) => void printSalesById(id)}
         onDelete={(order) => void deleteDetailSales(order)}
       />
-      <AlertDialog open={Boolean(stockShortage)} onOpenChange={(open) => {
+      <AlertDialog open={active && Boolean(stockShortage)} onOpenChange={(open) => {
         if (!open && loading !== "stock-purchase-submit") setStockShortage(null);
       }}>
         <AlertDialogContent>
@@ -992,7 +1070,19 @@ function SalesNewPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <PrintFeedbackToast feedback={printFeedback.feedback} onClose={printFeedback.closeFeedback} />
+      <AlertDialog open={active && clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>清空当前开单？</AlertDialogTitle>
+            <AlertDialogDescription>已填写的客户和商品明细将被清除，清空后无法恢复。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>保留草稿</AlertDialogCancel>
+            <AlertDialogAction onClick={clearForm}>确认清空</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {active ? <PrintFeedbackToast feedback={printFeedback.feedback} onClose={printFeedback.closeFeedback} /> : null}
     </section>
   );
 }
@@ -1026,7 +1116,7 @@ function salesDateRange(dateFilter: SalesListFilters["dateFilter"]) {
   return {};
 }
 
-function SalesPage() {
+function SalesPage({ onCreate }: { onCreate: () => void }) {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<SalesListFilters>(defaultSalesFilters);
   const [page, setPage] = useState(1);
@@ -1240,7 +1330,7 @@ function SalesPage() {
           actions={(
             <div className="sales-page-header-actions">
               <span className="sales-page-count">第 {page} / {pageCount} 页 · 共 {total} 单</span>
-              <Button type="button" size="sm" onClick={() => window.location.assign("/admin/sales-new")}>
+              <Button type="button" size="sm" onClick={onCreate}>
                 新建开单
               </Button>
             </div>
@@ -1352,6 +1442,9 @@ function PlaceholderPage({ route }: { route: RouteKey }) {
 
 function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const [route, setRoute] = useState<RouteKey>(routeFromLocation);
+  const [salesDraftSession] = useState(() => createSalesDraftSession(Number(user.native_user_id || user.id), defaultSalesDraft));
+  const [salesVisited, setSalesVisited] = useState(() => routeFromLocation() === "sales-new");
+  const { submitting } = useSyncExternalStore(salesDraftSession.subscribe, salesDraftSession.getSnapshot);
   const allowedNavGroups = useMemo(() => navGroups
     .map((group) => ({
       ...group,
@@ -1379,12 +1472,37 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
 
   const activePage = useMemo(() => pageMap[route], [route]);
 
+  useEffect(() => {
+    const onPopState = () => {
+      const next = routeFromLocation();
+      if (next === "sales-new") setSalesVisited(true);
+      setRoute(next);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (!submitting) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [submitting]);
+
   function navigate(next: RouteKey) {
+    if (next === "sales-new") {
+      if (!salesVisited) salesDraftSession.initialize({ createTime: defaultDateTimeValue() }, salesDraftSession.getRevision());
+      setSalesVisited(true);
+    }
     setRoute(next);
     window.history.pushState({}, "", next === "dashboard" ? "/admin" : `/admin/${next}`);
   }
 
   async function logout() {
+    salesDraftSession.endSession();
     await api.logout().catch(() => undefined);
     onLogout();
     window.history.replaceState({}, "", "/admin/login");
@@ -1397,6 +1515,11 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
   return (
     <AppShell activeRoute={route} navGroups={allowedNavGroups} onNavigate={navigate} user={user}>
       <PageHeader title={activePage.title} onLogout={logout} />
+      {(salesVisited || route === "sales-new") ? (
+        <div hidden={route !== "sales-new"}>
+          <SalesNewPage draftSession={salesDraftSession} active={route === "sales-new"} onReviewSales={() => navigate("sales")} />
+        </div>
+      ) : null}
       {route === "dashboard" ? (
         <WorkbenchPage />
       ) : route === "settings" || route === "media" || route === "miniapp-images" ? (
@@ -1404,9 +1527,9 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
       ) : route === "customers" ? (
         <CustomersPage currentUser={user} />
       ) : route === "sales-new" ? (
-        <SalesNewPage />
+        null
       ) : route === "sales" ? (
-        <SalesPage />
+        <SalesPage onCreate={() => navigate("sales-new")} />
       ) : route === "data" ? (
         <DataPage />
       ) : route === "products" ? (
@@ -1460,7 +1583,7 @@ function AppContent() {
     return <LoginView onLogin={handleLogin} />;
   }
 
-  return <AdminArea user={user} onLogout={() => setUser(null)} />;
+  return <AdminArea key={user.native_user_id || user.id} user={user} onLogout={() => setUser(null)} />;
 }
 
 export default function App() {

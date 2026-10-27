@@ -39,7 +39,7 @@ class AdminSalesActionsContractTest(unittest.TestCase):
 
     def test_sales_page_uses_shadcn_component_layer(self):
         app_source = (ADMIN / "App.tsx").read_text(encoding="utf-8")
-        sales_page = app_source.split("function SalesPage()", 1)[1].split("function productImageUrl", 1)[0]
+        sales_page = app_source.split("function SalesPage(", 1)[1].split("function PlaceholderPage", 1)[0]
         sales_components = "\n".join(
             (SALES_LIST / filename).read_text(encoding="utf-8")
             for filename in [
