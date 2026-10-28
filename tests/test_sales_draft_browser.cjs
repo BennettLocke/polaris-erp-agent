@@ -48,7 +48,7 @@ async function fixture({ seed = true, blocked = false } = {}) {
       data = { price: 22 };
     } else if (url.pathname === "/api/inventory/balances") {
       if (state.inventoryGate) await state.inventoryGate;
-      data = { list: [{ product_id: Number(url.searchParams.get("sku_id")), warehouse_id: Number(url.searchParams.get("warehouse_id")), quantity: state.available }], total: 1 };
+      data = { list: [{ product_id: Number(url.searchParams.get("sku_id")), warehouse_id: Number(url.searchParams.get("warehouse_id")), quantity: state.available, unit_name: "套" }], total: 1 };
     } else if (url.pathname === "/api/sales/add") {
       state.salesRequests++;
       if (state.saleGate) await state.saleGate;
@@ -253,7 +253,7 @@ test("an interrupted submission restores a locked draft until the user has check
       sessionStorage.setItem(key, JSON.stringify({ ...value, submissionPending: true }));
     }, key);
     await f.page.reload();
-    await f.page.getByText("上次提交被中断，销售单可能已创建，请先核对再继续。").waitFor();
+    await f.page.getByText(/上次提交被中断，销售单可能已创建/).waitFor();
     assert.equal(await f.page.getByRole("button", { name: "提交开单", exact: true }).isDisabled(), true);
     assert.equal(await lineTable(f.page).first().getByRole("spinbutton").first().isDisabled(), true);
     await f.page.getByRole("button", { name: "核对销售单", exact: true }).click();

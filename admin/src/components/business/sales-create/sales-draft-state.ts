@@ -148,6 +148,12 @@ export function createSalesDraftSession(
       persist();
       emit();
     },
+    requireSubmissionReview() {
+      if (closed) return;
+      snapshot = { ...snapshot, needsSubmissionReview: true };
+      persist();
+      emit();
+    },
     endSession() {
       revision++;
       generation++;

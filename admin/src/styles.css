@@ -9779,3 +9779,59 @@ textarea,
   .image-correction-dialog .sj-dialog-footer { flex-wrap: wrap; }
   .image-correction-dialog .sj-dialog-footer button { white-space: normal; }
 }
+
+.sj-dialog-content.sales-purchase-result-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: min(640px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.sales-purchase-result-dialog > .sj-dialog-header,
+.sales-purchase-result-dialog > .sj-dialog-footer { flex-shrink: 0; }
+
+.sales-purchase-result-dialog .sales-purchase-result-scroll { min-height: 0; }
+.sales-purchase-result-dialog .sj-scroll-area-viewport { max-height: min(58dvh, 520px); }
+.sales-purchase-result-dialog .sales-purchase-result-body { display: grid; gap: 20px; padding-right: 12px; }
+.sales-purchase-result-dialog section { min-width: 0; }
+.sales-purchase-result-dialog h3 { margin: 0 0 8px; font-size: 14px; line-height: 22px; }
+.sales-purchase-result-dialog p { margin: 4px 0; overflow-wrap: anywhere; }
+.sales-purchase-result-dialog .sales-purchase-result-item + .sales-purchase-result-item {
+  border-top: 1px solid var(--sj-border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.sales-purchase-result-dialog pre {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.sales-purchase-result-dialog .sales-purchase-result-docno { color: var(--sj-muted); font-size: 12px; }
+.sales-purchase-result-dialog .sales-purchase-result-error,
+.purchase-result-copy-control .purchase-result-copy-error p { color: var(--sj-danger-foreground); }
+.purchase-result-copy-control { min-width: 0; max-width: 100%; }
+.purchase-result-copy-control .purchase-result-copy-error { margin-top: 8px; max-width: 100%; }
+.purchase-result-copy-control .purchase-result-copy-error p { margin: 0 0 6px; font-size: 13px; overflow-wrap: anywhere; }
+.purchase-result-copy-control textarea {
+  width: 100%;
+  min-height: 100px;
+  max-height: 160px;
+  padding: 8px;
+  border: 1px solid var(--sj-border);
+  border-radius: 6px;
+  background: var(--sj-surface);
+  color: var(--sj-heading);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  resize: vertical;
+  user-select: text;
+}
+
+@media (max-width: 640px) {
+  .sales-purchase-result-dialog .sj-dialog-footer { flex-wrap: wrap; }
+  .sales-purchase-result-dialog .sj-dialog-footer button { white-space: normal; }
+}

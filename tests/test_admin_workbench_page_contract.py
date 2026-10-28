@@ -256,7 +256,9 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         result_table_section = extract_function_section(workbench_source, "ResultLineTable")
         extract_section = extract_function_section(workbench_source, "extractPurchaseResult")
         message_section = extract_function_section(workbench_source, "MessageBubble")
-        copy_button_section = extract_function_section(workbench_source, "PurchaseResultCopyButton")
+        copy_button_section = (
+            ROOT / "admin" / "src" / "components" / "business" / "purchase-result" / "purchase-result-copy-button.tsx"
+        ).read_text(encoding="utf-8")
         result_dialog_section = extract_function_section(workbench_source, "WorkbenchResultDialog")
 
         self.assertNotIn("purchaseResultFirstLine", result_table_section)
@@ -264,9 +266,10 @@ class AdminWorkbenchPageContractTest(unittest.TestCase):
         self.assertNotIn("<PurchaseResultCopyButton", result_table_section)
         self.assertNotIn("<PurchaseResultCopyButton", message_section)
         self.assertIn("<PurchaseResultCopyButton", result_dialog_section)
-        self.assertIn('aria-label="复制进货信息"', copy_button_section)
+        self.assertIn('aria-label={copied ? "已复制" : "复制进货信息"}', copy_button_section)
         self.assertIn("复制进货信息", copy_button_section)
-        self.assertIn("navigator.clipboard.writeText(purchaseResult)", copy_button_section)
+        self.assertIn("navigator.clipboard.writeText(text)", copy_button_section)
+        self.assertIn('text={purchaseResult}', result_dialog_section)
         self.assertIn('response.indexOf("【进货结果】")', extract_section)
         self.assertIn('/\\n(?:开单成功|开单失败)/', extract_section)
         self.assertIn('line !== "【进货结果】"', result_table_section)

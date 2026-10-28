@@ -489,6 +489,7 @@ export type SalesProduct = {
   product_id?: number;
   spu_id?: number;
   unit_id?: number;
+  unit_name?: string;
   name?: string;
   title?: string;
   series?: string;

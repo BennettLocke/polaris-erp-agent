@@ -23,6 +23,7 @@ import { ProductsPage } from "./components/business/products";
 import { SettingsPage } from "./components/business/settings";
 import { WorkbenchPage } from "./components/business/workbench";
 import { PrintFeedbackToast, useSalesPrintFeedback } from "./components/business/print-feedback";
+import { PurchaseResultDialog, type PurchaseBatchResult } from "./components/business/purchase-result";
 import {
   CreateCustomerDialog,
   SalesCustomerField,
@@ -306,6 +307,10 @@ function salesShortagePurchasePlan(line: SalesFormLine, shortage: number) {
   };
 }
 
+function hasUncertainOutcome(error: unknown) {
+  return !(error instanceof ApiError) || error.status >= 500 || error.status === 408 || error.code === -1;
+}
+
 function inputNoWheel(event: React.WheelEvent<HTMLInputElement>) {
   event.currentTarget.blur();
 }
@@ -323,6 +328,7 @@ type SalesStockShortageLine = {
   casePackQty: number;
   caseCount: number;
   warehouseName: string;
+  unitName: string;
 };
 
 type SalesStockShortage = {
@@ -338,7 +344,7 @@ function defaultSalesDraft(): SalesDraft {
   };
 }
 
-function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: SalesDraftSession; active: boolean; onReviewSales: () => void }) {
+function SalesNewPage({ draftSession, active, onReviewSales, onReviewInventory }: { draftSession: SalesDraftSession; active: boolean; onReviewSales: () => void; onReviewInventory: () => void }) {
   const queryClient = useQueryClient();
   const { draft, storageAvailable, submitting, needsSubmissionReview } = useSyncExternalStore(draftSession.subscribe, draftSession.getSnapshot);
   const { customerKeyword, selectedCustomer, productKeyword, defaultWarehouseId, lines, lineQty, createTime, payStatus, payType } = draft;
@@ -368,6 +374,8 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
   const [lastResult, setLastResult] = useState<{ id?: number; sales_id?: number; sales_no?: string; order_no?: string } | null>(null);
   const [detailOrder, setDetailOrder] = useState<SalesDetail | null>(null);
   const [stockShortage, setStockShortage] = useState<SalesStockShortage>(null);
+  const [purchaseResult, setPurchaseResult] = useState<PurchaseBatchResult | null>(null);
+  const [purchaseResultOpen, setPurchaseResultOpen] = useState(false);
   const printFeedback = useSalesPrintFeedback();
 
   const totalQty = lines.reduce((sum, line) => sum + toNumber(line.buy_number), 0);
@@ -561,6 +569,7 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
         product_id: productId,
         spu_id: priceSpuId || undefined,
         unit_id: Number(variant.unit_id || product.unit_id || 1),
+        unit_name: variant.unit_name || product.unit_name || "",
         title: productDisplayTitle(product),
         spec: productDisplaySpec(variant),
         coding: variant.coding || product.coding || "",
@@ -708,23 +717,37 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
           requested,
           shortage,
           ...purchasePlan,
-          warehouseName: salesLineWarehouseName({ ...line, warehouse_id: warehouseId })
+          unitName: row?.unit_name || line.unit_name || "",
+          warehouseName: warehouseList.find((warehouse) => Number(warehouse.id) === warehouseId)?.name
+            || warehouseList.find((warehouse) => Number(warehouse.id) === warehouseId)?.warehouse_name
+            || salesLineWarehouseName({ ...line, warehouse_id: warehouseId })
         });
       }
     }
     if (!shortages.length) return true;
+    if (shortages.some((item) => !item.unitName)) {
+      const options = await queryClient.fetchQuery({ queryKey: queryKeys.products.options(), queryFn: () => api.productOptions() });
+      if (!draftSession.isCurrent(generation)) return false;
+      for (const item of shortages) {
+        item.unitName ||= options.unit_list?.find((unit) => Number(unit.id) === Number(item.line.unit_id))?.name || "";
+        if (!item.unitName) throw new Error(`${item.line.title}的商品单位无法读取，请刷新商品资料后重试`);
+      }
+    }
     setStockShortage({ payload, lines: shortages });
     return false;
   }
 
   async function submitSalesOrderAfterStockReady(payload: SalesOrderPayload) {
+    const generation = draftSession.getGeneration();
     const result = await api.createSalesOrder(payload);
     void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
     void queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
+    if (!draftSession.isCurrent(generation)) return null;
     setLastResult(result);
     setNotice(`开单成功${result.sales_no ? `：${result.sales_no}` : ""}`);
     draftSession.reset({ ...draftSession.getSnapshot().draft, lines: [], productKeyword: "", lineQty: 1 });
     setProductResults([]);
+    return result;
   }
 
   async function submitSalesOrder() {
@@ -763,29 +786,79 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
     const generation = draftSession.getGeneration();
     const current = stockShortage;
     draftSession.setSubmitting(true);
+    setStockShortage(null);
     setLoading("stock-purchase-submit");
     setError("");
     setNotice("");
+    const outcome: PurchaseBatchResult = { items: [], failedItems: [], unprocessedCount: current.lines.length, salesStatus: "not_created" };
+    let attemptedPurchase: SalesStockShortageLine | null = null;
+    let salesStarted = false;
     try {
       for (const item of current.lines) {
         if (!draftSession.isCurrent(generation)) return;
-        await api.createInventoryPurchase({
+        attemptedPurchase = item;
+        const warehouseId = Number(item.line.warehouse_id || current.payload.warehouse_id || defaultWarehouseId || 2);
+        const result = await api.createInventoryPurchase({
           product_id: item.line.product_id,
           unit_id: item.line.unit_id || 1,
-          warehouse_id: Number(item.line.warehouse_id || current.payload.warehouse_id || defaultWarehouseId || 2),
+          warehouse_id: warehouseId,
           quantity: item.purchaseQuantity,
           note: [
             `开单前自动补货：${selectedCustomerName || current.payload.customer_name || ""} ${item.line.title}`.trim(),
             `缺口${salesQuantityText(item.shortage)}，补货${salesQuantityText(item.purchaseQuantity)}`
           ].filter(Boolean).join("；")
         });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
+        if (!draftSession.isCurrent(generation)) return;
+        if (!result?.id && !result?.doc_no) throw new ApiError("入库接口未返回单号，请先核对库存流水。", 200, -1);
+        outcome.items.push({
+          productId: item.line.product_id,
+          productName: item.line.title,
+          color: item.line.spec || "默认颜色",
+          quantity: item.purchaseQuantity,
+          unitName: item.unitName,
+          caseCount: item.caseCount || undefined,
+          warehouseId,
+          warehouseName: item.warehouseName,
+          docNo: result.doc_no || String(result.id)
+        });
+        outcome.unprocessedCount--;
+        attemptedPurchase = null;
       }
       if (!draftSession.isCurrent(generation)) return;
-      await submitSalesOrderAfterStockReady(current.payload);
-      setStockShortage(null);
+      salesStarted = true;
+      const sales = await submitSalesOrderAfterStockReady(current.payload);
+      if (!sales) return;
+      outcome.salesStatus = "created";
+      outcome.salesNo = sales.sales_no || sales.order_no;
+      setPurchaseResult(outcome);
+      setPurchaseResultOpen(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "补货后开单失败");
+      if (!draftSession.isCurrent(generation)) return;
+      const uncertain = hasUncertainOutcome(err);
+      const message = err instanceof Error ? err.message : "请求未完成";
+      if (attemptedPurchase) {
+        outcome.failedItems.push({
+          productName: attemptedPurchase.line.title,
+          color: attemptedPurchase.line.spec || "默认颜色",
+          warehouseName: attemptedPurchase.warehouseName,
+          message,
+          uncertain
+        });
+        outcome.unprocessedCount--;
+        outcome.error = uncertain ? "进货结果待核对，请先核对库存流水，不要重复进货。" : "进货未全部完成，未创建销售单。";
+        void queryClient.invalidateQueries({ queryKey: queryKeys.inventory.root });
+      } else if (salesStarted) {
+        outcome.salesStatus = uncertain ? "uncertain" : "failed";
+        outcome.error = uncertain ? "已进货，销售单结果待核对，请先检查销售单记录，不要重复开单。" : `已进货，销售单创建失败：${message}`;
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sales.root });
+      }
+      if (uncertain) draftSession.requireSubmissionReview();
+      setPurchaseResult(outcome);
+      setPurchaseResultOpen(true);
+      setError(outcome.error || message);
     } finally {
+      setStockShortage(null);
       draftSession.setSubmitting(false);
       setLoading("");
     }
@@ -901,9 +974,10 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
           {!storageAvailable ? <div className="form-error" role="status">当前浏览器无法暂存草稿，切换页面仍可保留，刷新后可能丢失。</div> : null}
           {needsSubmissionReview ? (
             <div className="form-error" role="status">
-              上次提交被中断，销售单可能已创建，请先核对再继续。
+              上次提交被中断，销售单可能已创建，或进货结果尚未确认，请先核对再继续。
               <div className="sales-draft-review-actions">
                 <Button variant="outline" size="sm" onClick={onReviewSales}>核对销售单</Button>
+                <Button variant="outline" size="sm" onClick={onReviewInventory}>核对库存</Button>
                 <Button variant="outline" size="sm" onClick={() => draftSession.acknowledgeSubmissionReview()}>已核对，继续编辑</Button>
               </div>
             </div>
@@ -997,6 +1071,12 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
           disabledReason={disabledReason}
           onSubmit={() => void submitSalesOrder()}
         />
+        {purchaseResult ? (
+          <div className="sales-create-result-actions" role="status">
+            <span>最近一次进货：{purchaseResult.items.length} 项已确认入库</span>
+            <Button type="button" size="sm" variant="outline" onClick={() => setPurchaseResultOpen(true)}>查看进货信息</Button>
+          </div>
+        ) : null}
         <SalesResultCard
           result={lastResult}
           loading={printFeedback.busySalesId ? "print-last" : loading}
@@ -1007,6 +1087,8 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
           onStartNewCustomerOrder={startNewCustomerOrder}
         />
       </aside>
+
+      <PurchaseResultDialog result={active && purchaseResultOpen ? purchaseResult : null} onClose={() => setPurchaseResultOpen(false)} />
 
       <CreateCustomerDialog
         open={active && createCustomerOpen}
@@ -1052,8 +1134,8 @@ function SalesNewPage({ draftSession, active, onReviewSales }: { draftSession: S
                   <span>开单 {salesQuantityText(item.requested)}</span>
                   <span>缺口 {salesQuantityText(item.shortage)}</span>
                   <strong>
-                    进货 {salesQuantityText(item.purchaseQuantity)} 套
-                    {item.caseCount && item.casePackQty ? `（${item.caseCount}件，${salesQuantityText(item.casePackQty)}套/件）` : ""}
+                    进货 {salesQuantityText(item.purchaseQuantity)} {item.unitName}
+                    {item.caseCount && item.casePackQty ? `（${item.caseCount}件，${salesQuantityText(item.casePackQty)}${item.unitName}/件）` : ""}
                   </strong>
                 </div>
               </div>
@@ -1517,7 +1599,7 @@ function AdminArea({ user, onLogout }: { user: AuthUser; onLogout: () => void })
       <PageHeader title={activePage.title} onLogout={logout} />
       {(salesVisited || route === "sales-new") ? (
         <div hidden={route !== "sales-new"}>
-          <SalesNewPage draftSession={salesDraftSession} active={route === "sales-new"} onReviewSales={() => navigate("sales")} />
+          <SalesNewPage draftSession={salesDraftSession} active={route === "sales-new"} onReviewSales={() => navigate("sales")} onReviewInventory={() => navigate("inventory")} />
         </div>
       ) : null}
       {route === "dashboard" ? (

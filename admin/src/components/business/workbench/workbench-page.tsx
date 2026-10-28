@@ -5,7 +5,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Copy,
   History,
   Loader2,
   Maximize2,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { api } from "@/api";
+import { PurchaseResultCopyButton } from "@/components/business/purchase-result";
 import { queryKeys } from "@/lib/admin-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1985,7 +1985,7 @@ function WorkbenchResultDialog({
             <AgentResultDialog result={result} />
           )}
           <DialogFooter>
-            {purchaseResult ? <PurchaseResultCopyButton purchaseResult={purchaseResult} /> : null}
+            {purchaseResult ? <PurchaseResultCopyButton text={purchaseResult} /> : null}
             <Button onClick={() => onOpenChange(false)}>关闭</Button>
           </DialogFooter>
         </DialogContent>
@@ -2046,51 +2046,6 @@ function extractPurchaseResult(response: string) {
   const hasCoreFields = candidate.includes("商品：") && candidate.includes("备注：");
   const hasPurchaseDetails = candidate.includes("进货：") || /商品：.+（.+，.+）/.test(candidate);
   return hasCoreFields && hasPurchaseDetails ? candidate : "";
-}
-
-function fallbackCopyText(text: string) {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) throw new Error("copy failed");
-}
-
-function PurchaseResultCopyButton({ purchaseResult }: { purchaseResult: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(purchaseResult);
-      } else {
-        fallbackCopyText(purchaseResult);
-      }
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      onClick={() => void handleCopy()}
-      aria-label="复制进货信息"
-      title={copied ? "已复制" : "复制进货信息"}
-    >
-      {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-      {copied ? "已复制" : "复制进货信息"}
-    </Button>
-  );
 }
 
 function ResultLineTable({ response }: { response: string }) {

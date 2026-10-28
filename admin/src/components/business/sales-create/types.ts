@@ -9,6 +9,7 @@ export type SalesFormLine = {
   product_id: number;
   spu_id?: number;
   unit_id: number;
+  unit_name?: string;
   title: string;
   spec: string;
   coding?: string;

@@ -83,6 +83,26 @@ test("submitting locks edits so an old request cannot clear newer form contents"
   assert.equal(current.getSnapshot().submitting, true);
 });
 
+test("an uncertain purchase or sale locks the draft until explicitly reviewed, including after refresh", () => {
+  const storage = memoryStorage();
+  const current = session(storage);
+  current.setField("lines", [line]);
+  current.setSubmitting(true);
+  current.requireSubmissionReview();
+  current.setSubmitting(false);
+  current.setField("lines", []);
+  assert.equal(current.getSnapshot().needsSubmissionReview, true);
+  assert.equal(current.getSnapshot().draft.lines.length, 1);
+  const restored = session(storage);
+  assert.equal(restored.getSnapshot().needsSubmissionReview, true);
+  restored.acknowledgeSubmissionReview();
+  restored.setField("lines", []);
+  assert.equal(restored.getSnapshot().draft.lines.length, 0);
+  current.endSession();
+  current.requireSubmissionReview();
+  assert.equal(storage.getItem(salesDraftStorageKey(7)), null);
+});
+
 test("different accounts and different tab storage do not overwrite each other", () => {
   const tab = memoryStorage();
   session(tab, 7).setField("lines", [line]);
