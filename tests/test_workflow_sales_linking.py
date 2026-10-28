@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 from unittest.mock import patch
 from pathlib import Path
 
@@ -47,6 +48,26 @@ class FakePurchaseOrderCaller(FakeOrderCaller):
             self.calls.append((tool_name, kwargs))
             return {"code": 0, "data": {"id": 321, "doc_no": "IN321"}}
         return super().call(tool_name, **kwargs)
+
+
+class FakeCorrectionCaller:
+    def __init__(self, upload_result=None):
+        self.calls = []
+        self.upload_result = upload_result if upload_result is not None else {
+            "url": "https://example.test/corrected.png",
+        }
+        self.products = {
+            88: {"id": 88, "title": "礼盒A", "color": "红色", "status": "active"},
+            89: {"id": 89, "title": "礼盒B", "color": "蓝色", "status": "active"},
+        }
+
+    def call(self, tool_name, **kwargs):
+        self.calls.append((tool_name, kwargs))
+        if tool_name == "product_info":
+            return dict(self.products[kwargs["product_id"]])
+        if tool_name == "script_call":
+            return self.upload_result
+        raise AssertionError(f"unexpected tool call: {tool_name}")
 
 
 class WorkflowSalesLinkingTest(unittest.TestCase):
@@ -413,9 +434,12 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
         self.assertEqual(captured_params[0]["workflow_order_id"], 456)
         self.assertEqual(captured_params[0]["customer"], "测试客户")
 
-    def test_image_workflow_correction_cancel_creates_nothing(self):
+    @patch("src.services.business.workflow.get_workflow_service")
+    @patch("src.skills.order_flow.workflow.OrderFlowWorkflow")
+    def test_image_workflow_correction_cancel_creates_nothing(self, sales, service):
+        service.return_value.find_saved_batch.return_value = []
         workflow = WorkflowOrderWorkflow()
-        workflow.caller = FakeWorkflowCaller()
+        workflow.caller = FakeCorrectionCaller()
 
         result = workflow.resume(
             "取消",
@@ -423,17 +447,22 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
                 "pending_action": "confirm_image_workflow_correction",
                 "customer_name": "测试客户",
                 "parsed_list": [
-                    {"customer": "测试客户", "goods_name": "测试礼盒", "quantity": 2}
+                    {"product_id": 88, "customer": "测试客户", "goods_name": "礼盒A", "color": "红色", "quantity": 2}
                 ],
             },
         )
 
         self.assertEqual(workflow.caller.calls, [])
         self.assertIn("没有写入系统", result["reply"])
+        service.assert_not_called()
+        sales.assert_not_called()
 
-    def test_image_workflow_correction_cannot_be_confirmed_from_chat_while_a_row_is_incomplete(self):
+    @patch("src.services.business.workflow.get_workflow_service")
+    @patch("src.skills.order_flow.workflow.OrderFlowWorkflow")
+    def test_image_workflow_correction_cannot_be_confirmed_from_chat_while_a_row_is_incomplete(self, sales, service):
+        service.return_value.find_saved_batch.return_value = []
         workflow = WorkflowOrderWorkflow()
-        workflow.caller = FakeWorkflowCaller()
+        workflow.caller = FakeCorrectionCaller()
 
         result = workflow.resume(
             "确认",
@@ -441,10 +470,10 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
                 "pending_action": "confirm_image_workflow_correction",
                 "customer_name": "测试客户",
                 "parsed_list": [
-                    {"customer": "测试客户", "goods_name": "礼盒A", "color": "红色", "quantity": 2},
+                    {"product_id": 88, "customer": "测试客户", "goods_name": "礼盒A", "color": "红色", "quantity": 2},
                     {
                         "customer": "测试客户",
-                        "goods_name": "",
+                        "goods_name": "礼盒B",
                         "color": "黄色",
                         "quantity": 1,
                         "source_filename": "design-2.png",
@@ -456,24 +485,35 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
         self.assertEqual(result["status"], "ask")
         self.assertIn("第 2 张", result["question"])
         self.assertIn("商品", result["question"])
-        self.assertEqual(workflow.caller.calls, [])
+        self.assertEqual(workflow.caller.calls, [("product_info", {"product_id": 88})])
+        service.assert_not_called()
+        sales.assert_not_called()
 
-    def test_image_workflow_correction_links_every_created_workflow_to_sales(self):
+    @patch("src.services.business.workflow.get_workflow_service")
+    def test_image_workflow_correction_links_every_created_workflow_to_sales(self, service):
+        service.return_value.find_saved_batch.return_value = []
         captured_params = []
+        service.return_value.save_orders_batch.return_value = {
+            "code": 0, "data": [{"id": 456}, {"id": 457}],
+        }
 
         class FakeOrderFlow:
             def execute(self, user_input, params=None):
+                service.return_value.save_orders_batch.assert_called_once()
                 captured_params.append(dict(params or {}))
                 return {"status": "ask", "question": "confirm", "state": {}}
 
         workflow = WorkflowOrderWorkflow()
-        workflow.caller = FakeWorkflowCaller()
+        workflow.caller = FakeCorrectionCaller()
         state = {
             "pending_action": "confirm_image_workflow_correction",
+            "correction_batch_id": "correction-linking",
             "customer_name": "测试客户",
             "parsed_list": [
-                {"customer": "测试客户", "goods_name": "礼盒A", "quantity": 2, "color": "红色"},
-                {"customer": "测试客户", "goods_name": "礼盒B", "quantity": 3, "color": "蓝色"},
+                {"selected_sku_id": 88, "customer": "测试客户", "goods_name": "旧名称A", "quantity": 2, "color": "黄色",
+                 "order_images": ["https://example.test/one.png"]},
+                {"product_id": 89, "customer": "测试客户", "goods_name": "旧名称B", "quantity": 3, "color": "黄色",
+                 "order_images": ["https://example.test/two.png"]},
             ],
             "order_params": {
                 "customer": "测试客户",
@@ -490,29 +530,40 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
         self.assertEqual(result["status"], "ask")
         self.assertEqual(captured_params[0]["workflow_order_id"], 456)
         self.assertEqual(captured_params[0]["workflow_order_ids"], [456, 457])
+        self.assertEqual(result["state"]["workflow_order_ids"], [456, 457])
+        self.assertEqual([row["product_id"] for row in captured_params[0]["products"]], [88, 89])
+        self.assertEqual([row["name"] for row in captured_params[0]["products"]], ["礼盒A", "礼盒B"])
+        self.assertEqual(workflow.caller.calls, [
+            ("product_info", {"product_id": 88}), ("product_info", {"product_id": 89}),
+        ])
+        service.return_value.save_orders_batch.assert_called_once_with(
+            service.return_value.save_orders_batch.call_args.args[0], batch_id="correction-linking",
+        )
+        rows = service.return_value.save_orders_batch.call_args.args[0]
+        self.assertEqual([row["product_id"] for row in rows], [88, 89])
+        self.assertEqual([row["goods_name"] for row in rows], ["礼盒A", "礼盒B"])
+        self.assertEqual([row["color"] for row in rows], ["红色", "蓝色"])
+        self.assertEqual([row["quantity"] for row in rows], [2, 3])
 
-    def test_image_workflow_correction_uploads_failed_design_before_creating(self):
-        class CorrectionCaller(FakeWorkflowCaller):
-            def call(self, tool_name, **kwargs):
-                self.calls.append((tool_name, kwargs))
-                if tool_name == "script_call":
-                    return {"url": "https://example.test/corrected.png"}
-                if tool_name == "workflow_order_save":
-                    result = {"code": 0, "data": {"id": self.next_id}}
-                    self.next_id += 1
-                    return result
-                raise AssertionError(f"unexpected tool call: {tool_name}")
+    @patch("src.services.business.workflow.get_workflow_service")
+    def test_image_workflow_correction_uploads_failed_design_before_creating(self, service):
+        service.return_value.find_saved_batch.return_value = []
+        captured_params = []
 
         class FakeOrderFlow:
             def execute(self, user_input, params=None):
+                service.return_value.save_orders_batch.assert_called_once()
+                captured_params.append(dict(params or {}))
                 return {"status": "ask", "question": "confirm", "state": {}}
 
         workflow = WorkflowOrderWorkflow()
-        workflow.caller = CorrectionCaller()
+        workflow.caller = FakeCorrectionCaller()
         state = {
             "pending_action": "confirm_image_workflow_correction",
+            "correction_batch_id": "correction-upload",
             "customer_name": "测试客户",
             "parsed_list": [{
+                "selected_sku_id": 88,
                 "customer": "测试客户",
                 "goods_name": "礼盒A",
                 "color": "红色",
@@ -526,31 +577,44 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
                 "products": [{"name": "礼盒A", "qty": 2, "color": "红色"}],
             },
         }
+        original = deepcopy(state)
+
+        def save_batch(rows, *, batch_id):
+            self.assertEqual(workflow.caller.calls, [
+                ("product_info", {"product_id": 88}),
+                ("script_call", {"script_name": "oss_uploader.py", "args": ["C:/temp/design-1.png"]}),
+            ])
+            self.assertEqual(rows[0]["order_images"], ["https://example.test/corrected.png"])
+            return {"code": 0, "data": [{"id": 456}]}
+
+        service.return_value.save_orders_batch.side_effect = save_batch
 
         with patch("src.skills.order_flow.workflow.OrderFlowWorkflow", FakeOrderFlow):
-            workflow.resume("确认", state)
+            result = workflow.resume("确认", state)
 
-        self.assertEqual(workflow.caller.calls[0][0], "script_call")
-        self.assertEqual(workflow.caller.calls[1][0], "workflow_order_save")
-        self.assertEqual(
-            workflow.caller.calls[1][1]["order_images"],
-            ["https://example.test/corrected.png"],
+        self.assertEqual(result["status"], "ask")
+        rows = service.return_value.save_orders_batch.call_args.args[0]
+        service.return_value.save_orders_batch.assert_called_once_with(
+            rows, batch_id="correction-upload",
         )
+        self.assertEqual(rows[0]["product_id"], 88)
+        self.assertEqual(rows[0]["source_image_path"], "C:/temp/design-1.png")
+        self.assertEqual(rows[0]["source_filename"], "design-1.png")
+        self.assertEqual(state, original)
+        self.assertEqual(captured_params[0]["workflow_order_ids"], [456])
+        self.assertEqual(captured_params[0]["products"][0]["product_id"], 88)
 
-    def test_image_workflow_correction_stops_before_database_when_image_upload_fails(self):
-        class FailedUploadCaller(FakeWorkflowCaller):
-            def call(self, tool_name, **kwargs):
-                self.calls.append((tool_name, kwargs))
-                if tool_name == "script_call":
-                    return {"error": "upload failed"}
-                raise AssertionError(f"unexpected tool call: {tool_name}")
-
+    @patch("src.services.business.workflow.get_workflow_service")
+    @patch("src.skills.order_flow.workflow.OrderFlowWorkflow")
+    def test_image_workflow_correction_stops_before_database_when_image_upload_fails(self, sales, service):
+        service.return_value.find_saved_batch.return_value = []
         workflow = WorkflowOrderWorkflow()
-        workflow.caller = FailedUploadCaller()
+        workflow.caller = FakeCorrectionCaller(upload_result={"error": "upload failed"})
         state = {
             "pending_action": "confirm_image_workflow_correction",
             "customer_name": "测试客户",
             "parsed_list": [{
+                "product_id": 88,
                 "customer": "测试客户",
                 "goods_name": "礼盒A",
                 "color": "红色",
@@ -569,7 +633,65 @@ class WorkflowSalesLinkingTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ask")
         self.assertIn("图片上传失败", result["question"])
-        self.assertEqual([name for name, _ in workflow.caller.calls], ["script_call"])
+        self.assertEqual([name for name, _ in workflow.caller.calls], ["product_info", "script_call"])
+        service.assert_not_called()
+        sales.assert_not_called()
+
+    @patch("src.services.business.workflow.get_workflow_service")
+    @patch("src.skills.order_flow.workflow.OrderFlowWorkflow")
+    def test_image_workflow_correction_revalidates_selected_sku_before_any_writes(self, sales, service):
+        service.return_value.find_saved_batch.return_value = []
+        workflow = WorkflowOrderWorkflow()
+        workflow.caller = FakeCorrectionCaller()
+        workflow.caller.products[88]["status"] = "inactive"
+        result = workflow.resume("确认", {
+            "pending_action": "confirm_image_workflow_correction",
+            "customer_name": "测试客户",
+            "parsed_list": [{
+                "product_id": 88, "goods_name": "礼盒A", "color": "红色", "quantity": 2,
+                "source_image_path": "C:/temp/design-1.png", "order_images": [],
+            }],
+        })
+        self.assertEqual(result["status"], "ask")
+        self.assertIn("不可用", result["question"])
+        self.assertEqual(workflow.caller.calls, [("product_info", {"product_id": 88})])
+        service.assert_not_called()
+        sales.assert_not_called()
+
+    @patch("src.services.business.workflow.get_workflow_service")
+    @patch("src.skills.order_flow.workflow.OrderFlowWorkflow")
+    def test_image_workflow_correction_batch_save_failure_never_enters_sales(self, sales, service):
+        service.return_value.find_saved_batch.return_value = []
+        state = {
+            "pending_action": "confirm_image_workflow_correction",
+            "correction_batch_id": "correction-save-failure",
+            "customer_name": "测试客户",
+            "parsed_list": [
+                {"product_id": 88, "quantity": 2, "order_images": ["https://example.test/one.png"]},
+                {"product_id": 89, "quantity": 3, "order_images": ["https://example.test/two.png"]},
+            ],
+        }
+        for saved in (
+            {"code": 1, "msg": "transaction failed", "data": []},
+            {"code": 0, "data": [{"id": 456}]},
+        ):
+            with self.subTest(saved=saved):
+                service.reset_mock()
+                service.return_value.save_orders_batch.return_value = saved
+                workflow = WorkflowOrderWorkflow()
+                workflow.caller = FakeCorrectionCaller()
+                result = workflow.resume("确认", deepcopy(state))
+                self.assertEqual(result["status"], "ask")
+                self.assertIn("未保存成功", result["question"])
+                rows = service.return_value.save_orders_batch.call_args.args[0]
+                service.return_value.save_orders_batch.assert_called_once_with(
+                    rows, batch_id="correction-save-failure",
+                )
+                self.assertEqual([row["product_id"] for row in rows], [88, 89])
+                self.assertEqual(workflow.caller.calls, [
+                    ("product_info", {"product_id": 88}), ("product_info", {"product_id": 89}),
+                ])
+                sales.assert_not_called()
 
     def test_order_flow_confirm_state_includes_warehouse_name_for_ui(self):
         source = (ROOT / "src" / "skills" / "order_flow" / "workflow.py").read_text(encoding="utf-8")

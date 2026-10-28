@@ -1,5 +1,6 @@
 """Workflow order creation flow."""
 import re
+import uuid
 from src.skills.base import BaseWorkflow
 from src.core.tools.caller import get_tool_caller
 from src.core.session import SessionManager, get_current_session_id
@@ -39,26 +40,17 @@ class WorkflowOrderWorkflow(BaseWorkflow):
         return self._confirm_create(parsed)
 
     def resume(self, user_input: str, state: dict) -> dict:
+        if state.get("pending_action") == "confirm_image_workflow_correction":
+            return self._resume_image_correction(user_input, state)
         if state.get("pending_action") == "confirm_create_workflow_order":
             if not self._is_confirmation(user_input):
                 return self._reply("已取消创建工作流订单。")
             return self._create(state.get("parsed") or {})
 
-        if state.get("pending_action") in {"confirm_image_workflow_orders", "confirm_image_workflow_correction"}:
+        if state.get("pending_action") == "confirm_image_workflow_orders":
             if not self._is_confirmation(user_input):
-                if state.get("pending_action") == "confirm_image_workflow_correction":
-                    return self._reply("已取消本批设计稿校准，没有写入系统。")
                 return self._reply("已取消创建工作流订单，没有写入系统。")
             parsed_list = state.get("parsed_list") or []
-            if state.get("pending_action") == "confirm_image_workflow_correction":
-                correction_error = self._correction_validation_error(state, parsed_list)
-                if correction_error:
-                    return self._ask(correction_error, state)
-                parsed_list, image_error = self._prepare_corrected_image_rows(parsed_list)
-                if image_error:
-                    retry_state = dict(state)
-                    retry_state["parsed_list"] = parsed_list
-                    return self._ask(image_error, retry_state)
             create_result = self._create_many(parsed_list)
             order_params = self._ensure_order_customer(state.get("order_params") or {}, parsed_list)
             created_ids = create_result.get("workflow_order_ids") or []
@@ -136,27 +128,63 @@ class WorkflowOrderWorkflow(BaseWorkflow):
 
         return self._confirm_create(merged)
 
-    def _correction_validation_error(self, state: dict, parsed_list: list[dict]) -> str:
-        customer = str(state.get("customer_name") or state.get("customer") or "").strip()
-        if not customer:
-            return "请先在校准弹窗填写客户名称；本批订单尚未创建。"
-        if not parsed_list:
-            return "没有可校准的设计稿，请重新上传。"
-        for index, row in enumerate(parsed_list, 1):
-            row = row if isinstance(row, dict) else {}
-            filename = str(row.get("source_filename") or f"设计稿 {index}").strip()
-            label = f"第 {index} 张设计稿（{filename}）"
-            if not str(row.get("goods_name") or "").strip():
-                return f"{label}还没有填写商品；本批订单尚未创建。"
-            if not str(row.get("color") or "").strip():
-                return f"{label}还没有填写颜色/规格；本批订单尚未创建。"
+    def _resume_image_correction(self, user_input: str, state: dict) -> dict:
+        from src.core.image_correction import prepare_correction_state
+        from src.services.business.workflow import get_workflow_service
+
+        batch_id = str(state.get("correction_batch_id") or "")
+        if batch_id:
             try:
-                quantity = int(float(row.get("quantity") or 0))
-            except (TypeError, ValueError):
-                quantity = 0
-            if quantity <= 0:
-                return f"{label}的数量必须大于 0；本批订单尚未创建。"
-        return ""
+                existing = get_workflow_service().find_saved_batch(state.get("parsed_list") or [], batch_id)
+            except Exception:
+                logger.exception("无法核对设计稿批次的已保存状态")
+                return self._ask("暂时无法核对本批订单状态，本次没有执行创建或取消，请稍后重试。", state)
+            if existing:
+                return self._reply("本批工作流订单已经创建：" + "、".join(str(row["id"]) for row in existing)
+                                   + "。没有重复创建，请到订单页核对后继续开单。")
+        if not self._is_confirmation(user_input):
+            return self._reply("已取消本批设计稿校正，没有写入系统。")
+
+        try:
+            state = prepare_correction_state(
+                state, state, lambda sku_id: self.caller.call("product_info", product_id=sku_id)
+            )
+        except ValueError as error:
+            return self._ask(f"{error}\n本批订单尚未创建。", state)
+        state.setdefault("correction_batch_id", uuid.uuid4().hex)
+        rows, image_error = self._prepare_corrected_image_rows(state["parsed_list"])
+        state["parsed_list"] = rows
+        if image_error:
+            return self._ask(image_error, state)
+        try:
+            saved = get_workflow_service().save_orders_batch(rows, batch_id=state["correction_batch_id"])
+            if saved.get("code") != 0 or len(saved.get("data") or []) != len(rows):
+                raise ValueError(saved.get("msg") or "整批订单保存失败")
+        except Exception as error:
+            logger.exception("设计稿校正批量保存失败")
+            return self._ask(f"本批工作流订单未保存成功：{error}。请修正后重试。", state)
+        ids = [int(row["id"]) for row in saved["data"]]
+        reply = f"已校正并创建 {len(ids)} 个工作流订单：" + "、".join(map(str, ids))
+        correction_session_id = state.get("correction_session_id")
+        if correction_session_id:
+            SessionManager(correction_session_id).save_pending("workflow", {
+                "pending_action": "image_workflows_created", "workflow_order_ids": ids,
+            })
+        params = dict(state["order_params"])
+        params.update(workflow_order_id=ids[0], workflow_order_ids=ids)
+        from src.skills.order_flow.workflow import OrderFlowWorkflow
+
+        try:
+            result = OrderFlowWorkflow().execute("图片识别结果确认开单", params=params)
+        except Exception:
+            logger.exception("校正工作流已保存，但销售单准备失败")
+            return self._reply(reply + "\n\n工作流订单已创建，销售单准备失败；请到订单页核对后继续开单。")
+        if result.get("status") == "ask":
+            result["intent"] = "order"
+            result["question"] = reply + "\n\n" + result.get("question", "")
+            result["state"] = {**(result.get("state") or {}), "workflow_order_id": ids[0], "workflow_order_ids": ids}
+            return result
+        return self._reply(reply + "\n\n" + result.get("reply", "请继续核对销售单。"))
 
     def _prepare_corrected_image_rows(self, parsed_list: list[dict]) -> tuple[list[dict], str]:
         """Upload images that could not be attached before manual correction."""
@@ -410,9 +438,24 @@ class WorkflowOrderWorkflow(BaseWorkflow):
             {"pending_action": "confirm_create_workflow_order", "parsed": parsed},
         )
 
-    def _create_many(self, parsed_list: list[dict]) -> dict:
+    def _create_many(self, parsed_list: list[dict], *, atomic: bool = False, batch_id: str = "") -> dict:
         if not parsed_list:
             return self._reply("没有可创建的工作流订单。")
+        if atomic:
+            from src.services.business.workflow import get_workflow_service
+            try:
+                existing = get_workflow_service().find_saved_batch(parsed_list, batch_id)
+                if existing:
+                    ids = [int(row["id"]) for row in existing]
+                    return {"status": "reply", "reply": "本批工作流订单已创建，没有重复创建，请到订单页核对后继续开单。", "workflow_order_ids": ids, "already_saved": True}
+                result = get_workflow_service().save_orders_batch(parsed_list, batch_id=batch_id)
+                if result.get("code") != 0 or len(result.get("data") or []) != len(parsed_list):
+                    raise ValueError(result.get("msg") or "整批保存失败")
+                ids = [int(row["id"]) for row in result["data"]]
+                return {"status": "reply", "reply": f"已创建 {len(ids)} 个工作流订单：" + "、".join(map(str, ids)), "workflow_order_ids": ids}
+            except Exception:
+                logger.exception("设计稿整批保存失败，已回滚")
+                return {"status": "reply", "reply": "本批工作流订单保存失败，没有创建订单，请在弹窗中核对后重试。", "workflow_order_ids": []}
 
         ok_lines = []
         errors = []

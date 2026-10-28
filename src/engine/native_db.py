@@ -15,9 +15,10 @@ import re
 import threading
 import time
 import contextvars
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from typing import Any, Iterable, Optional
 
 import pymysql
@@ -1332,6 +1333,7 @@ class NativeDBClient:
             "inventory": _qty_text(row.get("inventory")),
             "status": 0 if str(row.get("status") or "active") == "active" else 1,
             "native_status": row.get("status") or "active",
+            "is_sellable": self._db_enabled_flag(row.get("is_sellable"), default=True),
             "status_text": self._status_text(row.get("status") or "active"),
             "is_stock_item": int(row.get("is_stock_item") if row.get("is_stock_item") not in (None, "") else 1),
             "is_listed": int(row.get("is_listed") or 0),
@@ -7228,6 +7230,145 @@ class NativeDBClient:
                 (new_id, operator_user_id, "native workflow order", now),
             )
         return {"code": 0, "data": {"id": new_id, "workflow_no": workflow_no}}
+
+    @staticmethod
+    def _workflow_batch_numbers(rows: list[dict], batch_id: str = "") -> list[str]:
+        workflow_numbers = []
+        for index, row in enumerate(rows):
+            if batch_id:
+                correction_id = row.get("correction_id")
+                identity = ["correction", str(correction_id)] if correction_id not in (None, "") else ["index", index]
+                digest = hashlib.sha256(_json_dumps([batch_id, identity]).encode("utf-8")).hexdigest()
+                workflow_numbers.append(f"WF{digest}")
+            else:
+                workflow_numbers.append(f"WF{uuid.uuid4().hex}")
+        if len(set(workflow_numbers)) != len(workflow_numbers):
+            raise DBError("Duplicate workflow batch row identity")
+        return workflow_numbers
+
+    def find_workflow_orders_batch(self, rows: list[dict], batch_id: str) -> list[dict]:
+        """Reconcile a lost response/checkpoint with durable committed records."""
+        if not rows or not batch_id:
+            return []
+        numbers = self._workflow_batch_numbers(rows, batch_id)
+        placeholders = ",".join(["%s"] * len(numbers))
+        found = self.query(f"SELECT id, workflow_no FROM workflow_order WHERE workflow_no IN ({placeholders})", numbers)
+        by_number = {row["workflow_no"]: row for row in found}
+        return [by_number[number] for number in numbers if number in by_number]
+
+    def save_workflow_orders_batch(self, rows: list[dict], batch_id: str = "") -> dict:
+        """Insert workflow orders and their logs atomically, with retry deduplication."""
+        if not rows:
+            return {"code": 0, "data": []}
+        workflow_numbers = self._workflow_batch_numbers(rows, batch_id)
+
+        now = _now()
+        operator_user_id = self._operator_user_id()
+        result = []
+        with self.transaction() as cursor:
+            if batch_id:
+                placeholders = ",".join(["%s"] * len(workflow_numbers))
+                cursor.execute(
+                    f"SELECT id, workflow_no FROM workflow_order WHERE workflow_no IN ({placeholders}) FOR UPDATE",
+                    tuple(workflow_numbers),
+                )
+                existing = {item["workflow_no"]: item for item in cursor.fetchall()}
+                if existing:
+                    if len(existing) != len(workflow_numbers):
+                        raise DBError("Workflow batch is partially saved; refusing to create more orders")
+                    return {"code": 0, "data": [
+                        {"id": existing[number]["id"], "workflow_no": number}
+                        for number in workflow_numbers
+                    ]}
+
+            for row, workflow_no in zip(rows, workflow_numbers):
+                goods_name = row.get("goods_name") or ""
+                color = row.get("color") or ""
+                quantity = row.get("order_quantity", row.get("quantity", 0))
+                sku = None
+                sku_id = row.get("selected_sku_id") or row.get("product_id")
+                if sku_id:
+                    sku = self._get_sku_for_update(cursor, int(sku_id), require_sellable=True)
+                    cursor.execute(
+                        "SELECT id, status, deleted_at FROM product_spu WHERE id=%s FOR UPDATE",
+                        (sku["spu_id"],),
+                    )
+                    spu = cursor.fetchone()
+                    if not spu or spu.get("deleted_at") is not None:
+                        raise DBError("Workflow product group no longer exists")
+                    spu_status = str(spu.get("status") or "active").strip().lower()
+                    if spu_status not in {"active", "normal", "enabled", "0"}:
+                        raise DBError("Workflow product group is inactive")
+                    goods_name = sku["title"]
+                    color = sku.get("color") or "默认颜色"
+
+                # Start from raw input, never from a quantity already converted to sets.
+                raw_quantity = row.get("raw_quantity")
+                raw_unit = str(row.get("raw_unit") or "").strip()
+                try:
+                    if raw_unit == "\u4ef6":
+                        perpiece = Decimal(str(sku.get("case_pack_qty") if sku else 0))
+                        if not perpiece.is_finite() or perpiece <= 0:
+                            raise DBError("Workflow piece quantity requires a positive finite SKU case pack")
+                        if raw_quantity in (None, ""):
+                            raise DBError("Workflow piece quantity requires raw quantity")
+                        quantity = Decimal(str(raw_quantity)) * perpiece
+                    elif raw_quantity not in (None, "") and raw_unit:
+                        quantity = raw_quantity
+                    quantity = Decimal(str(quantity if quantity is not None else 0))
+                except (DecimalException, ValueError, TypeError) as exc:
+                    raise DBError("Invalid workflow quantity or SKU case pack") from exc
+                if not quantity.is_finite() or quantity <= 0:
+                    raise DBError("Workflow quantity must be positive and finite")
+
+                customer_name = row.get("customer_name") or row.get("customer") or ""
+                customer_phone = row.get("customer_phone") or ""
+                phone_norm = _phone_digits(customer_phone)
+                customer_id = None
+                party_where = []
+                party_params = []
+                if phone_norm:
+                    party_where.append("phone_normalized=%s")
+                    party_params.append(phone_norm)
+                if customer_name:
+                    party_where.append("name=%s")
+                    party_params.append(customer_name)
+                if party_where:
+                    cursor.execute(
+                        f"SELECT id FROM party WHERE kind IN ('customer', 'both') AND deleted_at IS NULL AND ({' OR '.join(party_where)}) LIMIT 1",
+                        tuple(party_params),
+                    )
+                    party = cursor.fetchone()
+                    customer_id = int(party["id"]) if party else None
+
+                cursor.execute(
+                    """
+                    INSERT INTO workflow_order
+                        (workflow_no, customer_id, customer_name_snapshot, customer_phone_snapshot,
+                         sku_id, sku_no_snapshot, goods_name_snapshot, color_snapshot, quantity,
+                         order_image_urls, is_screen_print, is_made, is_delivered, status, remark,
+                         source, created_by_user_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            'native_api', %s, %s, %s)
+                    """,
+                    (
+                        workflow_no, customer_id, customer_name, customer_phone,
+                        int(sku["id"]) if sku else None, sku.get("sku_no") if sku else None,
+                        goods_name, color, quantity,
+                        _json_dumps(row.get("order_images") or []),
+                        int(row.get("is_screen_print") or 0), int(row.get("is_made") or 0),
+                        int(row.get("is_delivered") or 0),
+                        "completed" if int(row.get("order_type") or 0) == 1 else "pending",
+                        row.get("remark") or "", operator_user_id, now, now,
+                    ),
+                )
+                new_id = cursor.lastrowid
+                cursor.execute(
+                    "INSERT INTO workflow_order_log (workflow_order_id, action, operator_user_id, note, created_at) VALUES (%s, 'create', %s, %s, %s)",
+                    (new_id, operator_user_id, "native workflow order", now),
+                )
+                result.append({"id": new_id, "workflow_no": workflow_no})
+        return {"code": 0, "data": result}
 
     def update_workflow_status(self, order_id: int, field: str, value: int) -> dict:
         if field not in ("is_made", "is_delivered", "order_type"):

@@ -297,10 +297,10 @@ export const api = {
     }),
   agentHistory: (sessionId: string) =>
     request<AgentHistoryResult>(`${AGENT_HISTORY_ENDPOINT}?session_id=${encodeURIComponent(sessionId)}`),
-  updateSessionPending: (sessionId: string, state: AgentSessionSnapshot["state"]) =>
-    request<{ session: AgentSessionSnapshot }>("/api/session/pending", {
+  updateSessionPending: (sessionId: string, state: AgentSessionSnapshot["state"], execute?: "confirm" | "cancel") =>
+    request<{ session: AgentSessionSnapshot; response?: string; session_id?: string }>("/api/session/pending", {
       method: "POST",
-      body: JSON.stringify({ session_id: sessionId, state })
+      body: JSON.stringify({ session_id: sessionId, state, ...(execute ? { execute } : {}) })
     }),
   agentUploadLimits: () => request<{
     image_bytes: number;
@@ -477,9 +477,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
-  searchProductsForSales: (keyword: string, pageSize = 20) =>
+  searchProductsForSales: (keyword: string, pageSize = 20, options?: ApiRequestOptions) =>
     request<ListResult<SalesProduct>>(
-      `/api/product/list?keyword=${encodeURIComponent(keyword)}&page=1&page_size=${pageSize}&group=1`
+      `/api/product/list?keyword=${encodeURIComponent(keyword)}&page=1&page_size=${pageSize}&group=1`,
+      withRequestOptions(undefined, options)
     ),
   productList: (options: {
     keyword?: string;

@@ -37,6 +37,12 @@ class WorkflowService(BusinessService):
             remark=remark,
         )
 
+    def save_orders_batch(self, rows: list[dict], batch_id: str = "") -> dict:
+        return self.db.save_workflow_orders_batch(rows, batch_id=batch_id)
+
+    def find_saved_batch(self, rows: list[dict], batch_id: str) -> list[dict]:
+        return self.db.find_workflow_orders_batch(rows, batch_id)
+
     def list_orders(
         self,
         *,

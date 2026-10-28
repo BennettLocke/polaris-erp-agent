@@ -256,8 +256,7 @@ def process_single_image(image_path: str, caller, *, allow_legacy_split: bool = 
                 )
 
             child_results = [
-                item
-                for item in candidate_results
+                item for item in candidate_results
                 if not item.get("error") and bool(item.get("workflow_order_payload"))
             ]
             if len(child_results) >= 2:
@@ -345,6 +344,8 @@ def process_image_batch(image_paths: list[str], caller) -> dict:
 
         file_complete = bool(source_items) and all(
             not item.get("error") and bool(item.get("workflow_order_payload"))
+            and bool((item.get("parsed") or {}).get("product_id"))
+            and bool(str((item.get("parsed") or {}).get("color") or "").strip())
             for item in source_items
         )
         if not file_complete:
@@ -354,7 +355,7 @@ def process_image_batch(image_paths: list[str], caller) -> dict:
             "status": "success" if file_complete else "failed",
             "error": image_result.get("error") or next(
                 (str(item.get("error")) for item in source_items if item.get("error")),
-                "未识别到完整的设计稿信息" if not file_complete else "",
+                "未匹配到商品或颜色，请搜索选择" if not file_complete else "",
             ),
             "result": image_result,
         })
@@ -417,7 +418,13 @@ def _process_ocr_order(
     }
 
     parsed = parse_ocr_text_list(ocr_texts)
+    original_goods_name = parsed.get("goods_name") or ""
+    original_color = parsed.get("color") or ""
     parsed = repair_ocr_parsed_fields(parsed, caller)
+    parsed["original_goods_name"] = original_goods_name
+    parsed["original_color"] = original_color
+    parsed["raw_quantity"] = parsed.get("quantity")
+    parsed["raw_unit"] = parsed.get("unit") or "套"
     item["parsed"] = parsed
 
     goods_name = parsed.get("goods_name", "")
@@ -434,7 +441,7 @@ def _process_ocr_order(
     if product_info is None:
         if goods_name:
             item["product_warning"].append(goods_name)
-        logger.info(f"商品库未匹配，按识别礼盒名创建工作流: {goods_name}")
+        logger.info(f"商品库未匹配，等待用户选择真实商品: {goods_name}")
     else:
         parsed["product_id"] = product_info.get("id")
         parsed["product_info"] = product_info

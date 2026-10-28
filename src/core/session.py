@@ -1,6 +1,10 @@
 """会话状态管理 - 支持历史记录 + skill 暂停/恢复"""
 import json
+import os
 import re
+import tempfile
+import threading
+import weakref
 from pathlib import Path
 from src.utils import get_logger
 
@@ -9,6 +13,19 @@ logger = get_logger("sjagent.session")
 HISTORY_DIR = Path(__file__).parent.parent.parent / "data" / "sessions"
 CURRENT_SESSION_ID = "default"
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_SESSION_LOCKS_GUARD = threading.Lock()
+_SESSION_LOCKS = weakref.WeakValueDictionary()
+
+
+def session_operation_lock(session_id: str):
+    """Serialize a session's confirmation, cancellation and pending updates."""
+    key = normalize_session_id(session_id)
+    with _SESSION_LOCKS_GUARD:
+        lock = _SESSION_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _SESSION_LOCKS[key] = lock
+        return lock
 
 
 def normalize_session_id(session_id: str) -> str:
@@ -70,11 +87,21 @@ class SessionManager:
         return {"history": [], "pending": None, "meta": {}}
 
     def _save(self):
+        temporary = None
         try:
-            with open(self.file, "w", encoding="utf-8") as f:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.file.parent,
+                                             prefix=f".{self.session_id}-", suffix=".tmp", delete=False) as f:
+                temporary = Path(f.name)
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, self.file)
         except Exception as e:
             logger.warning(f"保存会话失败: {e}")
+            raise
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     # ---- 历史记录 ----
 

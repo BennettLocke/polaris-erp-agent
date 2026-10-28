@@ -9628,3 +9628,154 @@ textarea,
     max-height: calc(100vh - 240px);
   }
 }
+
+.sj-dialog-content.image-correction-dialog {
+  width: min(980px, calc(100vw - 32px));
+  max-height: min(92vh, 1000px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+}
+
+.image-correction-dialog .image-correction-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.image-correction-dialog .image-correction-rows {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.image-correction-dialog .image-correction-row {
+  min-width: 0;
+  padding: 16px 0;
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--sj-border);
+}
+
+.image-correction-dialog .image-correction-source {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.image-correction-dialog .image-correction-source img,
+.image-correction-dialog .image-correction-no-preview {
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+  background: var(--sj-soft);
+  border: 1px solid var(--sj-border);
+  border-radius: 6px;
+}
+
+.image-correction-dialog .image-correction-no-preview {
+  display: grid;
+  place-items: center;
+  color: var(--sj-muted);
+}
+
+.image-correction-dialog p,
+.image-correction-dialog dl {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.image-correction-dialog dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.image-correction-dialog dd { margin: 0; }
+
+.image-correction-dialog dt,
+.image-correction-dialog .image-correction-filename,
+.image-correction-dialog .image-correction-empty {
+  color: var(--sj-muted);
+  font-size: 13px;
+}
+
+.image-correction-dialog .image-correction-replacement {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  background: var(--sj-soft);
+  padding: 10px;
+  border-left: 3px solid var(--sj-border);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.image-correction-dialog .image-correction-search { position: relative; }
+.image-correction-dialog .image-correction-search input { padding-left: 34px; padding-right: 34px; }
+.image-correction-dialog .image-correction-search > svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--sj-muted);
+}
+.image-correction-dialog .image-correction-search > svg:last-child:not(:first-child) { left: auto; right: 10px; }
+
+.image-correction-dialog .image-correction-results {
+  max-height: 260px;
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+}
+
+.image-correction-dialog .image-correction-results header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.image-correction-dialog .image-correction-results header span { color: var(--sj-muted); }
+.image-correction-dialog .image-correction-skus { display: flex; flex-wrap: wrap; gap: 6px; }
+.image-correction-dialog .image-correction-skus button {
+  height: auto;
+  min-height: 52px;
+  max-width: 100%;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.image-correction-dialog .image-correction-skus button span { font-size: 12px; font-weight: 400; }
+.image-correction-dialog .image-correction-skus button[aria-pressed="true"] { outline: 2px solid var(--sj-muted); outline-offset: -2px; }
+.image-correction-dialog .image-correction-fields { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(70px, 1fr) minmax(0, 3fr); gap: 10px; }
+.image-correction-dialog .sj-field { min-width: 0; flex-shrink: 0; }
+.image-correction-dialog input { min-width: 0; width: 100%; }
+.image-correction-dialog .image-correction-error,
+.image-correction-dialog .image-correction-recognition-error { color: var(--sj-danger-foreground); font-size: 13px; overflow-wrap: anywhere; }
+.image-correction-dialog .image-correction-error { white-space: pre-wrap; }
+.image-correction-dialog > .image-correction-error { padding: 8px 10px; background: var(--sj-danger-soft); border: 1px solid var(--sj-danger-border); border-radius: 6px; }
+.image-correction-dialog > .sj-dialog-header,
+.image-correction-dialog > .sj-dialog-footer { flex-shrink: 0; }
+
+@media (max-width: 600px) {
+  .sj-dialog-content.image-correction-dialog { width: calc(100vw - 20px); max-height: 94dvh; padding: 14px; }
+  .image-correction-dialog .image-correction-source { grid-template-columns: 76px minmax(0, 1fr); gap: 10px; }
+  .image-correction-dialog .image-correction-source img,
+  .image-correction-dialog .image-correction-no-preview { width: 76px; height: 90px; }
+  .image-correction-dialog .image-correction-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .image-correction-dialog .image-correction-remark { grid-column: 1 / -1; }
+  .image-correction-dialog .sj-dialog-footer { flex-wrap: wrap; }
+  .image-correction-dialog .sj-dialog-footer button { white-space: normal; }
+}

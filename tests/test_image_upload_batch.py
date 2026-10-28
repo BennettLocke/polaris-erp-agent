@@ -11,6 +11,7 @@ from src.channels import http_api
 def _recognized_item(name: str, customer: str = "齐唯茶业") -> dict:
     return {
         "parsed": {
+            "product_id": 88,
             "customer_name": customer,
             "goods_name": name,
             "color": "红色",

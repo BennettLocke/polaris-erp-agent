@@ -58,6 +58,7 @@ import type {
   WorkbenchInventoryLookupRow
 } from "@/types";
 import { BagUploadDialog } from "./bag-upload-dialog";
+import { ImageWorkflowCorrectionEditor, imageCorrectionMessage } from "./image-workflow-correction-editor";
 
 type ChatRole = "user" | "assistant";
 
@@ -962,6 +963,7 @@ export function WorkbenchPage() {
   const [error, setError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const correctionRequestRef = useRef(false);
   const [bagUploadOpen, setBagUploadOpen] = useState(false);
   const bagUploadTriggerRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1253,21 +1255,52 @@ export function WorkbenchPage() {
   }
 
   async function confirmPending(nextState: Record<string, unknown>) {
+    if (confirming || isSending || correctionRequestRef.current) return;
+    const isCorrection = sessionSnapshot?.pending_action === "confirm_image_workflow_correction";
+    if (isCorrection) correctionRequestRef.current = true;
     setError("");
     setConfirming(true);
     try {
-      const data = await api.updateSessionPending(sessionId, nextState);
+      const data = await api.updateSessionPending(sessionId, nextState, isCorrection ? "confirm" : undefined);
       setSessionSnapshot(data.session);
+      if (isCorrection) {
+        const stillPending = data.session.has_pending && data.session.pending_action === "confirm_image_workflow_correction";
+        const response = imageCorrectionMessage(data.response, stillPending ? "请核对本批设计稿后重试。" : "本批设计稿校正已处理。");
+        appendMessage("assistant", response);
+        setConfirmOpen(Boolean(stillPending));
+        if (stillPending) setError(response);
+        void refreshSummary(false);
+        return;
+      }
       setConfirmOpen(false);
       await sendMessage("确认");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "确认失败");
+      setError(isCorrection ? imageCorrectionMessage(err instanceof Error ? err.message : "", "校正未提交，请核对当前批次后重试。") : err instanceof Error ? err.message : "确认失败");
     } finally {
+      if (isCorrection) correctionRequestRef.current = false;
       setConfirming(false);
     }
   }
 
   async function cancelPending() {
+    if (confirming || isSending || correctionRequestRef.current) return;
+    if (sessionSnapshot?.pending_action === "confirm_image_workflow_correction") {
+      correctionRequestRef.current = true;
+      setError("");
+      setConfirming(true);
+      try {
+        const data = await api.updateSessionPending(sessionId, sessionSnapshot.state, "cancel");
+        setSessionSnapshot(data.session);
+        setConfirmOpen(false);
+        appendMessage("assistant", imageCorrectionMessage(data.response, "本批设计稿已取消。"));
+      } catch {
+        setError("取消未成功，本批仍保留，请稍后重试。");
+      } finally {
+        correctionRequestRef.current = false;
+        setConfirming(false);
+      }
+      return;
+    }
     setConfirmOpen(false);
     await sendMessage("取消");
   }
@@ -2310,6 +2343,17 @@ function AgentConfirmDialog({
       });
       return next;
     });
+  }
+
+  if (session?.pending_action === "confirm_image_workflow_correction") {
+    return open ? <ImageWorkflowCorrectionEditor
+      key={String(session.state?.correction_batch_id || "current-correction")}
+      state={session.state || {}}
+      confirming={confirming}
+      error={error}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    /> : null;
   }
 
   return (

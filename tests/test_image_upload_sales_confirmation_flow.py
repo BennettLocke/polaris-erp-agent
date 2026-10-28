@@ -17,9 +17,10 @@ class FakeSession:
         return bool(self.saved)
 
 
-def _image_item(customer="测试客户", goods="喜悦半斤", color="红色", qty=2):
+def _image_item(customer="测试客户", goods="喜悦半斤", color="红色", qty=2, product_id=88):
     return {
         "parsed": {
+            "product_id": product_id,
             "customer_name": customer,
             "goods_name": goods,
             "color": color,
@@ -260,11 +261,14 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
     def test_auto_creates_workflow_then_saves_sales_confirmation_pending(self):
         session = FakeSession()
         captured_workflow_rows = []
+        captured_workflow_options = []
         captured_order_params = []
+        checkpoints_at_handoff = []
 
         class FakeWorkflowOrderFlow:
-            def _create_many(self, rows):
+            def _create_many(self, rows, **kwargs):
                 captured_workflow_rows.extend(rows)
+                captured_workflow_options.append(kwargs)
                 return {
                     "status": "done",
                     "reply": "已创建 1 个工作流订单：\n1. 测试客户 | 喜悦半斤 红色 | 2 | 单号 456",
@@ -274,6 +278,7 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
         class FakeOrderFlow:
             def execute(self, user_input, params=None):
                 captured_order_params.append(dict(params or {}))
+                checkpoints_at_handoff.append(session.saved[-1])
                 return {
                     "status": "ask",
                     "intent": "order",
@@ -285,33 +290,42 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
                     },
                 }
 
+        result = {"items": [_image_item()], "correction_batch_id": "success-single"}
         with patch("src.skills.workflow_order.workflow.WorkflowOrderWorkflow", FakeWorkflowOrderFlow), patch(
             "src.skills.order_flow.workflow.OrderFlowWorkflow", FakeOrderFlow
         ):
             response = http_api._handle_image_auto_workflow_sales_flow(
-                {"items": [_image_item()]},
+                result,
                 session,
                 "图片识别完成。",
             )
 
         self.assertEqual(len(captured_workflow_rows), 1)
+        self.assertEqual(captured_workflow_options, [{"atomic": True, "batch_id": "success-single"}])
+        self.assertEqual(captured_workflow_rows[0]["product_id"], 88)
         self.assertEqual(captured_order_params[0]["workflow_order_id"], 456)
         self.assertEqual(captured_order_params[0]["workflow_order_ids"], [456])
-        self.assertEqual(session.saved[0][0], "order")
-        self.assertEqual(session.saved[0][1]["pending_action"], "confirm_create_order")
-        self.assertEqual(session.saved[0][1]["workflow_order_ids"], [456])
+        self.assertEqual(captured_order_params[0]["products"][0]["product_id"], 88)
+        self.assertEqual(checkpoints_at_handoff, [(
+            "workflow", {"pending_action": "image_workflows_created", "workflow_order_ids": [456]},
+        )])
+        self.assertEqual(len(session.saved), 2)
+        self.assertEqual(session.saved[-1][0], "order")
+        self.assertEqual(session.saved[-1][1]["pending_action"], "confirm_create_order")
+        self.assertEqual(session.saved[-1][1]["workflow_order_ids"], [456])
         self.assertIn("工作流已创建，下面确认是否按识别内容开销售单", response)
         self.assertNotIn("是否创建", response)
         self.assertNotIn("是否需要继续开销售单", response)
-        self.assertNotIn("confirm_image_sales", str(session.saved[0][1]))
+        self.assertNotIn("confirm_image_sales", str(session.saved[-1][1]))
 
     def test_same_customer_batch_creates_one_sales_pending_with_all_workflow_ids(self):
         session = FakeSession()
         captured_order_params = []
+        captured_workflow_calls = []
 
         class FakeWorkflowOrderFlow:
-            def _create_many(self, rows):
-                self.rows = rows
+            def _create_many(self, rows, **kwargs):
+                captured_workflow_calls.append((rows, kwargs))
                 return {
                     "status": "done",
                     "reply": "已创建 2 个工作流订单",
@@ -334,7 +348,7 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
         result = {
             "items": [
                 _image_item(customer="客户A", goods="喜悦半斤", color="红色"),
-                _image_item(customer="客户A", goods="岩味三两", color="蓝色"),
+                _image_item(customer="客户A", goods="岩味三两", color="蓝色", product_id=89),
             ]
         }
         with patch("src.skills.workflow_order.workflow.WorkflowOrderWorkflow", FakeWorkflowOrderFlow), patch(
@@ -343,15 +357,28 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
             http_api._handle_image_auto_workflow_sales_flow(result, session, "图片识别完成。")
 
         self.assertEqual(len(captured_order_params), 1)
+        self.assertEqual(len(captured_workflow_calls), 1)
+        self.assertTrue(result["correction_batch_id"])
+        rows, options = captured_workflow_calls[0]
+        self.assertEqual(options, {"atomic": True, "batch_id": result["correction_batch_id"]})
+        self.assertEqual([row["product_id"] for row in rows], [88, 89])
         self.assertEqual(len(captured_order_params[0]["products"]), 2)
+        self.assertEqual([row["product_id"] for row in captured_order_params[0]["products"]], [88, 89])
         self.assertEqual(captured_order_params[0]["workflow_order_ids"], [456, 457])
-        self.assertEqual(session.saved[0][1]["workflow_order_ids"], [456, 457])
+        self.assertEqual(session.saved[0], (
+            "workflow", {"pending_action": "image_workflows_created", "workflow_order_ids": [456, 457]},
+        ))
+        self.assertEqual(session.saved[-1][0], "order")
+        self.assertEqual(session.saved[-1][1]["pending_action"], "confirm_create_order")
+        self.assertEqual(session.saved[-1][1]["workflow_order_ids"], [456, 457])
 
     def test_multi_customer_images_create_workflows_but_do_not_merge_sales_pending(self):
         session = FakeSession()
+        captured_workflow_options = []
 
         class FakeWorkflowOrderFlow:
-            def _create_many(self, rows):
+            def _create_many(self, rows, **kwargs):
+                captured_workflow_options.append(kwargs)
                 return {
                     "status": "done",
                     "reply": "已创建 2 个工作流订单",
@@ -370,9 +397,29 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
             response = http_api._handle_image_auto_workflow_sales_flow(result, session, "图片识别完成。")
 
         self.assertFalse(session.has_pending())
+        self.assertEqual(captured_workflow_options, [{"atomic": True, "batch_id": result["correction_batch_id"]}])
         self.assertIn("识别到多个客户，不能合并成一张销售单", response)
         self.assertNotIn("是否创建", response)
         self.assertNotIn("是否需要继续开销售单", response)
+
+    def test_unmatched_image_blocks_entire_batch_before_workflow_or_sales_writes(self):
+        session = FakeSession()
+        unmatched = _image_item(goods="岩味三两", product_id=None)
+        with patch("src.skills.workflow_order.workflow.WorkflowOrderWorkflow") as workflow, patch(
+            "src.skills.order_flow.workflow.OrderFlowWorkflow"
+        ) as sales:
+            response = http_api._handle_image_auto_workflow_sales_flow(
+                {"items": [_image_item(), unmatched]}, session, "图片识别完成。"
+            )
+        workflow.assert_not_called()
+        sales.assert_not_called()
+        self.assertEqual(session.saved[0][0], "workflow")
+        state = session.saved[0][1]
+        self.assertEqual(state["pending_action"], "confirm_image_workflow_correction")
+        self.assertEqual(len(state["parsed_list"]), 2)
+        self.assertEqual(state["parsed_list"][0]["product_id"], 88)
+        self.assertFalse(state["parsed_list"][1].get("product_id"))
+        self.assertIn("校准", response)
 
     def test_image_without_workflow_payload_still_enters_sales_confirmation_without_extra_question(self):
         session = FakeSession()
@@ -394,9 +441,10 @@ class ImageUploadSalesConfirmationFlowTest(unittest.TestCase):
         with patch("src.skills.order_flow.workflow.OrderFlowWorkflow", FakeOrderFlow):
             response = http_api._handle_image_auto_workflow_sales_flow(result, session, "图片识别完成。")
 
-        self.assertEqual(session.saved[0][0], "order")
-        self.assertEqual(session.saved[0][1]["pending_action"], "confirm_create_order")
-        self.assertNotIn("confirm_image_sales", str(session.saved[0][1]))
+        self.assertEqual(session.saved[-1][0], "order")
+        self.assertEqual(session.saved[-1][1]["pending_action"], "confirm_create_order")
+        self.assertEqual(session.saved[-1][1]["products"][0]["product_id"], 88)
+        self.assertNotIn("confirm_image_sales", str(session.saved[-1][1]))
         self.assertNotIn("是否需要继续开销售单", response)
 
 
