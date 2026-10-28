@@ -23,7 +23,7 @@ after(async () => { await browser?.close(); });
 async function fixture(state = initial()) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const errors = [];
-  const requests = { search: [], pending: [], chat: [], gate: null, fail: false, remain: false, searchFail: false };
+  const requests = { search: [], pending: [], chat: [], gate: null, fail: false, remain: false, searchFail: false, nextSession: null };
   context.on("page", (page) => page.on("pageerror", (e) => errors.push(e.message)));
   await context.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -44,7 +44,8 @@ async function fixture(state = initial()) {
       requests.pending.push(body);
       if (requests.gate) await requests.gate;
       if (requests.fail) status = 409;
-      data = { session_id: body.session_id, response: requests.remain ? "请核对第二张设计稿" : "本批已处理", session: requests.remain ? snapshot(body.state) : { has_pending: body.execute !== "cancel", pending_action: body.execute === "cancel" ? "" : "confirm_image_sales", state: body.state } };
+      const salesState = { pending_action: "confirm_create_order", customer: body.state.customer_name, products: (body.state.parsed_list || []).map((item) => ({ name: item.goods_name, color: item.color, qty: item.raw_quantity, unit: item.raw_unit, price: 21, warehouse_id: 2 })) };
+      data = { session_id: body.session_id, response: requests.remain ? "请核对第二张设计稿" : "本批已处理", session: requests.remain ? snapshot(body.state) : requests.nextSession || { has_pending: body.execute !== "cancel", pending_intent: "order", pending_action: body.execute === "cancel" ? "" : "confirm_create_order", state: salesState } };
     } else if (url.pathname === "/api/agent/chat") {
       requests.chat.push(route.request().postDataJSON());
       data = { response: "取消", session: { has_pending: false } };
@@ -99,6 +100,63 @@ test("correction uses explicit SKU selection, immutable OCR and full atomic payl
     assert.equal(sent.parsed_list[0].order_date, "2026-10-28");
     assert.equal(f.requests.chat.length, 0);
     assert.ok(f.requests.search.every((r) => r.listedOnly !== "1"));
+  } finally { await f.close(); }
+});
+
+test("successful correction automatically opens the next sales confirmation without confirming it", async () => {
+  const f = await fixture();
+  try {
+    await select(f.rows.first(), "第一款");
+    await select(f.rows.nth(1), "第二款");
+    await f.page.getByRole("button", { name: "确认校正并继续" }).click();
+    const sales = f.page.getByRole("dialog", { name: "销售单确认", exact: true });
+    await sales.waitFor();
+    assert.equal(await sales.getByRole("button", { name: "确认执行", exact: true }).isEnabled(), true);
+    assert.equal(await sales.locator(".confirm-section-card").filter({ hasText: "销售商品 2" }).locator("input").first().inputValue(), "商品第二款");
+    assert.equal(f.requests.pending.length, 1);
+    assert.equal(f.requests.chat.length, 0);
+  } finally { await f.close(); }
+});
+
+for (const count of [3, 6]) test(`${count} failed designs each require correction and continue into one sales confirmation`, async () => {
+  const state = initial();
+  state.parsed_list = Array.from({ length: count }, (_, i) => row(`failed-${i + 1}`));
+  const f = await fixture(state);
+  try {
+    assert.equal(await f.rows.count(), count);
+    const submit = f.page.getByRole("button", { name: "确认校正并继续" });
+    for (let index = 0; index < count; index++) {
+      assert.equal(await submit.isDisabled(), true);
+      await select(f.rows.nth(index), `校正款${index + 1}`);
+    }
+    assert.equal(await submit.isEnabled(), true);
+    await submit.click();
+    const sales = f.page.getByRole("dialog", { name: "销售单确认", exact: true });
+    await sales.waitFor();
+    assert.equal(await sales.getByText(/^销售商品 \d+$/, { exact: true }).count(), count);
+    const rows = f.requests.pending[0].state.parsed_list;
+    assert.deepEqual(rows.map((item) => item.correction_id), state.parsed_list.map((item) => item.correction_id));
+    assert.deepEqual(rows.map((item) => item.goods_name), Array.from({ length: count }, (_, i) => `商品校正款${i + 1}`));
+    assert.equal(f.requests.pending.length, 1);
+    assert.equal(f.requests.chat.length, 0);
+    const dir = path.join(os.tmpdir(), "sjagent-image-correction-frontend");
+    await fs.mkdir(dir, { recursive: true });
+    for (const width of [1280, 390]) {
+      await f.page.setViewportSize({ width, height: 844 });
+      assert.equal(await sales.evaluate((el) => el.scrollWidth <= el.clientWidth), true);
+      await f.page.screenshot({ path: path.join(dir, `sales-after-correction-${count}-${width}.png`) });
+    }
+  } finally { await f.close(); }
+});
+
+test("completed correction with no next pending action closes instead of opening an empty confirmation", async () => {
+  const f = await fixture();
+  try {
+    f.requests.nextSession = { has_pending: false, pending_action: "", state: {} };
+    await select(f.rows.first(), "完成款");
+    await f.page.getByRole("button", { name: "确认校正并继续" }).click();
+    await f.page.getByRole("dialog").waitFor({ state: "hidden" });
+    assert.equal(f.requests.chat.length, 0);
   } finally { await f.close(); }
 });
 

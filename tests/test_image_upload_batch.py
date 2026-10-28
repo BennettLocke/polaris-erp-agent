@@ -164,6 +164,45 @@ class ImageUploadBatchTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("6", response.get_json()["msg"])
 
+    def test_arbitrary_failed_batch_sizes_stage_every_design_and_cancel_without_orders(self):
+        for count in (1, 3, 6):
+            for mixed in (False, True):
+                with self.subTest(count=count, mixed=mixed):
+                    items, files = [], []
+                    for index in range(count):
+                        item = _recognized_item(f"原识别款-{index}")
+                        item["source_image_index"] = index
+                        success = mixed and index == 0 and count > 1
+                        if not success:
+                            item["parsed"].pop("product_id")
+                            item["error"] = "未匹配到商品或颜色"
+                        items.append(item)
+                        files.append({"image_path": f"path-{index}", "status": "success" if success else "failed", "error": item.get("error", ""), "result": item})
+                    failed = sum(bool(item.get("error")) for item in items)
+                    result = {"items": items, "files": files, "total_files": count, "success_files": count - failed, "failed_files": failed, "incomplete": True}
+                    with patch("src.core.nodes.image_workflow.process_image_batch", return_value=result), \
+                            patch.object(http_api, "_handle_image_auto_workflow_sales_flow") as auto_flow, \
+                            patch.object(http_api, "get_workflow_service") as workflow_service, \
+                            patch("src.skills.workflow_order.workflow.WorkflowOrderWorkflow.resume") as resume:
+                        workflow_service.return_value.find_saved_batch.return_value = []
+                        response = self._post(batch_id=f"failed-{count}-{mixed}", count=count)
+                        self.assertEqual(response.status_code, 200)
+                        data = response.get_json()["data"]
+                        self.assertEqual(data["session"]["pending_action"], "confirm_image_workflow_correction")
+                        state = data["session"]["state"]
+                        rows = state["parsed_list"]
+                        self.assertEqual(len(rows), count)
+                        self.assertEqual(len({row["correction_id"] for row in rows}), count)
+                        self.assertEqual([row["source_filename"] for row in rows], [f"design-{index}.png" for index in range(count)])
+                        self.assertEqual(sum(row["recognition_status"] == "failed" for row in rows), failed)
+                        self.assertIn(f"第 {count} 张", data["response"])
+                        cancelled = self.client.post("/api/session/pending", json={"session_id": "batch-session", "state": state, "execute": "cancel"})
+                        self.assertEqual(cancelled.status_code, 200)
+                        self.assertFalse(cancelled.get_json()["data"]["session"]["has_pending"])
+                        auto_flow.assert_not_called()
+                        resume.assert_not_called()
+                        workflow_service.return_value.save_orders_batch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

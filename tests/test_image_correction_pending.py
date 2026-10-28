@@ -108,6 +108,11 @@ class ImageCorrectionPendingTests(unittest.TestCase):
         call.assert_called_once()
 
     def test_real_correction_flow_uses_one_atomic_batch_and_links_every_result(self):
+        for count in (2, 3, 6):
+            with self.subTest(count=count):
+                self._assert_real_correction_batch(count)
+
+    def _assert_real_correction_batch(self, count):
         from unittest.mock import Mock
         from src.engine.native_db import NativeDBClient
         from src.services.business.workflow import WorkflowService
@@ -123,7 +128,7 @@ class ImageCorrectionPendingTests(unittest.TestCase):
         caller = Mock()
         caller.call.side_effect = lambda name, **kwargs: self.products.get(kwargs["product_id"]) if name == "product_info" else None
         state = deepcopy(self.state)
-        state["parsed_list"].append({**state["parsed_list"][0], "correction_id": "row-2", "quantity": 2, "unit": "套"})
+        state["parsed_list"].extend({**state["parsed_list"][0], "correction_id": f"row-{index}", "quantity": index, "unit": "套"} for index in range(2, count + 1))
         self.session.save_pending("workflow", state)
         with patch("src.skills.workflow_order.workflow.get_tool_caller", return_value=caller), \
                 patch("src.services.business.workflow.get_workflow_service", return_value=WorkflowService(db)), \
@@ -133,11 +138,11 @@ class ImageCorrectionPendingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(connection.transactions, 1)
         self.assertEqual(connection.commits, 1)
-        self.assertEqual(len(connection.saved["orders"]), 2)
-        self.assertEqual([row["quantity"] for row in connection.saved["orders"]], [24, 2])
+        self.assertEqual(len(connection.saved["orders"]), count)
+        self.assertEqual([row["quantity"] for row in connection.saved["orders"]], [24, *range(2, count + 1)])
         params = order.return_value.execute.call_args.kwargs["params"]
-        self.assertEqual(params["workflow_order_ids"], [1, 2])
-        self.assertEqual([p["product_id"] for p in params["products"]], [44, 44])
+        self.assertEqual(params["workflow_order_ids"], list(range(1, count + 1)))
+        self.assertEqual([p["product_id"] for p in params["products"]], [44] * count)
         self.assertEqual(self.post(state).status_code, 409)
 
     def test_stale_nonexecuting_update_cannot_restore_correction_after_success(self):

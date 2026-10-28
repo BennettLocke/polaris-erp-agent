@@ -1267,7 +1267,7 @@ export function WorkbenchPage() {
         const stillPending = data.session.has_pending && data.session.pending_action === "confirm_image_workflow_correction";
         const response = imageCorrectionMessage(data.response, stillPending ? "请核对本批设计稿后重试。" : "本批设计稿校正已处理。");
         appendMessage("assistant", response);
-        setConfirmOpen(Boolean(stillPending));
+        setConfirmOpen(isConfirmablePending(data.session));
         if (stillPending) setError(response);
         void refreshSummary(false);
         return;
