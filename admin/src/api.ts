@@ -40,6 +40,7 @@ import type {
   ProductCategorySavePayload,
   ProductItem,
   ProductMediaAsset,
+  ProductModelAsset,
   ProductOptions,
   ProductSavePayload,
   ProductUploadResult,
@@ -557,6 +558,32 @@ export const api = {
     form.append("image", file, file.name || `product_${Date.now()}.jpg`);
     return requestForm<ProductUploadResult>("/api/product/upload", form);
   },
+  uploadProductModel: (file: File, onProgress?: (percent: number) => void): Promise<ProductModelAsset> =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/product/models/upload");
+      xhr.withCredentials = true;
+      xhr.timeout = 300_000;
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(100, Math.floor(event.loaded / event.total * 100)));
+      };
+      xhr.onload = () => {
+        let payload: ApiResult<ProductModelAsset> | null = null;
+        try { payload = JSON.parse(xhr.responseText) as ApiResult<ProductModelAsset>; } catch { /* Keep a readable error for non-JSON proxy responses. */ }
+        if (xhr.status < 200 || xhr.status >= 300 || payload?.code !== 0 || !payload.data?.id || !payload.data.url) {
+          reject(new ApiError(payload?.msg || (xhr.status === 413 ? "模型文件最多允许 50MB" : "模型上传失败，请重试"), xhr.status, payload?.code ?? -1));
+          return;
+        }
+        resolve(payload.data);
+      };
+      xhr.onerror = () => reject(new ApiError("网络中断，模型上传结果未知，请稍后重试", 0));
+      xhr.ontimeout = () => reject(new ApiError("模型上传超时，请稍后重试", 408));
+      const form = new FormData();
+      form.append("model", file);
+      xhr.send(form);
+    }),
+  deletePendingProductModel: (assetId: number) =>
+    request<{ id: number; storage_deleted: boolean }>(`/api/product/models/${assetId}/pending`, { method: "DELETE" }),
   cropProductImageSquare: (payload: SquareCropPayload) =>
     request<ProductUploadResult>("/api/product/crop-square", {
       method: "POST",

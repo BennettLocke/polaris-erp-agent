@@ -1388,6 +1388,7 @@ class NativeDBClient:
         if not rows:
             return None
         product = self._row_to_product(rows[0])
+        product["model"] = self.product_model_for_spu(int(product["spu_id"])) if product.get("spu_id") else None
         if listed_only:
             product = self._hydrate_product_group_summary(product, listed_only=True)
         return product
@@ -2683,7 +2684,158 @@ class NativeDBClient:
         )
         return {"code": 0, "data": {"ids": ids, "affected": affected}}
 
-    def save_product(self, payload: dict) -> dict:
+    @staticmethod
+    def _product_model_asset_dict(row: dict) -> dict:
+        asset = dict(row)
+        materials = _json_loads(asset.pop("materials_json", None), [])
+        asset["materials"] = materials if isinstance(materials, list) else []
+        for field in ("created_at", "updated_at", "deleted_at"):
+            if asset.get(field) is not None:
+                asset[field] = str(asset[field])
+        return asset
+
+    @staticmethod
+    def _product_model_positive_id(value: Any, field: str) -> int:
+        if type(value) is not int or value <= 0:
+            label = {"model_asset_id": "模型资产ID", "spu_id": "商品ID", "byte_size": "模型文件大小"}[field]
+            raise ValueError(f"{label}必须为正整数")
+        return value
+
+    @staticmethod
+    def _product_model_operator(operator_user_id: Any) -> int:
+        actor = None if isinstance(operator_user_id, bool) else _coerce_user_id(operator_user_id)
+        if actor is None:
+            raise ValueError("请先登录后再操作未绑定模型")
+        return actor
+
+    def record_product_model_asset(self, metadata: dict, operator_user_id: Any) -> dict:
+        actor = self._product_model_operator(operator_user_id)
+        byte_size = self._product_model_positive_id(metadata.get("byte_size"), "byte_size")
+        animation_count = metadata.get("animation_count", 0)
+        if type(animation_count) is not int or animation_count < 0:
+            raise ValueError("模型动画数量必须为非负整数")
+        materials = metadata.get("materials", [])
+        if not isinstance(materials, list):
+            raise ValueError("模型材质数据必须为列表")
+        values = []
+        for field, limit in (("oss_key", 500), ("url", 1000), ("file_name", 255)):
+            value = metadata.get(field)
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                label = {"oss_key": "模型存储路径", "url": "模型访问地址", "file_name": "模型文件名"}[field]
+                raise ValueError(f"{label}无效或超出长度限制")
+            values.append(value.strip())
+        sha256 = metadata.get("sha256")
+        if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+            raise ValueError("模型文件校验值无效")
+        now = _now()
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO product_model_asset
+                    (oss_key, url, file_name, byte_size, sha256, animation_count,
+                     materials_json, uploaded_by, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (*values, byte_size, sha256.lower(), animation_count, _json_dumps(materials), actor, now, now),
+            )
+            cursor.execute("SELECT * FROM product_model_asset WHERE id=%s", (cursor.lastrowid,))
+            asset = self._product_model_asset_dict(cursor.fetchone())
+        return asset
+
+    def product_model_asset(self, asset_id: int) -> dict | None:
+        asset_id = self._product_model_positive_id(asset_id, "model_asset_id")
+        rows = self.query(
+            "SELECT * FROM product_model_asset WHERE id=%s AND deleted_at IS NULL LIMIT 1",
+            (asset_id,),
+        )
+        return self._product_model_asset_dict(rows[0]) if rows else None
+
+    def product_model_for_spu(self, spu_id: int) -> dict | None:
+        spu_id = self._product_model_positive_id(spu_id, "spu_id")
+        rows = self.query(
+            """
+            SELECT a.* FROM product_model_asset a
+            JOIN product_model_binding b ON b.model_asset_id=a.id
+            JOIN product_spu sp ON sp.id=b.spu_id
+            WHERE b.spu_id=%s AND a.deleted_at IS NULL AND sp.deleted_at IS NULL LIMIT 1
+            """,
+            (spu_id,),
+        )
+        return self._product_model_asset_dict(rows[0]) if rows else None
+
+    def delete_pending_product_model_asset(self, asset_id: int, operator_user_id: Any) -> dict:
+        """Claim or retry OSS cleanup without ever restoring a tombstoned upload."""
+        asset_id = self._product_model_positive_id(asset_id, "model_asset_id")
+        actor = self._product_model_operator(operator_user_id)
+        with self.transaction() as cursor:
+            # Binding and deletion take this same row lock before checking state.
+            cursor.execute("SELECT * FROM product_model_asset WHERE id=%s FOR UPDATE", (asset_id,))
+            asset = cursor.fetchone()
+            if not asset:
+                raise ValueError("模型资产不存在")
+            if asset.get("origin_spu_id") is not None or asset.get("uploaded_by") != actor:
+                raise ValueError("仅上传者可删除从未绑定过商品的模型")
+            cursor.execute(
+                "SELECT spu_id FROM product_model_binding WHERE model_asset_id=%s", (asset_id,),
+            )
+            if cursor.fetchone():
+                raise ValueError("已绑定商品的模型不能删除")
+            if asset.get("deleted_at") is None:
+                now = _now()
+                cursor.execute(
+                    "UPDATE product_model_asset SET deleted_at=%s, updated_at=%s WHERE id=%s",
+                    (now, now, asset_id),
+                )
+                asset.update(deleted_at=now, updated_at=now)
+            claimed = self._product_model_asset_dict(asset)
+        return claimed
+
+    def _save_product_model_binding(self, cursor, spu_id: int, asset_id: int | None, operator_user_id: Any) -> None:
+        # Serialize replacements and deletion on the SPU before taking an asset lock.
+        cursor.execute("SELECT id FROM product_spu WHERE id=%s AND deleted_at IS NULL FOR UPDATE", (spu_id,))
+        if not cursor.fetchone():
+            raise ValueError("商品不存在或已删除")
+        if asset_id is None:
+            cursor.execute("DELETE FROM product_model_binding WHERE spu_id=%s", (spu_id,))
+            return
+        cursor.execute("SELECT * FROM product_model_asset WHERE id=%s FOR UPDATE", (asset_id,))
+        asset = cursor.fetchone()
+        if not asset or asset.get("deleted_at") is not None:
+            raise ValueError("模型资产不存在或已删除")
+        origin_spu_id = asset.get("origin_spu_id")
+        if origin_spu_id is not None and int(origin_spu_id) != spu_id:
+            raise ValueError("同一模型不能用于不同商品，仅同一商品的不同颜色可共享")
+        if origin_spu_id is None:
+            actor = self._product_model_operator(operator_user_id)
+            if asset.get("uploaded_by") != actor:
+                raise ValueError("仅上传者可绑定尚未使用的模型")
+        # The asset lock/origin owns synchronization; a missing binding must not gap-lock.
+        cursor.execute(
+            "SELECT spu_id FROM product_model_binding WHERE model_asset_id=%s", (asset_id,),
+        )
+        binding = cursor.fetchone()
+        if binding and int(binding["spu_id"]) != spu_id:
+            raise ValueError("该模型已绑定其他商品")
+        now = _now()
+        if origin_spu_id is None:
+            cursor.execute(
+                "UPDATE product_model_asset SET origin_spu_id=%s, updated_at=%s WHERE id=%s",
+                (spu_id, now, asset_id),
+            )
+        cursor.execute(
+            """
+            INSERT INTO product_model_binding (spu_id, model_asset_id, created_at, updated_at)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE model_asset_id=VALUES(model_asset_id), updated_at=VALUES(updated_at)
+            """,
+            (spu_id, asset_id, now, now),
+        )
+
+    def save_product(self, payload: dict, *, operator_user_id: Any = None) -> dict:
+        model_requested = "model_asset_id" in payload
+        model_asset_id = payload.get("model_asset_id")
+        if model_requested and model_asset_id is not None:
+            model_asset_id = self._product_model_positive_id(model_asset_id, "model_asset_id")
         listing_requested = "is_listed" in payload
         listing_state = payload.get("is_listed")
         if listing_requested and (type(listing_state) not in (bool, int) or listing_state not in (0, 1)):
@@ -2771,6 +2923,9 @@ class NativeDBClient:
                         spu_id,
                     ),
                 )
+
+            if model_requested:
+                self._save_product_model_binding(cursor, int(spu_id), model_asset_id, operator_user_id)
 
             saved_ids: list[int] = []
             colors: list[str] = []
@@ -3017,6 +3172,15 @@ class NativeDBClient:
             spu_ids, seed_sku_ids = self._product_spu_ids_from_inputs(ids, cursor)
             if not spu_ids:
                 return {"code": 400, "msg": "没有可删除的商品"}
+            spu_ids = sorted(spu_ids)
+            placeholders = ",".join(["%s"] * len(spu_ids))
+            cursor.execute(
+                f"SELECT id FROM product_spu WHERE id IN ({placeholders}) AND deleted_at IS NULL ORDER BY id FOR UPDATE",
+                spu_ids,
+            )
+            spu_ids = [int(row["id"]) for row in cursor.fetchall()]
+            if not spu_ids:
+                return {"code": 400, "msg": "没有可删除的商品"}
             placeholders = ",".join(["%s"] * len(spu_ids))
             cursor.execute(
                 f"SELECT id FROM product_sku WHERE spu_id IN ({placeholders}) AND deleted_at IS NULL",
@@ -3041,6 +3205,7 @@ class NativeDBClient:
                 [now, now] + spu_ids,
             )
             spu_affected = int(cursor.rowcount or 0)
+            cursor.execute(f"DELETE FROM product_model_binding WHERE spu_id IN ({placeholders})", spu_ids)
         if not all_sku_ids:
             all_sku_ids = seed_sku_ids
         return {

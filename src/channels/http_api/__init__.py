@@ -113,6 +113,7 @@ MAX_IMAGE_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_IMAGE_UPLOAD_BYTES") or
 MAX_BAG_ARCHIVE_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_BAG_ARCHIVE_UPLOAD_BYTES") or 100 * 1024 * 1024)
 MAX_IMAGE_BATCH_FILES = int(os.environ.get("SJAGENT_MAX_IMAGE_BATCH_FILES") or 6)
 MAX_IMAGE_BATCH_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_IMAGE_BATCH_UPLOAD_BYTES") or 100 * 1024 * 1024)
+MAX_MODEL_UPLOAD_BYTES = int(os.environ.get("SJAGENT_MAX_MODEL_UPLOAD_BYTES") or 50 * 1024 * 1024)
 MAX_IMAGE_PIXELS = int(os.environ.get("SJAGENT_MAX_IMAGE_PIXELS") or 24_000_000)
 DEFAULT_CROP_IMAGE_HOSTS = {"img.513sjbz.com"}
 DEFAULT_CROP_IMAGE_HOST_SUFFIXES = (".aliyuncs.com",)
@@ -125,6 +126,8 @@ class WorkbenchUploadRequest(Request):
     @property
     def max_content_length(self):
         # Flask 3.0 has no per-request limit setter. Leave other routes unchanged.
+        if self.path == "/api/product/models/upload":
+            return MAX_MODEL_UPLOAD_BYTES + 1024 * 1024
         if self.path in {"/api/images/upload", "/api/product/bag-upload", "/api/images/upload-batch"}:
             if self.path == "/api/images/upload-batch":
                 return MAX_IMAGE_BATCH_UPLOAD_BYTES + 1024 * 1024
@@ -147,6 +150,8 @@ def _upload_too_large(error):
     image_mb = MAX_IMAGE_UPLOAD_BYTES / (1024 * 1024)
     if request.path == "/api/images/upload-batch":
         message = f"本批图片过大，最多 {MAX_IMAGE_BATCH_UPLOAD_BYTES / (1024 * 1024):g}MB；单张图片最多 {image_mb:g}MB。"
+    elif request.path == "/api/product/models/upload":
+        message = f"模型文件过大，最多允许 {MAX_MODEL_UPLOAD_BYTES / (1024 * 1024):g}MB。"
     elif request.path in {"/api/images/upload", "/api/product/bag-upload"}:
         archive_mb = MAX_BAG_ARCHIVE_UPLOAD_BYTES / (1024 * 1024)
         message = f"上传文件过大：ZIP 压缩包最多 {archive_mb:g}MB，单张图片最多 {image_mb:g}MB。请拆分压缩包后重试。"
@@ -414,6 +419,7 @@ def _permission_denied(permission: str):
 
 
 API_PERMISSION_RULES = [
+    ({"POST", "DELETE"}, re.compile(r"^/api/product/models/(upload|\d+/pending)$"), "设置"),
     ({"POST"}, re.compile(r"^/api/settings/number/sku$"), "设置"),
     ({"GET", "POST"}, re.compile(r"^/api/settings/system/"), "设置"),
     ({"GET", "POST"}, re.compile(r"^/api/settings/manufacturers$"), "设置"),
@@ -5157,8 +5163,15 @@ def product_save_api():
         body = request.get_json(silent=True)
         if body is None:
             body = request.form.to_dict(flat=True)
-        result = get_product_service().save(body or {})
+        payload = body or {}
+        if "model_asset_id" in payload:
+            from src.engine.native_db import current_native_operator_user_id
+            result = get_product_service().save(payload, operator_user_id=current_native_operator_user_id())
+        else:
+            result = get_product_service().save(payload)
         return jsonify(result)
+    except ValueError as e:
+        return jsonify({"code": 400, "msg": str(e)}), 400
     except Exception as e:
         logger.error(f"商品保存异常: {e}")
         return _api_exception_response(e)
@@ -5293,6 +5306,10 @@ def product_upload_api():
     except Exception as e:
         logger.error(f"商品图片上传异常: {e}")
         return _api_exception_response(e)
+
+
+from .product_models import register_product_model_routes
+register_product_model_routes(app)
 
 
 @app.route("/api/product/crop-square", methods=["POST"])

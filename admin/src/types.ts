@@ -484,6 +484,7 @@ export type CustomerBalanceActionPayload = {
 };
 
 export type SalesProduct = {
+  model?: ProductModelAsset | null;
   id?: number;
   item_id?: number;
   product_id?: number;
@@ -571,6 +572,7 @@ export type ProductOptions = {
 };
 
 export type ProductSavePayload = {
+  model_asset_id?: number | null;
   id?: string | number;
   title: string;
   product_type?: string;
@@ -598,6 +600,17 @@ export type ProductSavePayload = {
       extends: string;
     }>;
   }>;
+};
+
+export type ProductModelAsset = {
+  id: number;
+  url: string;
+  file_name: string;
+  byte_size: number;
+  sha256: string;
+  animation_count: number;
+  materials: Array<{ index: number; name: string }>;
+  created_at?: string;
 };
 
 export type ProductUploadResult = {

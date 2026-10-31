@@ -83,11 +83,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { queryKeys } from "@/lib/admin-query";
+import { ProductModelEditor } from "./product-model-editor";
+import { queueStagedModelUploads, releaseStagedModelUploads } from "./product-model-staging";
 import type {
   ProductCategory,
   ProductItem,
   ProductManufacturer,
   ProductMediaAsset,
+  ProductModelAsset,
   ProductSavePayload,
   ProductStatusOption,
   TaobaoDetailExportStep,
@@ -1256,6 +1259,11 @@ function ProductEditorDialog({
   const [detailPreviewIndex, setDetailPreviewIndex] = useState<number | null>(null);
   const [specs, setSpecs] = useState<ProductSpecForm[]>([]);
   const [mediaAssets, setMediaAssets] = useState<ProductMediaAsset[]>([]);
+  const [model, setModel] = useState<ProductModelAsset | null>(null);
+  const [modelChanged, setModelChanged] = useState(false);
+  const [modelUploading, setModelUploading] = useState(false);
+  const stagedModels = useRef(new Set<number>());
+  const pendingModelCleanup = useRef(new Set<number>());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1288,10 +1296,32 @@ function ProductEditorDialog({
     setDetailImages(Array.from(new Set(detailImagesFromProduct(productData))));
     setSpecs(productSpecRows(productData, nextUnits));
     setMediaAssets(Array.isArray(productData.media_assets) ? productData.media_assets : []);
+    setModel(productData.model || null);
+    setModelChanged(false);
   }
+
+  const retryModelCleanup = useCallback(async (attempt = 0): Promise<void> => {
+    await releaseStagedModelUploads(pendingModelCleanup.current, api.deletePendingProductModel);
+    if (pendingModelCleanup.current.size && attempt < 2) {
+      window.setTimeout(() => { void retryModelCleanup(attempt + 1); }, 1000);
+    }
+  }, []);
+
+  const releaseStagedModels = useCallback(async (keepId?: number): Promise<void> => {
+    queueStagedModelUploads(stagedModels.current, pendingModelCleanup.current, keepId);
+    await retryModelCleanup();
+  }, [retryModelCleanup]);
+
+  useEffect(() => {
+    if (!open) void releaseStagedModels();
+    return () => { if (!open) void releaseStagedModels(); };
+  }, [open, releaseStagedModels]);
+
+  useEffect(() => () => { void releaseStagedModels(); }, [releaseStagedModels]);
 
   useEffect(() => {
     if (!product) return;
+    let current = true;
     setError("");
     setCropError("");
     setPendingSquareCrop(null);
@@ -1315,6 +1345,7 @@ function ProductEditorDialog({
       })
     ])
       .then(([detail, options]) => {
+        if (!current) return;
         const optionProduct = productDataFromOptions(options);
         const nextCategories = options.product_category?.length ? options.product_category : availableCategories;
         const nextUnits = productUnitOptions(options.unit_list || []);
@@ -1326,8 +1357,9 @@ function ProductEditorDialog({
         applyProduct(merged, nextUnits);
         setMediaAssets(Array.isArray(merged.media_assets) ? merged.media_assets : options.media_assets || []);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "商品详情加载失败"))
-      .finally(() => setLoading(false));
+      .catch((err) => { if (current) setError(err instanceof Error ? err.message : "商品详情加载失败"); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
   }, [product, availableCategories, queryClient]);
 
   useEffect(() => {
@@ -1435,6 +1467,7 @@ function ProductEditorDialog({
       };
     });
     return {
+      ...(modelChanged ? { model_asset_id: model?.id ?? null } : {}),
       id: isCreate ? undefined : productId || undefined,
       title: title.trim(),
       product_type: productType,
@@ -1450,6 +1483,7 @@ function ProductEditorDialog({
   }
 
   async function save() {
+    if (modelUploading || saving || loading) return;
     if (!title.trim()) {
       setError("请输入商品名称");
       return;
@@ -1462,6 +1496,7 @@ function ProductEditorDialog({
     setError("");
     try {
       const saved = await api.saveProduct(buildPayload());
+      void releaseStagedModels(model?.id);
       queryClient.invalidateQueries({ queryKey: queryKeys.products.root });
       onSaved({ created: isCreate, title: title.trim(), result: saved });
       onClose();
@@ -1497,7 +1532,7 @@ function ProductEditorDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={(nextOpen) => {
-        if (!nextOpen && !saving) onClose();
+        if (!nextOpen && !saving && !modelUploading) onClose();
       }}>
         <DialogContent className="product-editor-dialog">
           <DialogHeader>
@@ -1519,6 +1554,7 @@ function ProductEditorDialog({
               <TabsTrigger value="basic">基础信息</TabsTrigger>
               <TabsTrigger value="specs">规格/颜色</TabsTrigger>
               <TabsTrigger value="images">图片</TabsTrigger>
+              <TabsTrigger value="model">3D 模型</TabsTrigger>
               <TabsTrigger value="rules">上架/起订</TabsTrigger>
               <TabsTrigger value="records">记录</TabsTrigger>
             </TabsList>
@@ -1786,6 +1822,16 @@ function ProductEditorDialog({
                 </Card>
               </TabsContent>
 
+              <TabsContent value="model" forceMount className="product-editor-tab-panel product-model-tab">
+                <ProductModelEditor
+                  model={model}
+                  disabled={loading || saving}
+                  onChange={(nextModel) => { setModel(nextModel); setModelChanged(true); }}
+                  onUploaded={(asset) => stagedModels.current.add(asset.id)}
+                  onBusyChange={setModelUploading}
+                />
+              </TabsContent>
+
               <TabsContent value="rules" className="product-editor-tab-panel">
                 <Card size="sm">
                   <CardHeader>
@@ -1835,8 +1881,8 @@ function ProductEditorDialog({
           </Tabs>
 
           <DialogFooter>
-            <Button type="button" variant="outline" disabled={saving} onClick={onClose}>取消</Button>
-            <Button type="button" disabled={saving} onClick={save}>{saving ? "保存中" : "保存商品"}</Button>
+            <Button type="button" variant="outline" disabled={saving || modelUploading} onClick={onClose}>取消</Button>
+            <Button type="button" disabled={saving || loading || modelUploading} onClick={save}>{saving ? "保存中" : "保存商品"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

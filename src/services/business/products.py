@@ -82,8 +82,16 @@ class ProductService(BusinessService):
     def options(self, product_id: int | None = None) -> dict:
         return self.db.product_options(product_id)
 
-    def save(self, payload: dict) -> dict:
+    def save(self, payload: dict, *, operator_user_id: Any = None) -> dict:
+        if "model_asset_id" in payload:
+            return self.db.save_product(payload, operator_user_id=operator_user_id)
         return self.db.save_product(payload)
+
+    def record_model_asset(self, metadata: dict, *, operator_user_id: Any) -> dict:
+        return self.db.record_product_model_asset(metadata, operator_user_id=operator_user_id)
+
+    def delete_pending_model_asset(self, asset_id: int, *, operator_user_id: Any) -> dict:
+        return self.db.delete_pending_product_model_asset(asset_id, operator_user_id=operator_user_id)
 
     def delete(self, ids: str | list[int]) -> dict:
         return self.db.delete_product(ids)

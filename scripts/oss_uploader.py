@@ -7,6 +7,7 @@ import uuid
 import sys
 import json
 import argparse
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -61,7 +62,7 @@ class OSSUploader:
             self._bucket = oss2.Bucket(auth, self.config["endpoint"], self.config["bucket"])
         return self._bucket
 
-    def upload(self, local_path: str) -> dict:
+    def upload(self, local_path: str, remote_path: str = None, content_type: str = None) -> dict:
         """
         上传本地文件到 OSS
 
@@ -78,10 +79,12 @@ class OSSUploader:
             bucket = self._get_bucket()
 
             # 生成远程路径
-            remote_path = self._generate_path(local_path)
+            if remote_path is None:
+                remote_path = self._generate_path(local_path)
 
             # 上传
-            result = bucket.put_object_from_file(remote_path, local_path)
+            options = {"headers": {"Content-Type": content_type}} if content_type else {}
+            result = bucket.put_object_from_file(remote_path, local_path, **options)
 
             if result.status == 200:
                 url = f"{self.config['domain']}/{remote_path}"
@@ -91,7 +94,7 @@ class OSSUploader:
         except Exception as e:
             return {"error": str(e)}
 
-    def upload_bytes(self, data: bytes, remote_path: str = None) -> dict:
+    def upload_bytes(self, data: bytes, remote_path: str = None, content_type: str = None) -> dict:
         """
         上传字节数据到 OSS
 
@@ -105,7 +108,8 @@ class OSSUploader:
             if remote_path is None:
                 remote_path = self._generate_path("image.jpg")
 
-            result = bucket.put_object(remote_path, data)
+            options = {"headers": {"Content-Type": content_type}} if content_type else {}
+            result = bucket.put_object(remote_path, data, **options)
 
             if result.status == 200:
                 url = f"{self.config['domain']}/{remote_path}"
@@ -114,6 +118,27 @@ class OSSUploader:
                 return {"error": f"上传失败，status={result.status}"}
         except Exception as e:
             return {"error": str(e)}
+
+    @staticmethod
+    def validate_product_model_path(remote_path: str) -> str:
+        """Only exact application-generated model keys may be deleted."""
+        if not isinstance(remote_path, str) or not re.fullmatch(
+            r"product_models/([0-9]{8})/[0-9a-f]{32}\.glb", remote_path
+        ):
+            raise ValueError("模型对象路径无效")
+        try:
+            datetime.strptime(remote_path.split("/")[1], "%Y%m%d")
+        except ValueError:
+            raise ValueError("模型对象日期无效") from None
+        return remote_path
+
+    def delete_product_model(self, remote_path: str) -> bool:
+        """Refuse URLs, prefixes, traversal and all non-model objects."""
+        self.validate_product_model_path(remote_path)
+        try:
+            return self._get_bucket().delete_object(remote_path).status in (200, 204)
+        except Exception:
+            return False
 
     def _generate_path(self, original_filename: str) -> str:
         """生成远程路径"""
