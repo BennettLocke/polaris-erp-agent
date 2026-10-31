@@ -25,6 +25,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from src.engine.exceptions import DBError
+from src.engine.product_model_config import project_config, validate_config
 from src.utils import get_logger
 
 logger = get_logger("sjagent.native_db")
@@ -1389,6 +1390,9 @@ class NativeDBClient:
             return None
         product = self._row_to_product(rows[0])
         product["model"] = self.product_model_for_spu(int(product["spu_id"])) if product.get("spu_id") else None
+        product["model_config"] = self.product_model_config_for_spu(int(product["spu_id"])) if product.get("model") else None
+        if product["model_config"] and product["model_config"].get("asset_id") != product["model"]["id"]:
+            product["model_config"] = None
         if listed_only:
             product = self._hydrate_product_group_summary(product, listed_only=True)
         return product
@@ -2790,6 +2794,47 @@ class NativeDBClient:
             claimed = self._product_model_asset_dict(asset)
         return claimed
 
+    def product_model_config_for_spu(self, spu_id: int) -> dict | None:
+        rows = self.query("SELECT model_config FROM product_model_binding WHERE spu_id=%s", (spu_id,))
+        config = _json_loads(rows[0].get("model_config"), None) if rows else None
+        if config is None:
+            return None
+        skus = self.query(
+            "SELECT id FROM product_sku WHERE spu_id=%s AND deleted_at IS NULL ORDER BY color ASC, id ASC",
+            (spu_id,),
+        )
+        return project_config(config, [str(row["id"]) for row in skus])
+
+    def _save_product_model_config(self, cursor, spu_id: int, payload: dict,
+                                   sku_keys: dict[str, str], binding: dict | None) -> None:
+        requested = "model_config" in payload
+        incoming = payload.get("model_config")
+        if not binding:
+            if requested and incoming is not None:
+                raise ValueError("model_config requires a bound model asset")
+            return
+        old = _json_loads(binding.get("model_config"), None)
+        config = old
+        if requested:
+            config = None
+            if incoming is not None:
+                cursor.execute("SELECT * FROM product_model_asset WHERE id=%s", (binding["model_asset_id"],))
+                asset = cursor.fetchone()
+                if not asset or asset.get("deleted_at") is not None:
+                    raise ValueError("model_config asset is missing or deleted")
+                config = validate_config(incoming, self._product_model_asset_dict(asset), sku_keys)
+        if config is not None:
+            # Match the binding's current read, not an earlier repeatable-read
+            # snapshot that may predate another committed save's new SKUs.
+            cursor.execute(
+                "SELECT id FROM product_sku WHERE spu_id=%s AND deleted_at IS NULL ORDER BY color ASC, id ASC FOR UPDATE",
+                (spu_id,),
+            )
+            config = project_config(config, [str(row["id"]) for row in cursor.fetchall()])
+        if requested or config != old:
+            cursor.execute("UPDATE product_model_binding SET model_config=%s, updated_at=%s WHERE spu_id=%s",
+                           (_json_dumps(config) if config is not None else None, _now(), spu_id))
+
     def _save_product_model_binding(self, cursor, spu_id: int, asset_id: int | None, operator_user_id: Any) -> None:
         # Serialize replacements and deletion on the SPU before taking an asset lock.
         cursor.execute("SELECT id FROM product_spu WHERE id=%s AND deleted_at IS NULL FOR UPDATE", (spu_id,))
@@ -2826,7 +2871,11 @@ class NativeDBClient:
             """
             INSERT INTO product_model_binding (spu_id, model_asset_id, created_at, updated_at)
             VALUES (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE model_asset_id=VALUES(model_asset_id), updated_at=VALUES(updated_at)
+            ON DUPLICATE KEY UPDATE
+                model_config=IF(model_asset_id=VALUES(model_asset_id), model_config,
+                    JSON_SET(model_config, '$.asset_id', VALUES(model_asset_id),
+                        '$.material_index', NULL, '$.camera_direction', NULL, '$.default_pose', 'open')),
+                model_asset_id=VALUES(model_asset_id), updated_at=VALUES(updated_at)
             """,
             (spu_id, asset_id, now, now),
         )
@@ -2927,7 +2976,16 @@ class NativeDBClient:
             if model_requested:
                 self._save_product_model_binding(cursor, int(spu_id), model_asset_id, operator_user_id)
 
+            # Take binding locks after the SPU write and before any SKU write.
+            # An explicit binding upsert already locked its current row; an
+            # ordinary save locks the binding but never inserts into a missing gap.
+            binding_lock = "" if model_requested else " FOR UPDATE"
+            cursor.execute("SELECT model_asset_id, model_config FROM product_model_binding WHERE spu_id=%s" + binding_lock,
+                           (spu_id,))
+            model_binding = cursor.fetchone()
+
             saved_ids: list[int] = []
+            sku_keys: dict[str, str] = {}
             colors: list[str] = []
             specs = list(base.items()) or [("new_0", {"spec": payload.get("spec") or payload.get("color") or ""})]
             for product_key, spec_payload in specs:
@@ -2936,6 +2994,12 @@ class NativeDBClient:
                 existing_id = int(product_key) if str(product_key).isdigit() else None
                 if existing_id:
                     existing_id = self.resolve_sku_id(existing_id, cursor=cursor)
+                existing = {}
+                if existing_id:
+                    cursor.execute("SELECT sku_no, spu_id FROM product_sku WHERE id=%s", (existing_id,))
+                    existing = cursor.fetchone() or {}
+                    if int(existing.get("spu_id") or 0) != int(spu_id):
+                        raise ValueError("SKU does not belong to the saved SPU")
                 unit_payload = next(iter((spec_payload.get("unit") or {}).values()), {}) if isinstance(spec_payload.get("unit"), dict) else {}
                 color = str(spec_payload.get("spec") or spec_payload.get("color") or "").strip()
                 if color and color not in colors:
@@ -2946,8 +3010,7 @@ class NativeDBClient:
                 if requested_sku_no and requested_sku_no.startswith("SJ") and self._sku_no_available(cursor, requested_sku_no, existing_id):
                     sku_no = requested_sku_no
                 elif existing_id:
-                    cursor.execute("SELECT sku_no FROM product_sku WHERE id=%s", (existing_id,))
-                    sku_no = (cursor.fetchone() or {}).get("sku_no") or self._next_sku_no(
+                    sku_no = existing.get("sku_no") or self._next_sku_no(
                         cursor,
                         start_number=1001,
                         compact_from_start=True,
@@ -3036,6 +3099,8 @@ class NativeDBClient:
                     )
                     sku_id = cursor.lastrowid
                 saved_ids.append(int(sku_id))
+                if product_key in base:
+                    sku_keys[str(product_key)] = str(sku_id)
                 if listing_requested:
                     cursor.execute(
                         "UPDATE product_sku SET is_listed=%s, status=CASE WHEN %s=1 THEN 'active' ELSE status END WHERE id=%s",
@@ -3066,6 +3131,7 @@ class NativeDBClient:
                 "UPDATE product_spu SET available_colors=%s, updated_at=%s WHERE id=%s",
                 (_json_dumps(colors), now, spu_id),
             )
+            self._save_product_model_config(cursor, int(spu_id), payload, sku_keys, model_binding)
         return {"code": 0, "data": {"id": saved_ids[0] if saved_ids else product_id, "sku_ids": saved_ids, "spu_id": spu_id}}
 
     def update_purchase_policy_by_series(self, series: list[str] | str, purchase_policy: str) -> dict:

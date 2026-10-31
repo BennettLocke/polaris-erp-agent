@@ -83,7 +83,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { queryKeys } from "@/lib/admin-query";
-import { ProductModelEditor } from "./product-model-editor";
+import { isProductModelConfigValid, ProductModelEditor, reconcileProductModelConfig } from "./product-model-editor";
 import { queueStagedModelUploads, releaseStagedModelUploads } from "./product-model-staging";
 import type {
   ProductCategory,
@@ -91,6 +91,7 @@ import type {
   ProductManufacturer,
   ProductMediaAsset,
   ProductModelAsset,
+  ProductModelConfig,
   ProductSavePayload,
   ProductStatusOption,
   TaobaoDetailExportStep,
@@ -379,6 +380,7 @@ function productColorsInline(colors: string[]) {
 
 type ProductSpecForm = {
   local_key: string;
+  model_key?: string;
   id: string;
   base_id: string;
   image: string;
@@ -390,6 +392,23 @@ type ProductSpecForm = {
   cost_price: string | number;
   is_stock_item: number;
 };
+
+function productModelColorChoices(specs: ProductSpecForm[]) {
+  return specs.map((spec, index) => ({ key: spec.id ? String(spec.id) : spec.model_key ?? `new_${index}`, name: spec.spec || "默认颜色" }));
+}
+
+function productModelConfigForSave(config: ProductModelConfig | null, specs: ProductSpecForm[]): ProductModelConfig | null {
+  const colors = productModelColorChoices(specs);
+  const draft = reconcileProductModelConfig(config, colors);
+  if (!draft) return null;
+  // Draft keys stay with unsaved rows; the server resolves the submitted base keys to real SKU IDs.
+  const keyMap = new Map(colors.map(({ key }, index) => [key, specs[index].id ? String(specs[index].id) : `new_${index}`]));
+  return {
+    ...draft,
+    sku_colors: Object.fromEntries(Object.entries(draft.sku_colors).map(([key, value]) => [keyMap.get(key)!, value])),
+    default_sku_key: draft.default_sku_key ? keyMap.get(draft.default_sku_key) ?? null : null,
+  };
+}
 
 type ProductSaveContext = {
   created: boolean;
@@ -1261,6 +1280,9 @@ function ProductEditorDialog({
   const [mediaAssets, setMediaAssets] = useState<ProductMediaAsset[]>([]);
   const [model, setModel] = useState<ProductModelAsset | null>(null);
   const [modelChanged, setModelChanged] = useState(false);
+  const [modelConfig, setModelConfig] = useState<ProductModelConfig | null>(null);
+  const [modelConfigChanged, setModelConfigChanged] = useState(false);
+  const nextModelSkuKey = useRef(0);
   const [modelUploading, setModelUploading] = useState(false);
   const stagedModels = useRef(new Set<number>());
   const pendingModelCleanup = useRef(new Set<number>());
@@ -1294,10 +1316,14 @@ function ProductEditorDialog({
     setStockItem(Number(productData.is_stock_item ?? 1) !== 0);
     setMainImages(productData.main_images_list?.length ? productData.main_images_list : productImageUrl(productData) ? [productImageUrl(productData)] : []);
     setDetailImages(Array.from(new Set(detailImagesFromProduct(productData))));
-    setSpecs(productSpecRows(productData, nextUnits));
+    const nextSpecs = productSpecRows(productData, nextUnits).map((spec, index) => ({ ...spec, model_key: `new_${index}` }));
+    nextModelSkuKey.current = nextSpecs.length;
+    setSpecs(nextSpecs);
     setMediaAssets(Array.isArray(productData.media_assets) ? productData.media_assets : []);
     setModel(productData.model || null);
     setModelChanged(false);
+    setModelConfig(reconcileProductModelConfig(productData.model_config ?? null, productModelColorChoices(nextSpecs)));
+    setModelConfigChanged(false);
   }
 
   const retryModelCleanup = useCallback(async (attempt = 0): Promise<void> => {
@@ -1376,11 +1402,19 @@ function ProductEditorDialog({
 
   function addSpec() {
     const nextSpec = productSpecRows(null, units)[0];
-    setSpecs((prev) => prev.concat({ ...nextSpec, is_stock_item: effectiveStockItem ? 1 : 0 }));
+    const model_key = `new_${nextModelSkuKey.current++}`;
+    setSpecs((prev) => prev.concat({ ...nextSpec, model_key, is_stock_item: effectiveStockItem ? 1 : 0 }));
   }
 
   function removeSpec(index: number) {
-    setSpecs((prev) => prev.length <= 1 ? prev : prev.filter((_, itemIndex) => itemIndex !== index));
+    if (specs.length <= 1) return;
+    const nextSpecs = specs.filter((_, itemIndex) => itemIndex !== index);
+    setSpecs(nextSpecs);
+    const nextConfig = reconcileProductModelConfig(modelConfig, productModelColorChoices(nextSpecs));
+    if (JSON.stringify(nextConfig) !== JSON.stringify(modelConfig)) {
+      setModelConfig(nextConfig);
+      setModelConfigChanged(true);
+    }
   }
 
   function applySelectedImage(target: ImagePickerTarget, url: string) {
@@ -1468,6 +1502,7 @@ function ProductEditorDialog({
     });
     return {
       ...(modelChanged ? { model_asset_id: model?.id ?? null } : {}),
+      ...(modelConfigChanged ? { model_config: productModelConfigForSave(modelConfig, specs) } : {}),
       id: isCreate ? undefined : productId || undefined,
       title: title.trim(),
       product_type: productType,
@@ -1484,6 +1519,10 @@ function ProductEditorDialog({
 
   async function save() {
     if (modelUploading || saving || loading) return;
+    if (!isProductModelConfigValid(modelConfig)) {
+      setError("请完善模型颜色的 HEX 值并选择换色材质");
+      return;
+    }
     if (!title.trim()) {
       setError("请输入商品名称");
       return;
@@ -1825,8 +1864,11 @@ function ProductEditorDialog({
               <TabsContent value="model" forceMount className="product-editor-tab-panel product-model-tab">
                 <ProductModelEditor
                   model={model}
+                  config={modelConfig}
+                  colors={productModelColorChoices(specs)}
                   disabled={loading || saving}
                   onChange={(nextModel) => { setModel(nextModel); setModelChanged(true); }}
+                  onConfigChange={(nextConfig) => { setModelConfig(nextConfig); setModelConfigChanged(true); }}
                   onUploaded={(asset) => stagedModels.current.add(asset.id)}
                   onBusyChange={setModelUploading}
                 />
@@ -1882,7 +1924,7 @@ function ProductEditorDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" disabled={saving || modelUploading} onClick={onClose}>取消</Button>
-            <Button type="button" disabled={saving || loading || modelUploading} onClick={save}>{saving ? "保存中" : "保存商品"}</Button>
+            <Button type="button" disabled={saving || loading || modelUploading || !isProductModelConfigValid(modelConfig)} onClick={save}>{saving ? "保存中" : "保存商品"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

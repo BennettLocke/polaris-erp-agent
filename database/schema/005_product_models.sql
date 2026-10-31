@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS product_model_asset (
 CREATE TABLE IF NOT EXISTS product_model_binding (
     spu_id BIGINT UNSIGNED NOT NULL,
     model_asset_id BIGINT UNSIGNED NOT NULL,
+    model_config JSON NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     PRIMARY KEY (spu_id),

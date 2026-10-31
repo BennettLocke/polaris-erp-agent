@@ -485,6 +485,7 @@ export type CustomerBalanceActionPayload = {
 
 export type SalesProduct = {
   model?: ProductModelAsset | null;
+  model_config?: ProductModelConfig | null;
   id?: number;
   item_id?: number;
   product_id?: number;
@@ -573,6 +574,7 @@ export type ProductOptions = {
 
 export type ProductSavePayload = {
   model_asset_id?: number | null;
+  model_config?: ProductModelConfig | null;
   id?: string | number;
   title: string;
   product_type?: string;
@@ -600,6 +602,16 @@ export type ProductSavePayload = {
       extends: string;
     }>;
   }>;
+};
+
+export type ProductModelConfig = {
+  version: 1;
+  asset_id: number;
+  material_index: number | null;
+  sku_colors: Record<string, string>;
+  default_sku_key: string | null;
+  camera_direction: [number, number, number] | null;
+  default_pose: "open";
 };
 
 export type ProductModelAsset = {

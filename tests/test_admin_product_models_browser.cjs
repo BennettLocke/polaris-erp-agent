@@ -85,10 +85,15 @@ async function readyPreview(page) {
     const asset = (await (await response).json()).data;
     assert.ok(asset?.id && asset.url, 'real OSS upload and DB registration succeeded');
     await page.locator('.product-model-file').getByText('测试.glb', { exact: true }).waitFor();
+    await page.getByRole('combobox', { name: '换色材质', exact: true }).click();
+    await page.getByRole('option', { name: /^材质 · #\d+$/ }).click();
     await page.screenshot({ path: path.join(root, '.tmp/product-model-editor-desktop.png') });
     await page.getByRole('button', { name: '预览', exact: true }).click();
     await readyPreview(page);
     assert.equal(await page.locator('.product-model-preview-canvas').getAttribute('data-animation-count'), '4');
+    assert.equal(await page.locator('.product-model-preview-canvas').getAttribute('data-pose'), 'open');
+    await page.getByRole('button', { name: '合上礼盒', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.product-model-preview-canvas')?.dataset.pose === 'closed');
     const closed = await pixels(page);
     assert.ok(closed.count > 1000, 'closed model renders actual pixels');
     await page.screenshot({ path: path.join(root, '.tmp/product-model-preview-desktop-closed.png') });

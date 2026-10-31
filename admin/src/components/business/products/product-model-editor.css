@@ -6,6 +6,14 @@
 .product-model-meta strong { overflow-wrap: anywhere; font-size: 14px; }
 .product-model-meta > span { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--sj-muted); font-size: 12px; }
 .product-model-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.product-model-config { max-width: 640px; width: 100%; margin-inline: auto; }
+.product-model-color-row { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 240px); align-items: center; gap: 8px 16px; }
+.product-model-color-name { min-width: 0; overflow-wrap: anywhere; }
+.product-model-color-inputs { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.product-model-color-inputs > button { flex-shrink: 0; }
+.product-model-hex { min-width: 0; font-family: monospace; }
+.product-model-color-chip { width: 18px; height: 18px; border: 1px solid var(--sj-border); border-radius: 3px; }
+.product-model-color-row > .form-error { grid-column: 1 / -1; }
 .product-model-progress { display: grid; gap: 10px; font-size: 13px; color: var(--sj-muted); }
 .product-model-progress > span { display: flex; gap: 8px; align-items: center; }
 .product-model-progress svg { width: 16px; height: 16px; }
@@ -13,6 +21,7 @@
 .product-model-spinner { animation: product-model-spin 1s linear infinite; }
 @keyframes product-model-spin { to { transform: rotate(360deg); } }
 @media (max-width: 600px) {
+  .product-model-color-row { grid-template-columns: minmax(0, 1fr); }
   .product-model-meta { flex-basis: calc(100% - 50px); }
   .product-model-actions { width: 100%; }
 }

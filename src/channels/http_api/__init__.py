@@ -1321,6 +1321,32 @@ def _mini_product_payload(product: dict, *, list_item: bool = False) -> dict:
         "comments_score": {"rate": 0},
         "comments_data": [],
     }
+    # Model persistence metadata is private even though legacy goods fields are
+    # otherwise passed through. Nested variant rows must follow the same rule.
+    model = item.pop("model", None)
+    config = item.pop("model_config", None)
+    for field in ("product_group_data", "product_group"):
+        if isinstance(item.get(field), list):
+            item[field] = [{k: v for k, v in row.items() if k not in {"model", "model_config"}}
+                           for row in item[field] if isinstance(row, dict)]
+    if not list_item:
+        from src.engine.product_model_config import project_config
+        public_model = None
+        if isinstance(model, dict) and model.get("url"):
+            public_model = {key: model.get(key) for key in ("id", "url", "animation_count")}
+            public_model["materials"] = [
+                {key: material.get(key) for key in ("index", "name")}
+                for material in model.get("materials", []) if isinstance(material, dict)
+            ]
+        variants = product.get("product_group_data")
+        variants = variants if isinstance(variants, list) else [product]
+        visible_ids = [str(row["id"]) for row in variants if isinstance(row, dict)
+                       and row.get("id") and _mini_int(row.get("is_listed"), 0) == 1
+                       and row.get("status", 0) in (0, "active") and not row.get("deleted_at")]
+        item["model"] = public_model
+        item["model_config"] = project_config(config, visible_ids) if public_model else None
+        item["model_url"] = public_model["url"] if public_model else ""
+        item["has_model"] = bool(public_model)
     return _safe_json(item)
 
 
@@ -5164,7 +5190,7 @@ def product_save_api():
         if body is None:
             body = request.form.to_dict(flat=True)
         payload = body or {}
-        if "model_asset_id" in payload:
+        if "model_asset_id" in payload or "model_config" in payload:
             from src.engine.native_db import current_native_operator_user_id
             result = get_product_service().save(payload, operator_user_id=current_native_operator_user_id())
         else:

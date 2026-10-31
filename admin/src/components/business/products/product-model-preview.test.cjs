@@ -34,8 +34,20 @@ function setup() {
     new THREE.AnimationClip("hinge", 1.25, [new THREE.NumberKeyframeTrack("Hinge.position[x]", [0, 1.25], [10, 0])]),
     new THREE.AnimationClip("cover", 2.5, [new THREE.NumberKeyframeTrack("Cover.position[y]", [0, 2.5], [20, 0])])
   ];
-  return { root, hinge, cover, clips, animation: helpers().createBoxAnimation(root, clips) };
+  return { root, hinge, cover, clips, animation: helpers().createBoxAnimation(root, clips, 'closed') };
 }
+
+test("new previews start open and stay open until explicitly closed", () => {
+  const { root, clips } = setup();
+  const animation = helpers().createBoxAnimation(root, clips);
+  assert.equal(animation.getState().pose, 'open');
+  assert.equal(animation.getState().time, 0);
+  animation.update(10);
+  assert.equal(animation.getState().pose, 'open');
+  animation.toggle();
+  animation.update(10);
+  assert.equal(animation.getState().pose, 'closed');
+});
 
 test("starts closed with every clip at its own final time", () => {
   const { hinge, cover, animation } = setup();
@@ -153,7 +165,7 @@ test("morph envelope uses actual deformed vertices even for weights outside zero
   const animation = createBoxAnimation(mesh, clips);
   const bounds = animationEnvelope(mesh, clips, animation);
   assert.ok(bounds.max.x >= 40.5);
-  assert.equal(mesh.morphTargetInfluences[0], 0);
+  assert.equal(mesh.morphTargetInfluences[0], 2);
   animation.dispose();
 });
 
@@ -176,7 +188,7 @@ test("skinned envelope updates bone transforms rather than reusing a stale skin 
   const animation = createBoxAnimation(mesh, clips);
   const bounds = animationEnvelope(mesh, clips, animation);
   assert.ok(bounds.max.x >= 10.5);
-  assert.equal(bone.position.x, 0);
+  assert.equal(bone.position.x, 10);
   animation.dispose();
 });
 

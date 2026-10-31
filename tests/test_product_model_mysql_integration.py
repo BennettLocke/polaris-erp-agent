@@ -1,5 +1,6 @@
 """Opt-in real SQL checks. This can only target the disposable loopback database."""
 import io
+import json
 import os
 from pathlib import Path
 import threading
@@ -15,7 +16,8 @@ from scripts.deploy_database_schema import split_sql
 from src.engine.native_db import NativeDBClient
 from src.services.business.products import ProductService
 from src.channels import http_api
-from tests.test_product_models import glb
+from tests.test_product_models import document, glb
+from scripts.migrate_product_model_config import migrate
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,6 +46,7 @@ class ProductModelMysqlIntegrationTest(unittest.TestCase):
             for filename in ('001_product_catalog.sql', '002_business_core.sql', '003_system_settings.sql', '005_product_models.sql'):
                 for sql in split_sql((ROOT / 'database/schema' / filename).read_text(encoding='utf-8')):
                     cursor.execute(sql)
+            migrate(cursor)
             cursor.execute("INSERT IGNORE INTO product_unit (id,name,code,unit_type,created_at,updated_at) VALUES (1,'套','set','sale',NOW(),NOW())")
             cursor.execute("INSERT IGNORE INTO product_category (id,name,product_type,created_at,updated_at) VALUES (1,'测试礼盒','gift_box',NOW(),NOW())")
 
@@ -77,19 +80,22 @@ class ProductModelMysqlIntegrationTest(unittest.TestCase):
                 cursor.execute('DELETE FROM product_model_asset WHERE id=%s', (asset,))
 
     def upload(self):
-        response = self.client.post('/api/product/models/upload', data={'model': (io.BytesIO(glb()), 'integration.glb')})
+        doc = document()
+        doc['materials'] = [{'name': 'Paper'}, {'name': 'Foil'}]
+        response = self.client.post('/api/product/models/upload', data={'model': (io.BytesIO(glb(doc)), 'integration.glb')})
         self.assertEqual(response.status_code, 200, response.get_json())
         asset = response.get_json()['data']
         self.asset_ids.append(asset['id'])
         return asset
 
-    def create(self, asset=None):
+    def create(self, asset=None, **extra):
         nonce = uuid.uuid4().hex[:10]
         payload = {'title': '模型集成测试', 'product_type': 'gift_box', 'product_category_id': [1], 'base': {
             'new_red': {'spec': '红色', 'coding': 'MT_RED_' + nonce, 'unit': {'new': {'unit_id': 1, 'price': 20}}},
             'new_blue': {'spec': '蓝色', 'coding': 'MT_BLUE_' + nonce, 'unit': {'new': {'unit_id': 1, 'price': 20}}}}}
         if asset is not None:
             payload['model_asset_id'] = asset['id']
+        payload.update(extra)
         response = self.client.post('/api/product/save', json=payload)
         self.assertEqual(response.status_code, 200, response.get_json())
         result = response.get_json()['data']
@@ -99,6 +105,143 @@ class ProductModelMysqlIntegrationTest(unittest.TestCase):
     def edit(self, result, **extra):
         payload = {'id': result['id'], 'title': '模型集成测试', 'base': {str(sku): {'spec': f'颜色{index}'} for index, sku in enumerate(result['sku_ids'])}, **extra}
         return self.client.post('/api/product/save', json=payload)
+
+    def model_config(self, asset, colors, default=None, **extra):
+        return {'version': 1, 'asset_id': asset['id'], 'material_index': 1,
+            'sku_colors': colors, 'default_sku_key': default, 'camera_direction': [0, 3, 4],
+            'default_pose': 'open', **extra}
+
+    def stored_config(self, product):
+        value = self.db.query('SELECT model_config FROM product_model_binding WHERE spu_id=%s',
+                              (product['spu_id'],))[0]['model_config']
+        return json.loads(value) if isinstance(value, str) else value
+
+    def color_ids(self, product):
+        return {row['color']: row['id'] for row in self.db.query(
+            'SELECT id, color FROM product_sku WHERE spu_id=%s', (product['spu_id'],))}
+
+    def test_config_new_key_mapping_replace_without_config_reset_and_null(self):
+        asset = self.upload()
+        product = self.create(asset, model_config=self.model_config(asset,
+            {'new_red': '#aa1122', 'new_blue': '#3344bb'}, 'new_red'))
+        ids = self.color_ids(product)
+        red, blue = str(ids['红色']), str(ids['蓝色'])
+        original = self.stored_config(product)
+        self.assertEqual(original['sku_colors'], {red: '#AA1122', blue: '#3344BB'})
+        self.assertEqual(original['camera_direction'], [0, .6, .8])
+        self.assertEqual(self.edit(product).status_code, 200)
+        self.assertEqual(self.stored_config(product), original)
+        replacement = self.upload()
+        self.assertEqual(self.edit(product, model_asset_id=replacement['id']).status_code, 200)
+        replaced = self.stored_config(product)
+        self.assertEqual(replaced['asset_id'], replacement['id'])
+        self.assertEqual(replaced['sku_colors'], original['sku_colors'])
+        self.assertIsNone(replaced['material_index'])
+        self.assertIsNone(replaced['camera_direction'])
+        self.assertEqual(replaced['default_pose'], 'open')
+        detail = self.client.get(f"/api/product/{red}").get_json()['data']
+        self.assertEqual(detail['model_config'], replaced)
+        self.assertNotIn('model_config', detail['model'])
+        self.assertEqual(self.edit(product, model_config=None).status_code, 200)
+        self.assertIsNone(self.stored_config(product))
+        self.assertEqual(self.db.product_model_for_spu(product['spu_id'])['id'], replacement['id'])
+
+    def test_config_validation_rolls_back_product_skus_new_binding_and_asset_origin(self):
+        product = self.create()
+        fresh = self.upload()
+        before = self.db.query('SELECT * FROM product_sku WHERE spu_id=%s ORDER BY id', (product['spu_id'],))
+        response = self.edit(product, title='must roll back', model_asset_id=fresh['id'],
+            model_config=self.model_config(fresh, {str(product['sku_ids'][0]): '#112233'}, material_index=999))
+        self.assertEqual(response.status_code, 400, response.get_json())
+        self.assertEqual(self.db.query('SELECT * FROM product_sku WHERE spu_id=%s ORDER BY id', (product['spu_id'],)), before)
+        self.assertIsNone(self.db.product_model_for_spu(product['spu_id']))
+        self.assertIsNone(self.db.product_model_asset(fresh['id'])['origin_spu_id'])
+        self.assertEqual(self.db.query('SELECT title FROM product_spu WHERE id=%s', (product['spu_id'],))[0]['title'], '模型集成测试')
+
+    def test_deleted_colors_pruned_on_ordinary_save_and_mini_filters_listed_colors(self):
+        asset = self.upload()
+        product = self.create(asset, model_config=self.model_config(asset,
+            {'new_red': '#aa1122', 'new_blue': '#3344bb'}, 'new_red'))
+        ids = self.color_ids(product)
+        red, blue = ids['红色'], ids['蓝色']
+        with self.db.cursor() as cursor:
+            cursor.execute('UPDATE product_sku SET is_listed=IF(id=%s,0,1) WHERE spu_id=%s', (red, product['spu_id']))
+        response = self.client.get(f'/api/mini/goods/detail?id={blue}')
+        self.assertEqual(response.status_code, 200, response.get_json())
+        goods = response.get_json()['data']['goods']
+        self.assertEqual(goods['model_config']['sku_colors'], {str(blue): '#3344BB'})
+        self.assertEqual(goods['model_config']['default_sku_key'], str(blue))
+        self.assertEqual(set(goods['model']), {'id', 'url', 'animation_count', 'materials'})
+        self.assertEqual(goods['model_url'], asset['url'])
+        self.assertTrue(goods['has_model'])
+        with self.db.cursor() as cursor:
+            cursor.execute('UPDATE product_sku SET deleted_at=NOW() WHERE id=%s', (red,))
+        response = self.client.post('/api/product/save', json={'id': blue, 'title': 'Pruned', 'base': {str(blue): {'spec': 'Renamed'}}})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        stored = self.stored_config(product)
+        self.assertEqual(stored['sku_colors'], {str(blue): '#3344BB'})
+        self.assertEqual(stored['default_sku_key'], str(blue))
+        self.assertNotIn('Renamed', json.dumps(stored))
+
+    def test_migration_repeated_preserves_binding_and_config_exactly(self):
+        asset = self.upload()
+        product = self.create(asset, model_config=self.model_config(asset, {'new_blue': '#112233'}))
+        before = self.db.query('SELECT * FROM product_model_binding WHERE spu_id=%s', (product['spu_id'],))
+        with self.db.cursor() as cursor:
+            self.assertFalse(migrate(cursor))
+            self.assertFalse(migrate(cursor))
+        self.assertEqual(self.db.query('SELECT * FROM product_model_binding WHERE spu_id=%s', (product['spu_id'],)), before)
+
+    def test_ordinary_save_with_old_snapshot_preserves_concurrently_added_sku_color(self):
+        asset = self.upload()
+        product = self.create(asset, model_config=self.model_config(asset,
+            {'new_red': '#AA1122', 'new_blue': '#3344BB'}))
+        stale_db = model_test_database()
+        connection = stale_db._get_connection()
+        self.addCleanup(connection.close)
+        with connection.cursor() as cursor:
+            cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+            cursor.execute('SELECT CONNECTION_ID() AS id')
+            stale_connection_id = cursor.fetchone()['id']
+        self.assertNotEqual(stale_connection_id, self.db.query('SELECT CONNECTION_ID() AS id')[0]['id'])
+        original_ids = set(product['sku_ids'])
+        original_resolve = stale_db.resolve_sku_id
+        committed = {}
+
+        def resolve_with_interleaved_commit(product_id, cursor=None):
+            resolved = original_resolve(product_id, cursor=cursor)
+            if not committed:
+                # The ordinary save's initial lookup established its read view,
+                # but it has not taken the SPU write lock yet.
+                cursor.execute('SELECT id FROM product_sku WHERE spu_id=%s', (product['spu_id'],))
+                self.assertEqual({row['id'] for row in cursor.fetchall()}, original_ids)
+                base = {str(sku): {'spec': f'Original {index}'}
+                        for index, sku in enumerate(product['sku_ids'])}
+                base['new_green'] = {'spec': 'Green', 'unit_id': 1}
+                colors = {str(sku): '#112233' for sku in product['sku_ids']}
+                colors['new_green'] = '#00FF00'
+                result = self.db.save_product({'id': product['id'], 'title': 'Concurrent addition',
+                    'base': base, 'model_config': self.model_config(asset, colors, 'new_green')},
+                    operator_user_id=9007)
+                self.assertEqual(result['code'], 0)
+                green_id, = set(result['data']['sku_ids']) - original_ids
+                committed.update(green_id=green_id, config=self.stored_config(product))
+                self.assertEqual(committed['config']['sku_colors'][str(green_id)], '#00FF00')
+                # Prove the second connection committed while this transaction
+                # still sees the pre-addition snapshot through a plain SELECT.
+                cursor.execute('SELECT id FROM product_sku WHERE spu_id=%s', (product['spu_id'],))
+                self.assertEqual({row['id'] for row in cursor.fetchall()}, original_ids)
+            return resolved
+
+        with patch.object(stale_db, 'resolve_sku_id', side_effect=resolve_with_interleaved_commit):
+            result = stale_db.save_product({'id': product['id'], 'title': 'Ordinary stale save',
+                'base': {str(sku): {'spec': f'Original {index}'}
+                         for index, sku in enumerate(product['sku_ids'])}})
+        self.assertEqual(result['code'], 0)
+        live_ids = {row['id'] for row in self.db.query(
+            'SELECT id FROM product_sku WHERE spu_id=%s AND deleted_at IS NULL', (product['spu_id'],))}
+        self.assertIn(committed['green_id'], live_ids)
+        self.assertEqual(self.stored_config(product), committed['config'])
 
     def test_upload_bind_shared_colors_replace_unbind_and_no_cross_product_reuse(self):
         first = self.upload()

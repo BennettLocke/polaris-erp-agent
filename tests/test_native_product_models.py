@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ModelConnection:
     def __init__(self):
-        self.state = {"assets": {}, "bindings": {}, "spus": {10: "Original"}, "skus": {20: 10}, "deleted_spus": set()}
+        self.state = {"assets": {}, "bindings": {}, "configs": {}, "spus": {10: "Original"}, "skus": {20: 10}, "deleted_spus": set()}
         self.statements = []
         self.commits = 0
         self.rollbacks = 0
@@ -78,7 +78,10 @@ class ModelCursor:
                 self.rows = [{"spu_id": spu, "model_asset_id": asset} for spu, asset in state["bindings"].items() if asset == params[0]]
             else:
                 asset = state["bindings"].get(params[0])
-                self.rows = [{"spu_id": params[0], "model_asset_id": asset}] if asset else []
+                self.rows = [{"spu_id": params[0], "model_asset_id": asset,
+                              "model_config": state["configs"].get(params[0])}] if asset else []
+        elif sql.startswith("UPDATE product_model_binding SET model_config="):
+            state["configs"][params[-1]] = params[0]
         elif sql.startswith("UPDATE product_model_asset"):
             row = state["assets"][params[-1]]
             if "SET origin_spu_id=" in sql:
@@ -89,19 +92,27 @@ class ModelCursor:
             spu, asset = params[:2]
             if asset in state["bindings"].values() and state["bindings"].get(spu) != asset:
                 raise AssertionError("unique asset binding violated")
+            if state["bindings"].get(spu) != asset and state["configs"].get(spu):
+                import json
+                config = json.loads(state["configs"][spu])
+                config.update(asset_id=asset, material_index=None, camera_direction=None, default_pose="open")
+                state["configs"][spu] = json.dumps(config)
             state["bindings"][spu] = asset
         elif sql.startswith("DELETE FROM product_model_binding"):
             for spu_id in params:
                 state["bindings"].pop(spu_id, None)
+                state["configs"].pop(spu_id, None)
         elif sql.startswith("SELECT id FROM product_spu"):
             self.rows = [{"id": spu_id} for spu_id in sorted(params)
                          if spu_id in state["spus"] and spu_id not in state["deleted_spus"]]
         elif sql.startswith("SELECT id FROM product_sku WHERE spu_id IN"):
             self.rows = [{"id": sku} for sku, spu in state["skus"].items() if spu in params]
+        elif sql.startswith("SELECT id FROM product_sku WHERE spu_id="):
+            self.rows = [{"id": sku} for sku, spu in sorted(state["skus"].items()) if spu == params[0]]
         elif sql.startswith("SELECT spu_id FROM product_sku"):
             self.rows = [{"spu_id": state["skus"][params[0]]}]
-        elif sql.startswith("SELECT sku_no FROM product_sku"):
-            self.rows = [{"sku_no": "SJ0020"}]
+        elif sql.startswith(("SELECT sku_no FROM product_sku", "SELECT sku_no, spu_id FROM product_sku")):
+            self.rows = [{"sku_no": "SJ0020", "spu_id": state["skus"][params[0]]}]
         elif sql.startswith("INSERT INTO product_spu"):
             self.lastrowid = max(state["spus"], default=0) + 1
             state["spus"][self.lastrowid] = params[0]

@@ -1,19 +1,23 @@
 import { useEffect, useId, useRef, useState, type ComponentProps } from "react";
-import { AlertCircle, Loader2, Package, PackageOpen, RefreshCw, RotateCcw } from "lucide-react";
+import { AlertCircle, Compass, Crosshair, Loader2, Package, PackageOpen, RefreshCw, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { BoxAnimationState } from "./product-model-preview.helpers";
+import type { ProductModelConfig } from "@/types";
 import "./product-model-preview.css";
 
 export interface ProductModelPreviewProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  model: { url: string; file_name: string; animation_count: number } | null;
+  model: { id?: number; url: string; file_name: string; animation_count: number } | null;
+  config?: ProductModelConfig | null;
+  colors?: Array<{ key: string; name: string }>;
+  onConfigChange?: (config: ProductModelConfig) => void;
 }
 
-export function ProductModelPreview({ open, onOpenChange, model }: ProductModelPreviewProps) {
+export function ProductModelPreview({ open, onOpenChange, model, config, colors, onConfigChange }: ProductModelPreviewProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open ? <DialogContent className="product-model-preview-dialog" aria-describedby={undefined}>
@@ -21,7 +25,7 @@ export function ProductModelPreview({ open, onOpenChange, model }: ProductModelP
           <DialogTitle>3D 模型预览</DialogTitle>
           {model ? <span className="product-model-preview-filename" title={model.file_name}>{model.file_name}</span> : null}
         </DialogHeader>
-        {model ? <ModelViewport key={`${model.url}\0${model.file_name}\0${model.animation_count}`} model={model} /> :
+        {model ? <ModelViewport key={`${model.url}\0${model.file_name}\0${model.animation_count}`} model={model} config={config} colors={colors} onConfigChange={onConfigChange} /> :
           <div className="product-model-preview-empty" role="status">暂无模型</div>}
       </DialogContent> : null}
     </Dialog>
@@ -30,9 +34,9 @@ export function ProductModelPreview({ open, onOpenChange, model }: ProductModelP
 
 export default ProductModelPreview;
 
-type ViewerCommands = { reset: () => void; toggle: () => void; seek: (openness: number) => void };
+type ViewerCommands = { reset: () => void; toggle: () => void; seek: (openness: number) => void; color: (index: number | null, hex?: string) => void; direction: () => [number, number, number] };
 
-function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps["model"]> }) {
+function ModelViewport({ model, config, colors = [], onConfigChange }: Omit<ProductModelPreviewProps, "open" | "onOpenChange" | "model"> & { model: NonNullable<ProductModelPreviewProps["model"]> }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const commands = useRef<ViewerCommands | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -40,6 +44,15 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
   const [error, setError] = useState("");
   const [animationState, setAnimationState] = useState<BoxAnimationState | null>(null);
   const opennessId = useId();
+  const configRef = useRef(config);
+  configRef.current = config;
+  const configuredColors = colors.filter((color) => /^#[\da-f]{6}$/i.test(config?.sku_colors[color.key] || ""));
+  const [activeSku, setActiveSku] = useState<string | null>(config?.default_sku_key || configuredColors[0]?.key || null);
+  const selectedSku = configuredColors.some((color) => color.key === activeSku) ? activeSku : configuredColors.some((color) => color.key === config?.default_sku_key) ? config!.default_sku_key : configuredColors[0]?.key ?? null;
+  const selectedHex = selectedSku ? config?.sku_colors[selectedSku] : undefined;
+  const directionKey = config?.camera_direction?.join(",") || "";
+  useEffect(() => { commands.current?.color(config?.material_index ?? null, selectedHex); }, [config?.material_index, selectedHex, phase]);
+  useEffect(() => { commands.current?.reset(); }, [directionKey]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -70,13 +83,14 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
 
     async function start() {
       // Keep Three and its loaders out of the unopened product editor's bundle path.
-      const [THREE, { GLTFLoader }, { OrbitControls }, { RoomEnvironment }, { MeshoptDecoder }, helpers] = await Promise.all([
+      const [THREE, { GLTFLoader }, { OrbitControls }, { RoomEnvironment }, { MeshoptDecoder }, helpers, colorHelpers] = await Promise.all([
         import("three"),
         import("three/addons/loaders/GLTFLoader.js"),
         import("three/addons/controls/OrbitControls.js"),
         import("three/addons/environments/RoomEnvironment.js"),
         import("three/addons/libs/meshopt_decoder.module.js"),
-        import("./product-model-preview.helpers")
+        import("./product-model-preview.helpers"),
+        import("./product-model-color-config.helpers")
       ]);
       if (cancelled) return;
       const development = (import.meta as ImportMeta & { env: { DEV: boolean } }).env.DEV;
@@ -117,6 +131,7 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
       resources.track(gltf.scenes);
       if (cancelled) { resources.dispose(); return; }
       if (resourceFailed) throw new Error("模型内嵌资源读取失败，请重新导出 GLB 文件。");
+      const modelColors = colorHelpers.createModelColorController(gltf.scene, gltf.parser.associations, gltf.parser.json);
       const animation = helpers.createBoxAnimation(gltf.scene, gltf.animations);
       disposers.push(() => animation?.dispose());
       const bounds = helpers.animationEnvelope(gltf.scene, gltf.animations, animation);
@@ -194,7 +209,7 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
         controls.update(0);
         controls.reset();
         const view = helpers.frameSphere(radius, camera.aspect, camera.fov);
-        camera.position.copy(new THREE.Vector3(1.15, 0.8, 1.45).normalize().multiplyScalar(view.distance));
+        camera.position.copy(colorHelpers.modelViewDirection(configRef.current?.camera_direction).multiplyScalar(view.distance));
         camera.near = view.near;
         camera.far = view.far;
         camera.updateProjectionMatrix();
@@ -226,8 +241,13 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
       commands.current = {
         reset,
         toggle: () => { animation?.toggle(); syncAnimation(); },
-        seek: (openness) => { if (animation) animation.seek(animation.getState().duration * (1 - openness)); syncAnimation(); }
+        seek: (openness) => { if (animation) animation.seek(animation.getState().duration * (1 - openness)); syncAnimation(); },
+        color: (index, hex) => modelColors.apply(index, hex),
+        direction: () => colorHelpers.captureModelViewDirection(camera.position, controls.target)
       };
+      const initialConfig = configRef.current;
+      const initialKey = initialConfig?.default_sku_key || Object.keys(initialConfig?.sku_colors || {})[0];
+      modelColors.apply(initialConfig?.material_index ?? null, initialConfig?.sku_colors[initialKey!]);
 
       function onKeyDown(event: KeyboardEvent) {
         if (event.altKey || event.ctrlKey || event.metaKey) return;
@@ -276,6 +296,12 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
 
   const toggleLabel = animationState?.nextAction === "close" ? "合上礼盒" : "打开礼盒";
   const poseLabel = animationState ? ({ open: "已打开", closed: "已合上", opening: "正在打开", closing: "正在合上", paused: "已暂停" }[animationState.pose]) : "";
+  function calibrate(direction: [number, number, number] | null) {
+    if (!onConfigChange) return;
+    if (!config && !model.id) return;
+    const base = config || { version: 1 as const, asset_id: model.id!, material_index: null, sku_colors: {}, default_sku_key: null, camera_direction: null, default_pose: "open" as const };
+    onConfigChange({ ...base, camera_direction: direction });
+  }
 
   return (
     <TooltipProvider>
@@ -288,6 +314,12 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
             <Button variant="outline" size="sm" onClick={() => setAttempt((value) => value + 1)}><RefreshCw data-icon="inline-start" />重试</Button>
           </div> : null}
         </div>
+        {configuredColors.length > 0 && config?.material_index !== null ? <div className="product-model-preview-colors" role="group" aria-label="模型颜色">
+          {configuredColors.map((color) => <button key={color.key} type="button" disabled={phase !== "ready"} aria-pressed={selectedSku === color.key}
+            onClick={() => setActiveSku(color.key)} title={`${color.name} ${config!.sku_colors[color.key]}`}>
+            <span style={{ backgroundColor: config!.sku_colors[color.key] }} aria-hidden="true" />{color.name}
+          </button>)}
+        </div> : null}
         <div className="product-model-preview-toolbar">
           <PreviewIconButton label="重置视角" disabled={phase !== "ready"} onClick={() => commands.current?.reset()}><RotateCcw /></PreviewIconButton>
           {phase === "ready" && animationState ? <>
@@ -300,6 +332,10 @@ function ModelViewport({ model }: { model: NonNullable<ProductModelPreviewProps[
               onChange={(event) => commands.current?.seek(Number(event.target.value) / 100)} />
             <span className="product-model-preview-pose" role="status" aria-live="polite">{poseLabel}</span>
           </> : null}
+          {onConfigChange ? <div className="product-model-preview-calibration">
+            <PreviewIconButton label="设为默认正面" disabled={phase !== "ready"} onClick={() => { const direction = commands.current?.direction(); if (direction) calibrate(direction); }}><Crosshair /></PreviewIconButton>
+            <PreviewIconButton label="恢复默认正面" disabled={phase !== "ready" || !config?.camera_direction} onClick={() => calibrate(null)}><Compass /></PreviewIconButton>
+          </div> : null}
         </div>
       </div>
     </TooltipProvider>

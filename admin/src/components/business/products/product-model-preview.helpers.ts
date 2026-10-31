@@ -3,7 +3,7 @@ import {
   type AnimationClip, type BufferGeometry, type InstancedMesh, type Material, type Mesh, type Object3D, type Skeleton, type Texture
 } from "three";
 
-export function createBoxAnimation(root: Object3D, clips: AnimationClip[]) {
+export function createBoxAnimation(root: Object3D, clips: AnimationClip[], initialPose: "open" | "closed" = "open") {
   const usable = clips.filter((clip) => Number.isFinite(clip.duration) && clip.duration > 0 && clip.tracks.length);
   if (!usable.length) return null;
   const mixer = new AnimationMixer(root);
@@ -16,8 +16,8 @@ export function createBoxAnimation(root: Object3D, clips: AnimationClip[]) {
     return action;
   });
   const duration = Math.max(...usable.map((clip) => clip.duration));
-  let time = duration;
-  let target = duration;
+  let time = initialPose === "closed" ? duration : 0;
+  let target = time;
   let disposed = false;
   const clamp = (value: number) => Math.min(duration, Math.max(0, Number.isFinite(value) ? value : duration));
 

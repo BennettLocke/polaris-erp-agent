@@ -83,7 +83,7 @@ class ProductService(BusinessService):
         return self.db.product_options(product_id)
 
     def save(self, payload: dict, *, operator_user_id: Any = None) -> dict:
-        if "model_asset_id" in payload:
+        if "model_asset_id" in payload or "model_config" in payload:
             return self.db.save_product(payload, operator_user_id=operator_user_id)
         return self.db.save_product(payload)
 
